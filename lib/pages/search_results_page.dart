@@ -35,33 +35,33 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
 
   Future<List<CloudFile>> _search() async {
     final api = ref.read(authProvider.notifier).api;
-    final query = widget.query.trim().toLowerCase();
+    final query = widget.query.trim();
+    if (query.isEmpty) return const [];
     final results = <CloudFile>[];
     final ids = <String>{};
     var page = 0;
     while (page < 100) {
-      final response = await api.fsFiles(
-        parentID: '*',
-        page: page,
-        pageSize: 1000,
-        orderBy: 0,
-        sortType: 0,
-      );
+      final response = await api.searchFiles(query, page: page, pageSize: 100);
       final batch = _extractFiles(response);
       for (final file in batch) {
-        if ((file.name.toLowerCase().contains(query) ||
-                file.cloudPath.toLowerCase().contains(query)) &&
-            ids.add(file.id)) {
+        if (ids.add(file.id)) {
           results.add(file);
         }
       }
-      if (batch.length < 1000) break;
+      final total = _extractTotal(response);
+      if (batch.isEmpty || results.length >= total || batch.length < 100) break;
       page += 1;
     }
     results.sort(
       (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
     );
     return results;
+  }
+
+  int _extractTotal(Map<String, dynamic> json) {
+    final data = json['data'];
+    if (data is Map) return int.tryParse(data['total']?.toString() ?? '') ?? 0;
+    return 0;
   }
 
   List<CloudFile> _extractFiles(Map<String, dynamic> json) {

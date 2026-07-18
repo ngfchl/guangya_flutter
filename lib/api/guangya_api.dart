@@ -18,11 +18,8 @@ class GuangyaAPI {
   DateTime? tokenExpiresAt;
   final String deviceID;
 
-  GuangyaAPI({
-    this.accessToken = '',
-    String? refreshToken,
-    String? deviceID,
-  })  : deviceID = deviceID ?? _generateDeviceID();
+  GuangyaAPI({this.accessToken = '', String? refreshToken, String? deviceID})
+    : deviceID = deviceID ?? _generateDeviceID();
 
   static String _generateDeviceID() {
     return 'flutter-${DateTime.now().millisecondsSinceEpoch}';
@@ -34,7 +31,8 @@ class GuangyaAPI {
     if (access == null) return null;
     accessToken = access;
     refreshTokenValue =
-        _findStringDeep(value, ['refresh_token', 'refreshToken']) ?? refreshTokenValue;
+        _findStringDeep(value, ['refresh_token', 'refreshToken']) ??
+        refreshTokenValue;
     final expires = _findIntDeep(value, ['expires_in', 'expiresIn']);
     if (expires != null) {
       tokenExpiresAt = DateTime.now().add(Duration(seconds: expires));
@@ -54,8 +52,10 @@ class GuangyaAPI {
 
   // ── Authentication ──────────────────────────────────────────────────
 
-  Future<Map<String, dynamic>> loginSMSInit(String phoneNumber,
-      {String? captchaToken}) async {
+  Future<Map<String, dynamic>> loginSMSInit(
+    String phoneNumber, {
+    String? captchaToken,
+  }) async {
     final body = <String, dynamic>{
       'client_id': AppConfig.clientID,
       'action': 'POST:/v1/auth/verification',
@@ -66,24 +66,34 @@ class GuangyaAPI {
     return Http.accountRequest('/v1/shield/captcha/init', body: body);
   }
 
-  Future<Map<String, dynamic>> loginSMSSend(String phoneNumber,
-      {String captchaToken = '', String target = 'ANY'}) async {
-    return Http.accountRequest('/v1/auth/verification',
-        body: {
-          'phone_number': phoneNumber,
-          'target': target,
-          'client_id': AppConfig.clientID,
-        },
-        extraHeaders: {'x-captcha-token': captchaToken});
+  Future<Map<String, dynamic>> loginSMSSend(
+    String phoneNumber, {
+    String captchaToken = '',
+    String target = 'ANY',
+  }) async {
+    return Http.accountRequest(
+      '/v1/auth/verification',
+      body: {
+        'phone_number': phoneNumber,
+        'target': target,
+        'client_id': AppConfig.clientID,
+      },
+      extraHeaders: {'x-captcha-token': captchaToken},
+    );
   }
 
   Future<Map<String, dynamic>> loginSMSVerify(
-      String verificationID, String verificationCode) async {
-    return Http.accountRequest('/v1/auth/verification/verify', body: {
-      'verification_id': verificationID,
-      'verification_code': verificationCode,
-      'client_id': AppConfig.clientID,
-    });
+    String verificationID,
+    String verificationCode,
+  ) async {
+    return Http.accountRequest(
+      '/v1/auth/verification/verify',
+      body: {
+        'verification_id': verificationID,
+        'verification_code': verificationCode,
+        'client_id': AppConfig.clientID,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> loginSMSSignIn({
@@ -92,31 +102,36 @@ class GuangyaAPI {
     required String username,
     required String captchaToken,
   }) async {
-    final result = await Http.accountRequest('/v1/auth/signin',
-        body: {
-          'verification_code': code,
-          'verification_token': verificationToken,
-          'username': username,
-          'client_id': AppConfig.clientID,
-        },
-        extraHeaders: {'x-captcha-token': captchaToken});
+    final result = await Http.accountRequest(
+      '/v1/auth/signin',
+      body: {
+        'verification_code': code,
+        'verification_token': verificationToken,
+        'username': username,
+        'client_id': AppConfig.clientID,
+      },
+      extraHeaders: {'x-captcha-token': captchaToken},
+    );
     updateTokens(result);
     return result;
   }
 
   Future<Map<String, dynamic>> loginQRInit() async {
-    return Http.accountRequest('/v1/auth/device/code', body: {
-      'scope': 'user',
-      'client_id': AppConfig.clientID,
-    });
+    return Http.accountRequest(
+      '/v1/auth/device/code',
+      body: {'scope': 'user', 'client_id': AppConfig.clientID},
+    );
   }
 
   Future<Map<String, dynamic>> loginQRPoll(String token) async {
-    final result = await Http.accountRequest('/v1/auth/token', body: {
-      'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
-      'device_code': token,
-      'client_id': AppConfig.clientID,
-    });
+    final result = await Http.accountRequest(
+      '/v1/auth/token',
+      body: {
+        'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
+        'device_code': token,
+        'client_id': AppConfig.clientID,
+      },
+    );
     updateTokens(result);
     return result;
   }
@@ -124,13 +139,15 @@ class GuangyaAPI {
   Future<Map<String, dynamic>> refreshAccessToken([String? token]) async {
     final t = token ?? refreshTokenValue;
     if (t == null) throw Exception('没有可用的刷新令牌');
-    final result = await Http.accountRequest('/v1/auth/token',
-        body: {
-          'client_id': AppConfig.clientID,
-          'grant_type': 'refresh_token',
-          'refresh_token': t,
-        },
-        extraHeaders: {'x-action': '401'});
+    final result = await Http.accountRequest(
+      '/v1/auth/token',
+      body: {
+        'client_id': AppConfig.clientID,
+        'grant_type': 'refresh_token',
+        'refresh_token': t,
+      },
+      extraHeaders: {'x-action': '401'},
+    );
     updateTokens(result);
     return result;
   }
@@ -146,16 +163,17 @@ class GuangyaAPI {
     int pageSize = 50,
     List<int> status = const [0, 1, 3, 4],
   }) async {
-    return Http.apiRequest('/nd.bizcloudcollection.s/v1/list_task', body: {
-      'page': page,
-      'pageSize': pageSize,
-      'status': status,
-    });
+    return Http.apiRequest(
+      '/nd.bizcloudcollection.s/v1/list_task',
+      body: {'page': page, 'pageSize': pageSize, 'status': status},
+    );
   }
 
   Future<Map<String, dynamic>> cloudResolveURL(String url) async {
-    return Http.apiRequest('/nd.bizcloudcollection.s/v1/resolve_res',
-        body: {'url': url});
+    return Http.apiRequest(
+      '/nd.bizcloudcollection.s/v1/resolve_res',
+      body: {'url': url},
+    );
   }
 
   Future<Map<String, dynamic>> cloudResolveTorrent(File torrentFile) async {
@@ -163,21 +181,27 @@ class GuangyaAPI {
     final formData = FormData.fromMap({
       'torrent': MultipartFile.fromBytes(bytes, filename: 'file.torrent'),
     });
-    return Http.apiRequest('/nd.bizcloudcollection.s/v1/resolve_torrent',
-        body: formData);
+    return Http.apiRequest(
+      '/nd.bizcloudcollection.s/v1/resolve_torrent',
+      body: formData,
+    );
   }
 
-  Future<Map<String, dynamic>> cloudCreateTask(String url,
-      {String? parentID}) async {
-    return Http.apiRequest('/nd.bizcloudcollection.s/v1/create_task', body: {
-      'url': url,
-      'parentId': parentID ?? '',
-    });
+  Future<Map<String, dynamic>> cloudCreateTask(
+    String url, {
+    String? parentID,
+  }) async {
+    return Http.apiRequest(
+      '/nd.bizcloudcollection.s/v1/create_task',
+      body: {'url': url, 'parentId': parentID ?? ''},
+    );
   }
 
   Future<Map<String, dynamic>> taskStatus(String taskID) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/get_task_status',
-        body: {'taskId': taskID});
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/get_task_status',
+      body: {'taskId': taskID},
+    );
   }
 
   // ── File system ────────────────────────────────────────────────────
@@ -207,42 +231,64 @@ class GuangyaAPI {
     return Http.apiRequest('/userres/v1/file/get_file_list', body: body);
   }
 
-  Future<Map<String, dynamic>> fsCreateDir(String name,
-      {String? parentID, bool failIfNameExist = false}) async {
-    final body = <String, dynamic>{
-      'dirName': name,
-      'parentId': parentID ?? '',
-    };
+  /// Searches the full cloud drive server-side instead of walking every folder.
+  Future<Map<String, dynamic>> searchFiles(
+    String name, {
+    int page = 0,
+    int pageSize = 100,
+  }) {
+    return Http.apiRequest(
+      '/userres/v1/file/search_files',
+      body: {'page': page, 'pageSize': pageSize, 'name': name},
+    );
+  }
+
+  Future<Map<String, dynamic>> fsCreateDir(
+    String name, {
+    String? parentID,
+    bool failIfNameExist = false,
+  }) async {
+    final body = <String, dynamic>{'dirName': name, 'parentId': parentID ?? ''};
     if (failIfNameExist) body['failIfNameExist'] = true;
-    return Http.apiRequest('/nd.bizuserres.s/v1/file/create_dir',
-        body: body,
-        allowedCodes: failIfNameExist ? [159] : []);
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/file/create_dir',
+      body: body,
+      allowedCodes: failIfNameExist ? [159] : [],
+    );
   }
 
-  Future<Map<String, dynamic>> fsCopy(List<String> fileIDs,
-      {String? parentID}) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/file/copy_file', body: {
-      'fileIds': fileIDs,
-      'parentId': parentID ?? '',
-    });
+  Future<Map<String, dynamic>> fsCopy(
+    List<String> fileIDs, {
+    String? parentID,
+  }) async {
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/file/copy_file',
+      body: {'fileIds': fileIDs, 'parentId': parentID ?? ''},
+    );
   }
 
-  Future<Map<String, dynamic>> fsMove(List<String> fileIDs,
-      {String? parentID}) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/file/move_file', body: {
-      'fileIds': fileIDs,
-      'parentId': parentID ?? '',
-    });
+  Future<Map<String, dynamic>> fsMove(
+    List<String> fileIDs, {
+    String? parentID,
+  }) async {
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/file/move_file',
+      body: {'fileIds': fileIDs, 'parentId': parentID ?? ''},
+    );
   }
 
   Future<Map<String, dynamic>> fsDelete(List<String> fileIDs) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/file/delete_file',
-        body: {'fileIds': fileIDs});
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/file/delete_file',
+      body: {'fileIds': fileIDs},
+    );
   }
 
   Future<Map<String, dynamic>> fsRecycle(List<String> fileIDs) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/file/recycle_file',
-        body: {'fileIds': fileIDs});
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/file/recycle_file',
+      body: {'fileIds': fileIDs},
+    );
   }
 
   Future<Map<String, dynamic>> fsClearRecycleBin() async {
@@ -250,31 +296,58 @@ class GuangyaAPI {
   }
 
   Future<Map<String, dynamic>> fsRename(String fileID, String newName) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/file/rename', body: {
-      'fileId': fileID,
-      'newName': newName,
-    });
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/file/rename',
+      body: {'fileId': fileID, 'newName': newName},
+    );
   }
 
   Future<Map<String, dynamic>> fsDetail(String fileID) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/file/get_file_detail',
-        body: {'fileId': fileID});
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/file/get_file_detail',
+      body: {'fileId': fileID},
+    );
   }
 
   Future<Map<String, dynamic>> fsImageList() async {
-    return fsFiles(parentID: '*', orderBy: 3, sortType: 1, fileTypes: [1], resType: 1);
+    return fsFiles(
+      parentID: '*',
+      orderBy: 3,
+      sortType: 1,
+      fileTypes: [1],
+      resType: 1,
+    );
   }
 
   Future<Map<String, dynamic>> fsVideoList() async {
-    return fsFiles(parentID: '*', orderBy: 3, sortType: 1, fileTypes: [2], resType: 1);
+    return fsFiles(
+      parentID: '*',
+      orderBy: 3,
+      sortType: 1,
+      fileTypes: [2],
+      resType: 1,
+    );
   }
 
   Future<Map<String, dynamic>> fsAudioList() async {
-    return fsFiles(parentID: '*', orderBy: 3, sortType: 1, fileTypes: [3], resType: 1, needPlayRecord: true);
+    return fsFiles(
+      parentID: '*',
+      orderBy: 3,
+      sortType: 1,
+      fileTypes: [3],
+      resType: 1,
+      needPlayRecord: true,
+    );
   }
 
   Future<Map<String, dynamic>> fsDocumentList() async {
-    return fsFiles(parentID: '*', orderBy: 3, sortType: 1, fileTypes: [4], resType: 1);
+    return fsFiles(
+      parentID: '*',
+      orderBy: 3,
+      sortType: 1,
+      fileTypes: [4],
+      resType: 1,
+    );
   }
 
   Future<Map<String, dynamic>> fsRecycleFiles() async {
@@ -282,29 +355,37 @@ class GuangyaAPI {
   }
 
   Future<Map<String, dynamic>> downloadURL(String fileID) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/get_res_download_url',
-        body: {'fileId': fileID});
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/get_res_download_url',
+      body: {'fileId': fileID},
+    );
   }
 
-  Future<Map<String, dynamic>> vodDownloadURL(String fileID, String gcid) async {
-    return Http.apiRequest('/userres/v1/file/get_vod_download_url',
-        body: {'fileId': fileID, 'gcid': gcid});
+  Future<Map<String, dynamic>> vodDownloadURL(
+    String fileID,
+    String gcid,
+  ) async {
+    return Http.apiRequest(
+      '/userres/v1/file/get_vod_download_url',
+      body: {'fileId': fileID, 'gcid': gcid},
+    );
   }
 
   Future<Map<String, dynamic>> recentViewed({
     int pageSize = 100,
     String cursor = '',
   }) async {
-    return Http.apiRequest('/userres/v1/get_user_action',
-        body: {'cursor': cursor, 'pageSize': pageSize});
+    return Http.apiRequest(
+      '/userres/v1/get_user_action',
+      body: {'cursor': cursor, 'pageSize': pageSize},
+    );
   }
 
   Future<Map<String, dynamic>> recentRestored({int pageSize = 100}) async {
-    return Http.apiRequest('/userres/v1/get_restore_list', body: {
-      'pageSize': pageSize,
-      'orderBy': 2,
-      'sortType': 1,
-    });
+    return Http.apiRequest(
+      '/userres/v1/get_restore_list',
+      body: {'pageSize': pageSize, 'orderBy': 2, 'sortType': 1},
+    );
   }
 
   // ── Shares ─────────────────────────────────────────────────────────
@@ -320,34 +401,37 @@ class GuangyaAPI {
     int maxRestoreCount = 0,
     int downloadType = 1,
   }) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/share_file', body: {
-      'fileIds': fileIDs,
-      'title': title,
-      'validateDuration': validateDuration,
-      'shareType': shareType,
-      'code': code,
-      'autoFillCode': autoFillCode,
-      'trafficLimit': trafficLimit,
-      'maxRestoreCount': maxRestoreCount,
-      'downloadType': downloadType,
-    });
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/share_file',
+      body: {
+        'fileIds': fileIDs,
+        'title': title,
+        'validateDuration': validateDuration,
+        'shareType': shareType,
+        'code': code,
+        'autoFillCode': autoFillCode,
+        'trafficLimit': trafficLimit,
+        'maxRestoreCount': maxRestoreCount,
+        'downloadType': downloadType,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> shareUserList({
     int page = 0,
     int pageSize = 50,
   }) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/get_share_list', body: {
-      'page': page,
-      'pageSize': pageSize,
-      'orderType': 1,
-      'sortType': 1,
-    });
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/get_share_list',
+      body: {'page': page, 'pageSize': pageSize, 'orderType': 1, 'sortType': 1},
+    );
   }
 
   Future<Map<String, dynamic>> shareDelete(List<String> ids) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/delete_share',
-        body: {'ids': ids});
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/delete_share',
+      body: {'ids': ids},
+    );
   }
 
   Future<Map<String, dynamic>> shareUpdate(
@@ -361,17 +445,20 @@ class GuangyaAPI {
     int maxRestoreCount = 0,
     int downloadType = 1,
   }) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/update_share', body: {
-      'id': shareID,
-      'title': title,
-      'validateDuration': validateDuration,
-      'shareType': shareType,
-      'code': code,
-      'autoFillCode': autoFillCode,
-      'trafficLimit': trafficLimit,
-      'maxRestoreCount': maxRestoreCount,
-      'downloadType': downloadType,
-    });
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/update_share',
+      body: {
+        'id': shareID,
+        'title': title,
+        'validateDuration': validateDuration,
+        'shareType': shareType,
+        'code': code,
+        'autoFillCode': autoFillCode,
+        'trafficLimit': trafficLimit,
+        'maxRestoreCount': maxRestoreCount,
+        'downloadType': downloadType,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> shareRestore(
@@ -379,17 +466,24 @@ class GuangyaAPI {
     List<String> fileIDs, {
     String parentID = '',
   }) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/restore_share', body: {
-      'accessToken': accessToken,
-      'fileIds': fileIDs,
-      'parentId': parentID,
-    });
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/restore_share',
+      body: {
+        'accessToken': accessToken,
+        'fileIds': fileIDs,
+        'parentId': parentID,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> shareDownloadURL(
-      String fileID, String accessToken) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/get_share_download_url',
-        body: {'fileId': fileID, 'accessToken': accessToken});
+    String fileID,
+    String accessToken,
+  ) async {
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/get_share_download_url',
+      body: {'fileId': fileID, 'accessToken': accessToken},
+    );
   }
 
   Future<Map<String, dynamic>> shareFilesSize(
@@ -397,12 +491,14 @@ class GuangyaAPI {
     List<String> fileIDs, {
     bool download = true,
   }) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/get_share_files_size',
-        body: {
-          'accessToken': accessToken,
-          'fileIds': fileIDs,
-          'download': download,
-        });
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/get_share_files_size',
+      body: {
+        'accessToken': accessToken,
+        'fileIds': fileIDs,
+        'download': download,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> shareFilesList(
@@ -414,26 +510,33 @@ class GuangyaAPI {
     int sortType = 0,
   }) async {
     return Http.publicRequest(
-        '/nd.bizuserres.s/v1/get_share_page_files_list',
-        body: {
-          'accessToken': accessToken,
-          'parentId': parentID,
-          'page': page,
-          'pageSize': pageSize,
-          'orderBy': orderBy,
-          'sortType': sortType,
-        });
+      '/nd.bizuserres.s/v1/get_share_page_files_list',
+      body: {
+        'accessToken': accessToken,
+        'parentId': parentID,
+        'page': page,
+        'pageSize': pageSize,
+        'orderBy': orderBy,
+        'sortType': sortType,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> shareSummary(String shareID) async {
-    return Http.publicRequest('/nd.bizuserres.s/v1/get_share_summary',
-        body: {'shareId': shareID});
+    return Http.publicRequest(
+      '/nd.bizuserres.s/v1/get_share_summary',
+      body: {'shareId': shareID},
+    );
   }
 
   Future<Map<String, dynamic>> shareAccessToken(
-      String shareID, String code) async {
-    return Http.publicRequest('/nd.bizuserres.s/v1/get_share_access_token',
-        body: {'shareId': shareID, 'code': code});
+    String shareID,
+    String code,
+  ) async {
+    return Http.publicRequest(
+      '/nd.bizuserres.s/v1/get_share_access_token',
+      body: {'shareId': shareID, 'code': code},
+    );
   }
 
   // ── Upload ─────────────────────────────────────────────────────────
@@ -446,12 +549,16 @@ class GuangyaAPI {
   }) async {
     final res = <String, dynamic>{'fileSize': fileSize};
     if (md5 != null) res['md5'] = _base64MD5(md5);
-    return Http.apiRequest('/nd.bizuserres.s/v1/get_res_center_token', body: {
-      'capacity': 2,
-      'name': name,
-      'res': res,
-      'parentId': parentID ?? '',
-    }, allowedCodes: const [156]);
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/get_res_center_token',
+      body: {
+        'capacity': 2,
+        'name': name,
+        'res': res,
+        'parentId': parentID ?? '',
+      },
+      allowedCodes: const [156],
+    );
   }
 
   Future<Map<String, dynamic>> flashTransferToken({
@@ -461,12 +568,16 @@ class GuangyaAPI {
     required String md5,
   }) async {
     final normalizedMD5 = md5.trim().toLowerCase();
-    return Http.apiRequest('/nd.bizuserres.s/v1/get_res_center_token', body: {
-      'capacity': 1,
-      'name': name,
-      'res': {'md5': normalizedMD5, 'fileSize': fileSize},
-      'parentId': parentID ?? '',
-    }, allowedCodes: const [156]);
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/get_res_center_token',
+      body: {
+        'capacity': 1,
+        'name': name,
+        'res': {'md5': normalizedMD5, 'fileSize': fileSize},
+        'parentId': parentID ?? '',
+      },
+      allowedCodes: const [156],
+    );
   }
 
   Future<Map<String, dynamic>> flashTransferGCIDToken({
@@ -476,29 +587,41 @@ class GuangyaAPI {
     required String gcid,
   }) async {
     final normalizedGCID = gcid.trim().toUpperCase();
-    return Http.apiRequest('/nd.bizuserres.s/v1/get_res_center_token', body: {
-      'capacity': 1,
-      'name': name,
-      'res': {'gcid': normalizedGCID, 'fileSize': fileSize},
-      'parentId': parentID ?? '',
-    }, allowedCodes: const [156]);
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/get_res_center_token',
+      body: {
+        'capacity': 1,
+        'name': name,
+        'res': {'gcid': normalizedGCID, 'fileSize': fileSize},
+        'parentId': parentID ?? '',
+      },
+      allowedCodes: const [156],
+    );
   }
 
   Future<Map<String, dynamic>> deleteUploadTask(List<String> taskIDs) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/file/delete_upload_task',
-        body: {'taskIds': taskIDs});
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/file/delete_upload_task',
+      body: {'taskIds': taskIDs},
+    );
   }
 
   Future<Map<String, dynamic>> checkCanFlashUpload(
-      String taskID, String gcid) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/check_can_flash_upload',
-        body: {'taskId': taskID, 'gcid': gcid});
+    String taskID,
+    String gcid,
+  ) async {
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/check_can_flash_upload',
+      body: {'taskId': taskID, 'gcid': gcid},
+    );
   }
 
   Future<Map<String, dynamic>> uploadInfo(String taskID) async {
-    return Http.apiRequest('/nd.bizuserres.s/v1/file/get_info_by_task_id',
-        body: {'taskId': taskID},
-        allowedCodes: const [145, 146, 155, 163]);
+    return Http.apiRequest(
+      '/nd.bizuserres.s/v1/file/get_info_by_task_id',
+      body: {'taskId': taskID},
+      allowedCodes: const [145, 146, 155, 163],
+    );
   }
 
   Future<Map<String, dynamic>> fileUpload(
@@ -533,7 +656,8 @@ class GuangyaAPI {
 
     final gcid = _calculateGCID(bytes);
     final canFlash = await checkCanFlashUpload(taskID, gcid);
-    if (_findBoolDeep(canFlash, ['canFlashUpload', 'can_flash_upload']) == true) {
+    if (_findBoolDeep(canFlash, ['canFlashUpload', 'can_flash_upload']) ==
+        true) {
       return uploadInfo(taskID);
     }
 
@@ -553,11 +677,15 @@ class GuangyaAPI {
     required String contentType,
     required int chunkSize,
   }) async {
-    final creds = _findMapDeep(tokenData, ['creds']) ?? const <String, dynamic>{};
+    final creds =
+        _findMapDeep(tokenData, ['creds']) ?? const <String, dynamic>{};
     final accessKeyID = _findStringDeep(creds, ['accessKeyID', 'accessKeyId']);
     final secret = _findStringDeep(creds, ['secretAccessKey']);
     final sessionToken = _findStringDeep(creds, ['sessionToken']);
-    final endpoint = _findStringDeep(tokenData, ['fullEndPoint', 'fullEndpoint']);
+    final endpoint = _findStringDeep(tokenData, [
+      'fullEndPoint',
+      'fullEndpoint',
+    ]);
     final bucket = _findStringDeep(tokenData, ['bucketName']);
     final objectPath = _findStringDeep(tokenData, ['objectPath']);
     if (accessKeyID == null ||
@@ -603,7 +731,9 @@ class GuangyaAPI {
         contentMD5: contentMD5,
         subResources: {'partNumber': '$number', 'uploadId': uploadID},
       );
-      parts.add(MapEntry(number, response.headers['etag']?.replaceAll('"', '') ?? ''));
+      parts.add(
+        MapEntry(number, response.headers['etag']?.replaceAll('"', '') ?? ''),
+      );
       offset = end;
       number += 1;
     }
@@ -641,7 +771,8 @@ class GuangyaAPI {
     Map<String, String> subResources = const {},
   }) async {
     final date = HttpDate.format(DateTime.now().toUtc());
-    final canonicalResource = '/$bucket/$objectKey${_subResourceQuery(subResources)}';
+    final canonicalResource =
+        '/$bucket/$objectKey${_subResourceQuery(subResources)}';
     final canonical = [
       method.toUpperCase(),
       contentMD5,
@@ -745,8 +876,11 @@ class GuangyaAPI {
       'append_to_response': 'credits,images,translations',
       'include_image_language': 'zh-CN,zh,null,en',
     };
-    final uri = Uri.https('api.themoviedb.org',
-        '/3/tv/$seriesID/season/$season/episode/$episode', params);
+    final uri = Uri.https(
+      'api.themoviedb.org',
+      '/3/tv/$seriesID/season/$season/episode/$episode',
+      params,
+    );
     return _tmdbRequest(uri, proxyHost: proxyHost, proxyPort: proxyPort);
   }
 
@@ -758,9 +892,10 @@ class GuangyaAPI {
     String proxyPort = '',
   }) async {
     final dio = DioClient.dio;
-    final response = await dio.getUri(url, options: Options(
-      headers: {'Accept': 'application/json'},
-    ));
+    final response = await dio.getUri(
+      url,
+      options: Options(headers: {'Accept': 'application/json'}),
+    );
     if (response.statusCode! < 200 || response.statusCode! >= 300) {
       throw Exception('TMDB 请求失败');
     }
@@ -769,7 +904,10 @@ class GuangyaAPI {
 
   // ── Helpers ───────────────────────────────────────────────────────
 
-  static String? _findStringDeep(Map<String, dynamic>? json, List<String> keys) {
+  static String? _findStringDeep(
+    Map<String, dynamic>? json,
+    List<String> keys,
+  ) {
     if (json == null) return null;
     for (final key in keys) {
       final v = json[key];
@@ -777,8 +915,10 @@ class GuangyaAPI {
     }
     for (final entry in json.entries) {
       if (entry.value is Map<String, dynamic>) {
-        final found =
-            _findStringDeep(entry.value as Map<String, dynamic>, keys);
+        final found = _findStringDeep(
+          entry.value as Map<String, dynamic>,
+          keys,
+        );
         if (found != null) return found;
       }
     }
@@ -869,10 +1009,10 @@ class GuangyaAPI {
     final chunkSize = length <= 0x8000000
         ? 262144
         : length <= 0x10000000
-            ? 524288
-            : length <= 0x20000000
-                ? 1048576
-                : 2097152;
+        ? 524288
+        : length <= 0x20000000
+        ? 1048576
+        : 2097152;
     final hashes = <int>[];
     for (var offset = 0; offset < bytes.length; offset += chunkSize) {
       final end = min(offset + chunkSize, bytes.length);
