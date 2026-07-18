@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,10 +25,14 @@ class MediaPlayerDialog extends ConsumerStatefulWidget {
 class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   late final Player _player;
   late final VideoController _controller;
+  StreamSubscription<VideoParams>? _videoParamsSubscription;
+  Timer? _videoDimensionFallbackTimer;
   final _videoKey = GlobalKey<VideoState>();
   late CloudFile _currentFile;
   String? _error;
   bool _loading = true;
+  var _videoAspectRatio = 3 / 2;
+  var _hasVideoDimensions = false;
   bool _showEpisodes = false;
   List<CloudFile> _episodes = const [];
   List<CloudFile> _subtitleCandidates = const [];
@@ -35,6 +42,23 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     super.initState();
     _player = Player();
     _controller = VideoController(_player);
+    unawaited(
+      _controller.platform.future.then<void>(
+        (_) {},
+        onError: (Object error, StackTrace stackTrace) {
+          if (!mounted) return;
+          setState(() {
+            _error = error is MissingPluginException
+                ? '内置播放器插件未加载。请完全停止当前调试进程后重新运行应用。'
+                : '内置视频输出初始化失败：$error';
+            _loading = false;
+          });
+        },
+      ),
+    );
+    _videoParamsSubscription = _player.stream.videoParams.listen(
+      _updateVideoDimensions,
+    );
     _currentFile = widget.file;
     Future.microtask(_open);
   }
@@ -52,6 +76,12 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
           .read(fileProvider.notifier)
           .playbackUrl(_currentFile);
       await _player.open(Media(url.toString()), play: true);
+      _videoDimensionFallbackTimer?.cancel();
+      _videoDimensionFallbackTimer = Timer(const Duration(seconds: 4), () {
+        if (mounted && _loading && _error == null) {
+          setState(() => _loading = false);
+        }
+      });
       final siblings = await ref
           .read(fileProvider.notifier)
           .siblingMediaFiles(_currentFile);
@@ -61,10 +91,29 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
           .siblingFiles(_currentFile);
       _subtitleCandidates = _matchingSubtitles(_currentFile, folderFiles);
     } catch (error) {
-      _error = error.toString();
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+      if (mounted) {
+        setState(() {
+          _error = error.toString();
+          _loading = false;
+        });
+      }
+    } finally {}
+  }
+
+  void _updateVideoDimensions(VideoParams params) {
+    final width = params.dw ?? params.w;
+    final height = params.dh ?? params.h;
+    if (width == null || height == null || width <= 0 || height <= 0) return;
+    final aspect = params.aspect ?? width / height;
+    if (aspect < 0.25 || aspect > 4 || !mounted) return;
+    _videoDimensionFallbackTimer?.cancel();
+    setState(() {
+      _videoAspectRatio = aspect;
+      _hasVideoDimensions = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _error == null) setState(() => _loading = false);
+    });
   }
 
   List<CloudFile> _matchingEpisodes(CloudFile file, List<CloudFile> siblings) {
@@ -148,6 +197,8 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
 
   @override
   void dispose() {
+    _videoDimensionFallbackTimer?.cancel();
+    _videoParamsSubscription?.cancel();
     _player.dispose();
     super.dispose();
   }
@@ -155,7 +206,20 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final screen = MediaQuery.sizeOf(context);
+    final sideWidth = _showEpisodes ? 250.0 : 0.0;
+    final maxVideoWidth = math.max(360.0, screen.width - sideWidth - 120);
+    final maxVideoHeight = math.max(260.0, screen.height - 290);
+    final preferredWidth = _hasVideoDimensions
+        ? math.min(900.0, _videoAspectRatio * maxVideoHeight)
+        : 600.0;
+    final videoWidth = preferredWidth.clamp(360.0, maxVideoWidth).toDouble();
+    final videoHeight = (videoWidth / _videoAspectRatio)
+        .clamp(240.0, maxVideoHeight)
+        .toDouble();
+    final contentWidth = videoWidth + sideWidth;
     return ShadDialog(
+      constraints: BoxConstraints(maxWidth: contentWidth),
       title: Text(
         _currentFile.name,
         maxLines: 1,
@@ -177,60 +241,71 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
       ],
       child: Material(
         color: Colors.transparent,
-        child: SizedBox(
-          width: 960,
-          height: 610,
-          child: Row(
-            children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: ColoredBox(
-                    color: Colors.black,
-                    child: _loading
-                        ? const Center(child: ShadProgress())
-                        : _error != null
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Text(
-                                '无法播放：$_error',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: cs.destructive),
+        child: AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          child: SizedBox(
+            width: contentWidth,
+            height: videoHeight,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: videoWidth,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: ColoredBox(
+                      color: Colors.black,
+                      child: _loading
+                          ? Center(
+                              child: CircularProgressIndicator(
+                                strokeWidth: 3,
+                                color: cs.primary,
                               ),
+                            )
+                          : _error != null
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Text(
+                                  '无法播放：$_error',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: cs.destructive),
+                                ),
+                              ),
+                            )
+                          : Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: Video(
+                                    key: _videoKey,
+                                    controller: _controller,
+                                    controls: NoVideoControls,
+                                  ),
+                                ),
+                                Positioned.fill(
+                                  child: _MediaPlaybackControls(
+                                    player: _player,
+                                    controller: _controller,
+                                    onSearchSubtitles:
+                                        _searchDirectorySubtitles,
+                                    onLoadLocalSubtitle: _loadLocalSubtitle,
+                                    onToggleFullscreen: () =>
+                                        _videoKey.currentState
+                                            ?.toggleFullscreen() ??
+                                        Future.value(),
+                                  ),
+                                ),
+                              ],
                             ),
-                          )
-                        : Stack(
-                            children: [
-                              Positioned.fill(
-                                child: Video(
-                                  key: _videoKey,
-                                  controller: _controller,
-                                  controls: NoVideoControls,
-                                ),
-                              ),
-                              Positioned.fill(
-                                child: _MediaPlaybackControls(
-                                  player: _player,
-                                  controller: _controller,
-                                  onSearchSubtitles: _searchDirectorySubtitles,
-                                  onLoadLocalSubtitle: _loadLocalSubtitle,
-                                  onToggleFullscreen: () =>
-                                      _videoKey.currentState
-                                          ?.toggleFullscreen() ??
-                                      Future.value(),
-                                ),
-                              ),
-                            ],
-                          ),
+                    ),
                   ),
                 ),
-              ),
-              if (_showEpisodes) ...[
-                const SizedBox(width: 10),
-                SizedBox(width: 240, child: _episodeList(cs)),
+                if (_showEpisodes) ...[
+                  const SizedBox(width: 10),
+                  SizedBox(width: 240, child: _episodeList(cs)),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
