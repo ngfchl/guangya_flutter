@@ -1619,6 +1619,40 @@ class _FastTransferTool extends ConsumerStatefulWidget {
   ConsumerState<_FastTransferTool> createState() => _FastTransferToolState();
 }
 
+enum _FastTransferTaskState { imported, skipped, failed, cancelled }
+
+class _FastTransferTaskResult {
+  final FastTransferEntry entry;
+  final _FastTransferTaskState state;
+  final String message;
+
+  const _FastTransferTaskResult({
+    required this.entry,
+    required this.state,
+    required this.message,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'entry': entry.toJson(),
+    'state': state.name,
+    'message': message,
+  };
+
+  factory _FastTransferTaskResult.fromJson(Map<String, dynamic> value) {
+    final state = _FastTransferTaskState.values.firstWhere(
+      (candidate) => candidate.name == value['state']?.toString(),
+      orElse: () => _FastTransferTaskState.failed,
+    );
+    return _FastTransferTaskResult(
+      entry: FastTransferEntry.fromJson(
+        Map<String, dynamic>.from(value['entry'] as Map),
+      ),
+      state: state,
+      message: value['message']?.toString() ?? '',
+    );
+  }
+}
+
 class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   final _json = TextEditingController();
   bool _running = false;
@@ -1627,6 +1661,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   bool _createDirectories = true;
   bool _skipExisting = true;
   String _result = '';
+  var _taskResults = <_FastTransferTaskResult>[];
 
   @override
   void initState() {
@@ -1647,6 +1682,16 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         });
       }
       _result = raw['result']?.toString() ?? '';
+      _taskResults =
+          (raw['results'] as List?)
+              ?.whereType<Map>()
+              .map(
+                (value) => _FastTransferTaskResult.fromJson(
+                  Map<String, dynamic>.from(value),
+                ),
+              )
+              .toList() ??
+          [];
     }
   }
 
@@ -1656,23 +1701,36 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  Future<void> _submit({List<FastTransferEntry>? retryEntries}) async {
     late final List<FastTransferEntry> entries;
-    try {
-      entries = parseFastTransferJSON(_json.text);
-    } catch (error) {
-      setState(() => _result = error.toString());
-      return;
+    if (retryEntries != null) {
+      entries = retryEntries;
+    } else {
+      try {
+        entries = parseFastTransferJSON(_json.text);
+      } catch (error) {
+        setState(() => _result = error.toString());
+        return;
+      }
     }
     setState(() {
       _running = true;
       _paused = false;
       _cancelRequested = false;
       _result = '';
+      if (retryEntries == null) {
+        _taskResults = [];
+      } else {
+        final retryPaths = retryEntries.map((entry) => entry.path).toSet();
+        _taskResults.removeWhere(
+          (result) => retryPaths.contains(result.entry.path),
+        );
+      }
     });
     await StorageManager.set(StorageKeys.fastTransferSession, {
       'entries': entries.map((entry) => entry.toJson()).toList(),
       'result': '待执行 ${entries.length} 项',
+      'results': _taskResults.map((result) => result.toJson()).toList(),
     });
     var completed = 0;
     var failed = 0;
@@ -1707,6 +1765,11 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
             if (_skipExisting &&
                 await _hasExistingFile(api, targetID, entry.name)) {
               completed += 1;
+              _recordTaskResult(
+                entry,
+                _FastTransferTaskState.skipped,
+                '目标目录已有同名文件',
+              );
               continue;
             }
             if (entry.md5 != null) {
@@ -1725,8 +1788,14 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
               );
             }
             completed += 1;
-          } catch (_) {
+            _recordTaskResult(entry, _FastTransferTaskState.imported, '秒传成功');
+          } catch (error) {
             failed += 1;
+            _recordTaskResult(
+              entry,
+              _FastTransferTaskState.failed,
+              error.toString(),
+            );
           }
           if (mounted) {
             setState(
@@ -1737,6 +1806,14 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       }
 
       await Future.wait(List.generate(concurrency, (_) => worker()));
+      if (_cancelRequested) {
+        final handled = _taskResults.map((result) => result.entry.path).toSet();
+        for (final entry in entries.where(
+          (entry) => !handled.contains(entry.path),
+        )) {
+          _recordTaskResult(entry, _FastTransferTaskState.cancelled, '任务已终止');
+        }
+      }
       await ref.read(fileProvider.notifier).loadFiles();
       if (mounted) {
         setState(
@@ -1750,6 +1827,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         'result': _cancelRequested
             ? '秒传已终止：成功 $completed，失败 $failed'
             : '秒传完成：成功 $completed，失败 $failed',
+        'results': _taskResults.map((result) => result.toJson()).toList(),
       });
     } catch (error) {
       if (mounted) {
@@ -1759,6 +1837,51 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       if (mounted) setState(() => _running = false);
     }
   }
+
+  void _recordTaskResult(
+    FastTransferEntry entry,
+    _FastTransferTaskState state,
+    String message,
+  ) {
+    if (!mounted) return;
+    setState(() {
+      _taskResults.removeWhere((result) => result.entry.path == entry.path);
+      _taskResults.add(
+        _FastTransferTaskResult(entry: entry, state: state, message: message),
+      );
+      _result = '已处理 ${_taskResults.length} 项';
+    });
+  }
+
+  Future<void> _retryFailed() async {
+    final entries = _taskResults
+        .where((result) => result.state == _FastTransferTaskState.failed)
+        .map((result) => result.entry)
+        .toList();
+    if (entries.isNotEmpty) await _submit(retryEntries: entries);
+  }
+
+  IconData _taskIcon(_FastTransferTaskState state) => switch (state) {
+    _FastTransferTaskState.imported => Icons.check_circle_outline_rounded,
+    _FastTransferTaskState.skipped => Icons.skip_next_rounded,
+    _FastTransferTaskState.failed => Icons.error_outline_rounded,
+    _FastTransferTaskState.cancelled => Icons.cancel_outlined,
+  };
+
+  Color _taskColor(ShadColorScheme cs, _FastTransferTaskState state) =>
+      switch (state) {
+        _FastTransferTaskState.imported => cs.primary,
+        _FastTransferTaskState.skipped => cs.mutedForeground,
+        _FastTransferTaskState.failed => cs.destructive,
+        _FastTransferTaskState.cancelled => cs.mutedForeground,
+      };
+
+  String _taskTitle(_FastTransferTaskState state) => switch (state) {
+    _FastTransferTaskState.imported => '已秒传',
+    _FastTransferTaskState.skipped => '已跳过',
+    _FastTransferTaskState.failed => '失败',
+    _FastTransferTaskState.cancelled => '已取消',
+  };
 
   Future<String?> _resolveTargetDirectory(
     FastTransferEntry entry,
@@ -1939,6 +2062,76 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           if (_result.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(_result, style: TextStyle(color: cs.mutedForeground)),
+          ],
+          if (_taskResults.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _ToolSection(
+              title: '任务结果',
+              description:
+                  '成功 ${_taskResults.where((result) => result.state == _FastTransferTaskState.imported).length} 项，失败 ${_taskResults.where((result) => result.state == _FastTransferTaskState.failed).length} 项。',
+              trailing: ShadButton.outline(
+                onPressed:
+                    _running ||
+                        !_taskResults.any(
+                          (result) =>
+                              result.state == _FastTransferTaskState.failed,
+                        )
+                    ? null
+                    : _retryFailed,
+                leading: const Icon(Icons.refresh_rounded, size: 16),
+                child: const Text('重试失败项'),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: SizedBox(
+                  height: 210,
+                  child: ListView.separated(
+                    itemCount: _taskResults.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final task = _taskResults[index];
+                      final color = _taskColor(cs, task.state);
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          children: [
+                            Icon(_taskIcon(task.state), size: 17, color: color),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    task.entry.path,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  Text(
+                                    task.message,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: cs.mutedForeground,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _taskTitle(task.state),
+                              style: TextStyle(fontSize: 12, color: color),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
           ],
         ],
       ),
