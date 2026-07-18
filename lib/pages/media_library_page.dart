@@ -447,7 +447,15 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         onBack: () => setState(() => _detailWork = null),
         onDownload: (item) =>
             ref.read(fileProvider.notifier).downloadFile(item.file),
-        onPlay: (item) => unawaited(showMediaPlayerDialog(context, item.file)),
+        onPlay: (item) => unawaited(
+          showMediaPlayerDialog(
+            context,
+            item.file,
+            episodeCandidates: (current ?? _detailWork!).resources
+                .map((resource) => resource.file)
+                .toList(),
+          ),
+        ),
         onExternalPlay: (item) => showShadDialog(
           context: context,
           builder: (_) => ExternalPlayerDialog(file: item.file),

@@ -14,7 +14,11 @@ import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import '../providers/file_provider.dart';
 
-Future<void> showMediaPlayerDialog(BuildContext context, CloudFile file) async {
+Future<void> showMediaPlayerDialog(
+  BuildContext context,
+  CloudFile file, {
+  List<CloudFile> episodeCandidates = const [],
+}) async {
   Future<void> openExternalPlayer() async {
     await Future<void>.delayed(Duration.zero);
     if (!context.mounted) return;
@@ -27,8 +31,11 @@ Future<void> showMediaPlayerDialog(BuildContext context, CloudFile file) async {
   try {
     await showShadDialog<void>(
       context: context,
-      builder: (_) =>
-          MediaPlayerDialog(file: file, onPlaybackFailure: openExternalPlayer),
+      builder: (_) => MediaPlayerDialog(
+        file: file,
+        episodeCandidates: episodeCandidates,
+        onPlaybackFailure: openExternalPlayer,
+      ),
     );
   } catch (_) {
     await openExternalPlayer();
@@ -37,11 +44,13 @@ Future<void> showMediaPlayerDialog(BuildContext context, CloudFile file) async {
 
 class MediaPlayerDialog extends ConsumerStatefulWidget {
   final CloudFile file;
+  final List<CloudFile> episodeCandidates;
   final Future<void> Function()? onPlaybackFailure;
 
   const MediaPlayerDialog({
     super.key,
     required this.file,
+    this.episodeCandidates = const [],
     this.onPlaybackFailure,
   });
 
@@ -99,6 +108,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
       _updateVideoDimensions,
     );
     _currentFile = widget.file;
+    _episodes = _matchingEpisodes(widget.file, widget.episodeCandidates);
     Future.microtask(_open);
   }
 
@@ -130,11 +140,20 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
       final siblings = await ref
           .read(fileProvider.notifier)
           .siblingMediaFiles(_currentFile);
-      _episodes = _matchingEpisodes(_currentFile, siblings);
+      final episodeSources = <String, CloudFile>{
+        for (final candidate in widget.episodeCandidates)
+          candidate.id: candidate,
+        for (final candidate in siblings) candidate.id: candidate,
+      }.values.toList();
       final folderFiles = await ref
           .read(fileProvider.notifier)
           .siblingFiles(_currentFile);
-      _subtitleCandidates = _matchingSubtitles(_currentFile, folderFiles);
+      if (mounted) {
+        setState(() {
+          _episodes = _matchingEpisodes(_currentFile, episodeSources);
+          _subtitleCandidates = _matchingSubtitles(_currentFile, folderFiles);
+        });
+      }
     } catch (error) {
       _handlePlaybackFailure(error, '内置播放器打开失败');
     }
@@ -206,25 +225,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     }).toList();
   }
 
-  Future<void> _searchDirectorySubtitles() async {
-    if (_subtitleCandidates.isEmpty) {
-      await showShadDialog<void>(
-        context: context,
-        builder: (context) => const ShadDialog(
-          title: Text('同目录字幕'),
-          description: Text('缓存的当前目录中没有找到匹配的字幕文件。'),
-        ),
-      );
-      return;
-    }
-    final selected = await showShadDialog<CloudFile>(
-      context: context,
-      builder: (context) => _SubtitlePickerDialog(
-        title: '同目录字幕 (${_subtitleCandidates.length})',
-        subtitles: _subtitleCandidates,
-      ),
-    );
-    if (selected == null || !mounted) return;
+  Future<void> _setDirectorySubtitle(CloudFile selected) async {
     try {
       final url = await ref.read(fileProvider.notifier).playbackUrl(selected);
       await _player.setSubtitleTrack(
@@ -340,8 +341,8 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
                             controller: _controller,
                             controls: (videoState) => _MediaPlaybackControls(
                               player: _player,
-                              fullscreen: videoState.isFullscreen(),
-                              onSearchSubtitles: _searchDirectorySubtitles,
+                              directorySubtitles: _subtitleCandidates,
+                              onSelectDirectorySubtitle: _setDirectorySubtitle,
                               onLoadLocalSubtitle: _loadLocalSubtitle,
                               onToggleFullscreen: videoState.toggleFullscreen,
                             ),
@@ -419,15 +420,15 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
 
 class _MediaPlaybackControls extends StatefulWidget {
   final Player player;
-  final bool fullscreen;
-  final Future<void> Function() onSearchSubtitles;
+  final List<CloudFile> directorySubtitles;
+  final Future<void> Function(CloudFile subtitle) onSelectDirectorySubtitle;
   final Future<void> Function() onLoadLocalSubtitle;
   final Future<void> Function() onToggleFullscreen;
 
   const _MediaPlaybackControls({
     required this.player,
-    required this.fullscreen,
-    required this.onSearchSubtitles,
+    required this.directorySubtitles,
+    required this.onSelectDirectorySubtitle,
     required this.onLoadLocalSubtitle,
     required this.onToggleFullscreen,
   });
@@ -523,17 +524,102 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
     final tracks = widget.player.state.tracks.subtitle;
     return ShadPopover(
       controller: _subtitlePopover,
-      popover: (_) => _trackPopover<SubtitleTrack>(
-        title: '字幕',
-        tracks: tracks,
-        selectedID: widget.player.state.track.subtitle.id,
-        onSelect: (track) async {
-          await widget.player.setSubtitleTrack(track);
-          _subtitlePopover.hide();
-          if (mounted) setState(() {});
-        },
-      ),
+      popover: (_) => _subtitlePopoverContent(tracks),
       child: _menuButton('字幕', () async => _subtitlePopover.toggle()),
+    );
+  }
+
+  Widget _subtitlePopoverContent(List<SubtitleTrack> tracks) {
+    final selectedID = widget.player.state.track.subtitle.id;
+    return SizedBox(
+      width: 300,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('字幕', style: TextStyle(fontWeight: FontWeight.w700)),
+          if (tracks.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 160),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: tracks.length,
+                itemBuilder: (context, index) {
+                  final track = tracks[index];
+                  final selected = track.id == selectedID;
+                  return ShadButton.ghost(
+                    size: ShadButtonSize.sm,
+                    onPressed: () async {
+                      await widget.player.setSubtitleTrack(track);
+                      _subtitlePopover.hide();
+                      if (mounted) setState(() {});
+                    },
+                    leading: Icon(
+                      selected
+                          ? Icons.check_rounded
+                          : Icons.closed_caption_rounded,
+                      size: 15,
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _trackLabel(track),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+          if (widget.directorySubtitles.isNotEmpty) ...[
+            const Divider(height: 16),
+            Text(
+              '同目录字幕 (${widget.directorySubtitles.length})',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 180),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: widget.directorySubtitles.length,
+                itemBuilder: (context, index) {
+                  final subtitle = widget.directorySubtitles[index];
+                  return ShadButton.ghost(
+                    size: ShadButtonSize.sm,
+                    onPressed: () async {
+                      await widget.onSelectDirectorySubtitle(subtitle);
+                      _subtitlePopover.hide();
+                    },
+                    leading: const Icon(Icons.search_rounded, size: 15),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        subtitle.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+          const Divider(height: 16),
+          ShadButton.ghost(
+            size: ShadButtonSize.sm,
+            onPressed: () async {
+              _subtitlePopover.hide();
+              await widget.onLoadLocalSubtitle();
+            },
+            leading: const Icon(Icons.folder_open_rounded, size: 15),
+            child: const Text('加载本地字幕'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -697,8 +783,6 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                                 _rateMenu(),
                                 _audioMenu(),
                                 _subtitleMenu(),
-                                _menuButton('搜字幕', widget.onSearchSubtitles),
-                                _menuButton('加载字幕', widget.onLoadLocalSubtitle),
                                 _controlButton(
                                   widget.player.state.volume <= 0
                                       ? Icons.volume_off_rounded
@@ -729,9 +813,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                                   ),
                                 ),
                                 _controlButton(
-                                  widget.fullscreen
-                                      ? Icons.fullscreen_exit_rounded
-                                      : Icons.fullscreen_rounded,
+                                  Icons.fullscreen_rounded,
                                   widget.onToggleFullscreen,
                                 ),
                               ],
@@ -775,46 +857,6 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
     final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
     return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
-  }
-}
-
-class _SubtitlePickerDialog extends StatelessWidget {
-  final String title;
-  final List<CloudFile> subtitles;
-
-  const _SubtitlePickerDialog({required this.title, required this.subtitles});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return ShadDialog(
-      title: Text(title),
-      description: const Text('从当前视频同目录的缓存文件中匹配'),
-      child: Material(
-        color: Colors.transparent,
-        child: SizedBox(
-          width: 520,
-          height: 360,
-          child: ListView.separated(
-            itemCount: subtitles.length,
-            separatorBuilder: (_, _) => Divider(height: 1, color: cs.border),
-            itemBuilder: (context, index) {
-              final subtitle = subtitles[index];
-              return ListTile(
-                onTap: () => Navigator.of(context).pop(subtitle),
-                leading: Icon(Icons.closed_caption_rounded, color: cs.primary),
-                title: Text(
-                  subtitle.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(subtitle.formattedSize),
-              );
-            },
-          ),
-        ),
-      ),
-    );
   }
 }
 
