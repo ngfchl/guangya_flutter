@@ -2638,25 +2638,25 @@ class _ShadLoading extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     return Center(
-      child: OS26Glass(
-        radius: 12,
-        opacity: 0.52,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const ShadProgress(),
-            const SizedBox(height: 10),
-            Text(
-              '加载中',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: cs.mutedForeground,
-              ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(width: 40, height: 40, child: ShadProgress()),
+          const SizedBox(height: 16),
+          Text(
+            '正在加载文件夹内容...',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              color: cs.foreground,
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '正在同步文件、大小和修改时间',
+            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+          ),
+        ],
       ),
     );
   }
