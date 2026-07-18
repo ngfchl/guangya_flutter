@@ -1028,7 +1028,7 @@ class _ToolbarSegment extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDual = value == _PaneLayoutMode.dual;
     return _ToolbarButton(
-      icon: isDual ? Icons.view_agenda_rounded : Icons.view_column_rounded,
+      icon: isDual ? Icons.view_agenda_rounded : Icons.crop_square_rounded,
       label: isDual ? '切换单面板' : '切换双面板',
       grouped: true,
       selected: isDual,
@@ -1690,24 +1690,29 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
         builder: (context, constraints) => SingleChildScrollView(
           controller: _scrollController,
           scrollDirection: Axis.horizontal,
-          child: SizedBox(
-            height: constraints.maxHeight,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var index = 0; index < _columns.length; index++)
-                  _FinderColumn(
-                    key: ValueKey('${_columns[index].parentID}-$index'),
-                    column: _columns[index],
-                    source: widget.source,
-                    onOpenFolder: (folder) => _openFolder(index, folder),
-                    onOpenFile: (file) => _openCloudFile(context, ref, file),
-                    onMoveCloudFiles: (files, parentID) =>
-                        _moveFiles(files, parentID, index),
-                    onUploadLocalFiles: (files, parentID) =>
-                        _uploadFiles(files, parentID, index),
-                  ),
-              ],
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: constraints.maxWidth),
+            child: SizedBox(
+              height: constraints.maxHeight,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var index = 0; index < _columns.length; index++)
+                    _FinderColumn(
+                      key: ValueKey('${_columns[index].parentID}-$index'),
+                      column: _columns[index],
+                      source: widget.source,
+                      onOpenFolder: (folder) => _openFolder(index, folder),
+                      onOpenFile: (file) => _openCloudFile(context, ref, file),
+                      onMoveCloudFiles: (files, parentID) =>
+                          _moveFiles(files, parentID, index),
+                      onUploadLocalFiles: (files, parentID) =>
+                          _uploadFiles(files, parentID, index),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
