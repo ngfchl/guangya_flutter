@@ -89,6 +89,7 @@ class MediaLibraryState {
 class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   GuangyaAPI? _api;
   final _store = MediaLibraryStore();
+  final _tmdbDetailsRequests = <String, Future<Map<String, dynamic>>>{};
   bool _loaded = false;
   bool _cancelScan = false;
 
@@ -468,7 +469,24 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     MediaLibraryItem item,
     Map<String, dynamic> candidate,
   ) async {
-    final updated = _itemFromTMDBCandidate(item, candidate);
+    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    var updated = _itemFromTMDBCandidate(item, candidate);
+    if (updated.tmdbID != null && apiKey.isNotEmpty) {
+      try {
+        final details = await _tmdbDetails(
+          updated.tmdbID!,
+          updated.mediaKind,
+          apiKey: apiKey,
+          proxyHost:
+              StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+          proxyPort:
+              StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+        );
+        updated = _itemFromTMDBDetails(updated, details);
+      } catch (_) {
+        // A selected candidate is still valid if its detail request fails.
+      }
+    }
     await _store.upsertItems([updated]);
     state = state.copyWith(
       items: state.items
@@ -511,7 +529,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         }
       }
       if (candidate == null) return fallback;
-      return _itemFromTMDBCandidate(fallback, candidate);
+      var item = _itemFromTMDBCandidate(fallback, candidate);
+      if (item.tmdbID == null) return item;
+      try {
+        final details = await _tmdbDetails(
+          item.tmdbID!,
+          item.mediaKind,
+          apiKey: apiKey,
+          proxyHost: proxyHost,
+          proxyPort: proxyPort,
+        );
+        item = _itemFromTMDBDetails(item, details);
+      } catch (_) {
+        // The search result already has enough information for an initial row.
+      }
+      return item;
     } catch (_) {
       return fallback;
     }
@@ -544,6 +576,87 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       backdropPath: candidate['backdrop_path']?.toString(),
       updatedAt: DateTime.now(),
     );
+  }
+
+  Future<Map<String, dynamic>> _tmdbDetails(
+    int id,
+    TMDBMediaKind? kind, {
+    required String apiKey,
+    required String proxyHost,
+    required String proxyPort,
+  }) {
+    final mediaKind = kind == TMDBMediaKind.tv ? 'tv' : 'movie';
+    final key = '$mediaKind:$id';
+    return _tmdbDetailsRequests.putIfAbsent(
+      key,
+      () => _api!.tmdbDetails(
+        id,
+        mediaKind: mediaKind,
+        apiKey: apiKey,
+        proxyHost: proxyHost,
+        proxyPort: proxyPort,
+      ),
+    );
+  }
+
+  MediaLibraryItem _itemFromTMDBDetails(
+    MediaLibraryItem item,
+    Map<String, dynamic> details,
+  ) {
+    final title = (details['title'] ?? details['name'])?.toString().trim();
+    final originalTitle =
+        (details['original_title'] ?? details['original_name'])
+            ?.toString()
+            .trim();
+    final releaseDate =
+        (details['release_date'] ?? details['first_air_date'])?.toString() ??
+        item.releaseDate;
+    final collection = details['belongs_to_collection'];
+    final collectionMap = collection is Map
+        ? Map<String, dynamic>.from(collection)
+        : const <String, dynamic>{};
+    return item.copyWith(
+      title: title == null || title.isEmpty ? item.title : title,
+      originalTitle: originalTitle == null || originalTitle.isEmpty
+          ? item.originalTitle
+          : originalTitle,
+      releaseDate: releaseDate,
+      overview: details['overview']?.toString().trim().isNotEmpty == true
+          ? details['overview'].toString()
+          : item.overview,
+      posterPath:
+          _preferredArtworkPath(details, 'posters') ??
+          details['poster_path']?.toString() ??
+          item.posterPath,
+      backdropPath:
+          _preferredArtworkPath(details, 'backdrops') ??
+          details['backdrop_path']?.toString() ??
+          item.backdropPath,
+      collectionID: _toInt(collectionMap['id']) ?? item.collectionID,
+      collectionName: collectionMap['name']?.toString() ?? item.collectionName,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  String? _preferredArtworkPath(Map<String, dynamic> details, String key) {
+    final images = details['images'];
+    if (images is! Map) return null;
+    final values = images[key];
+    if (values is! List) return null;
+    const languages = ['zh-CN', 'zh', null, 'en'];
+    for (final language in languages) {
+      for (final value in values) {
+        if (value is! Map || value['iso_639_1'] != language) continue;
+        final path = value['file_path']?.toString();
+        if (path != null && path.isNotEmpty) return path;
+      }
+    }
+    for (final value in values) {
+      if (value is! Map) continue;
+      final path = value['file_path']?.toString();
+      if (path != null && path.isNotEmpty) return path;
+    }
+    return null;
   }
 
   int? _toInt(dynamic value) {
