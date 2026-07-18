@@ -46,6 +46,26 @@ class _DraggedCloudFiles {
 bool _hasPressedKey(LogicalKeyboardKey key) =>
     HardwareKeyboard.instance.logicalKeysPressed.contains(key);
 
+const _desktopSelectAllShortcuts = <ShortcutActivator, Intent>{
+  SingleActivator(LogicalKeyboardKey.keyA, meta: true): _SelectAllFilesIntent(),
+  SingleActivator(LogicalKeyboardKey.keyA, control: true):
+      _SelectAllFilesIntent(),
+};
+
+class _SelectAllFilesIntent extends Intent {
+  const _SelectAllFilesIntent();
+}
+
+class _DeleteSelectedIntent extends Intent {
+  const _DeleteSelectedIntent();
+}
+
+const _desktopDeleteShortcuts = <ShortcutActivator, Intent>{
+  SingleActivator(LogicalKeyboardKey.delete): _DeleteSelectedIntent(),
+  SingleActivator(LogicalKeyboardKey.backspace, meta: true):
+      _DeleteSelectedIntent(),
+};
+
 void _selectDesktopFile(FileNotifier notifier, CloudFile file) {
   notifier.selectWithModifiers(
     file.id,
@@ -100,6 +120,40 @@ void _openCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
     return;
   }
   ref.read(fileProvider.notifier).downloadFile(file);
+}
+
+Future<void> _confirmDeleteCloudFiles(
+  BuildContext context,
+  List<CloudFile> files,
+  Future<void> Function() onConfirm,
+) async {
+  if (files.isEmpty) return;
+  final confirmed = await showShadDialog<bool>(
+    context: context,
+    builder: (dialogContext) => ShadDialog(
+      title: Text('删除 ${files.length} 项？'),
+      description: Text(
+        files.length == 1
+            ? files.first.name
+            : '将删除所选的 ${files.length} 个文件或文件夹。',
+      ),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('取消'),
+        ),
+        ShadButton.destructive(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('删除'),
+        ),
+      ],
+      child: const Padding(
+        padding: EdgeInsets.only(top: 8),
+        child: Text('此操作会将项目移入回收站。'),
+      ),
+    ),
+  );
+  if (confirmed == true) await onConfirm();
 }
 
 class WorkspacePage extends ConsumerStatefulWidget {
@@ -1320,6 +1374,7 @@ class _PrimaryFilePane extends ConsumerWidget {
         initialPath: state.folderPath,
         initialFiles: state.files,
         onViewModeChanged: onViewModeChanged,
+        allowDelete: state.section != WorkspaceSection.recycle,
       );
     }
     final notifier = ref.read(fileProvider.notifier);
@@ -1358,6 +1413,21 @@ class _PrimaryFilePane extends ConsumerWidget {
           itemIDs: files.map((file) => file.id).toList(growable: false),
           selectedIDs: state.selectedIDs,
           onMarqueeSelectionChanged: notifier.setSelection,
+          onSelectAll: notifier.selectAll,
+          onDeleteSelected: state.section == WorkspaceSection.recycle
+              ? null
+              : () {
+                  final selected = files
+                      .where((file) => state.selectedIDs.contains(file.id))
+                      .toList();
+                  unawaited(
+                    _confirmDeleteCloudFiles(
+                      context,
+                      selected,
+                      () => notifier.deleteFiles(selected),
+                    ),
+                  );
+                },
           itemBuilder: (context, index) {
             final file = files[index];
             final selected = state.selectedIDs.contains(file.id);
@@ -1476,6 +1546,8 @@ class _FilePaneCollection extends StatefulWidget {
   final List<String>? itemIDs;
   final Set<String>? selectedIDs;
   final ValueChanged<Set<String>>? onMarqueeSelectionChanged;
+  final VoidCallback? onSelectAll;
+  final VoidCallback? onDeleteSelected;
 
   const _FilePaneCollection({
     required this.viewMode,
@@ -1484,6 +1556,8 @@ class _FilePaneCollection extends StatefulWidget {
     this.itemIDs,
     this.selectedIDs,
     this.onMarqueeSelectionChanged,
+    this.onSelectAll,
+    this.onDeleteSelected,
   });
 
   @override
@@ -1494,6 +1568,7 @@ class _FilePaneCollection extends StatefulWidget {
 /// visible item intersected by the rectangle. Command/Ctrl preserves selection.
 class _FilePaneCollectionState extends State<_FilePaneCollection> {
   final _itemKeys = <int, GlobalKey>{};
+  final _focusNode = FocusNode(debugLabel: 'file-pane');
   Offset? _start;
   Offset? _current;
   Set<String> _selectionBefore = const {};
@@ -1556,6 +1631,12 @@ class _FilePaneCollectionState extends State<_FilePaneCollection> {
   }
 
   @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final content = widget.viewMode == _FileViewMode.list
         ? ListView.builder(
@@ -1586,26 +1667,47 @@ class _FilePaneCollectionState extends State<_FilePaneCollection> {
     final current = _current;
     final showMarquee =
         start != null && current != null && (current - start).distance >= 4;
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: _pointerDown,
-      onPointerMove: _pointerMove,
-      onPointerUp: _pointerEnd,
-      onPointerCancel: _pointerEnd,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          content,
-          if (showMarquee)
-            IgnorePointer(
-              child: CustomPaint(
-                painter: _MarqueeSelectionPainter(
-                  Rect.fromPoints(start, current),
-                  ShadTheme.of(context).colorScheme.primary,
+    return FocusableActionDetector(
+      focusNode: _focusNode,
+      actions: {
+        _SelectAllFilesIntent: CallbackAction<_SelectAllFilesIntent>(
+          onInvoke: (_) {
+            widget.onSelectAll?.call();
+            return null;
+          },
+        ),
+        _DeleteSelectedIntent: CallbackAction<_DeleteSelectedIntent>(
+          onInvoke: (_) {
+            widget.onDeleteSelected?.call();
+            return null;
+          },
+        ),
+      },
+      shortcuts: {..._desktopSelectAllShortcuts, ..._desktopDeleteShortcuts},
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (event) {
+          _focusNode.requestFocus();
+          _pointerDown(event);
+        },
+        onPointerMove: _pointerMove,
+        onPointerUp: _pointerEnd,
+        onPointerCancel: _pointerEnd,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            content,
+            if (showMarquee)
+              IgnorePointer(
+                child: CustomPaint(
+                  painter: _MarqueeSelectionPainter(
+                    Rect.fromPoints(start, current),
+                    ShadTheme.of(context).colorScheme.primary,
+                  ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1688,6 +1790,7 @@ class _ColumnFileBrowser extends ConsumerStatefulWidget {
   onMoveCloudFiles;
   final Future<void> Function(List<File> files, String? parentID)?
   onUploadLocalFiles;
+  final bool allowDelete;
   final ValueChanged<List<CloudFile>>? onPathChanged;
 
   const _ColumnFileBrowser({
@@ -1698,6 +1801,7 @@ class _ColumnFileBrowser extends ConsumerStatefulWidget {
     this.source = _PaneIdentity.primary,
     this.onMoveCloudFiles,
     this.onUploadLocalFiles,
+    this.allowDelete = true,
     this.onPathChanged,
   });
 
@@ -1973,6 +2077,28 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     if (mounted) await _loadColumn(index);
   }
 
+  void _selectAllColumn(int index) {
+    if (index >= _columns.length) return;
+    setState(() {
+      final columns = _columns.toList();
+      final column = columns[index];
+      columns[index] = column.copyWith(
+        selectedIDs: column.files.map((file) => file.id).toSet(),
+      );
+      _columns = columns;
+    });
+  }
+
+  void _deleteColumnFiles(int index, List<CloudFile> files) {
+    if (!widget.allowDelete || files.isEmpty) return;
+    unawaited(
+      _confirmDeleteCloudFiles(context, files, () async {
+        await ref.read(fileProvider.notifier).deleteFiles(files);
+        if (mounted) await _loadColumn(index);
+      }),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final itemCount = _columns.isEmpty ? 0 : _columns.last.files.length;
@@ -2018,6 +2144,9 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
                       column: _columns[index],
                       source: widget.source,
                       onSelect: (file) => _selectColumnFile(index, file),
+                      onSelectAll: () => _selectAllColumn(index),
+                      onDeleteSelected: (files) =>
+                          _deleteColumnFiles(index, files),
                       onOpenFolder: (folder) => _openFolder(index, folder),
                       onOpenFile: (file) => _openCloudFile(context, ref, file),
                       onMoveCloudFiles: (files, parentID) =>
@@ -2062,6 +2191,8 @@ class _FinderColumn extends StatefulWidget {
   final _ColumnListing column;
   final _PaneIdentity source;
   final ValueChanged<CloudFile> onSelect;
+  final VoidCallback onSelectAll;
+  final ValueChanged<List<CloudFile>> onDeleteSelected;
   final ValueChanged<CloudFile> onOpenFolder;
   final ValueChanged<CloudFile> onOpenFile;
   final ValueChanged<CloudFile> onCopyFastTransfer;
@@ -2075,6 +2206,8 @@ class _FinderColumn extends StatefulWidget {
     required this.column,
     required this.source,
     required this.onSelect,
+    required this.onSelectAll,
+    required this.onDeleteSelected,
     required this.onOpenFolder,
     required this.onOpenFile,
     required this.onCopyFastTransfer,
@@ -2088,138 +2221,175 @@ class _FinderColumn extends StatefulWidget {
 
 class _FinderColumnState extends State<_FinderColumn> {
   var _dragActive = false;
+  final _focusNode = FocusNode(debugLabel: 'finder-column');
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final column = widget.column;
-    return SizedBox(
-      width: 244,
-      child: DropTarget(
-        onDragEntered: (_) => setState(() => _dragActive = true),
-        onDragExited: (_) => setState(() => _dragActive = false),
-        onDragDone: (details) async {
-          setState(() => _dragActive = false);
-          final files = details.files
-              .map((file) => file.path)
-              .where((path) => path.isNotEmpty)
-              .map(File.new)
-              .where((file) => file.existsSync())
-              .toList();
-          if (files.isNotEmpty) {
-            await widget.onUploadLocalFiles(files, column.parentID);
-          }
-        },
-        child: DragTarget<_DraggedCloudFiles>(
-          onWillAcceptWithDetails: (_) => true,
-          onAcceptWithDetails: (details) async {
-            setState(() => _dragActive = false);
-            await widget.onMoveCloudFiles(details.data.files, column.parentID);
+    return FocusableActionDetector(
+      focusNode: _focusNode,
+      shortcuts: {..._desktopSelectAllShortcuts, ..._desktopDeleteShortcuts},
+      actions: {
+        _SelectAllFilesIntent: CallbackAction<_SelectAllFilesIntent>(
+          onInvoke: (_) {
+            widget.onSelectAll();
+            return null;
           },
-          onLeave: (_) => setState(() => _dragActive = false),
-          builder: (context, candidates, rejected) => AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            decoration: BoxDecoration(
-              color: _dragActive || candidates.isNotEmpty
-                  ? cs.primary.withValues(alpha: 0.10)
-                  : Colors.white.withValues(alpha: 0.22),
-              border: Border(
-                right: BorderSide(color: cs.border.withValues(alpha: 0.70)),
-                left: BorderSide(
+        ),
+        _DeleteSelectedIntent: CallbackAction<_DeleteSelectedIntent>(
+          onInvoke: (_) {
+            final selected = widget.column.files
+                .where((file) => widget.column.selectedIDs.contains(file.id))
+                .toList();
+            widget.onDeleteSelected(selected);
+            return null;
+          },
+        ),
+      },
+      child: Listener(
+        onPointerDown: (_) => _focusNode.requestFocus(),
+        child: SizedBox(
+          width: 244,
+          child: DropTarget(
+            onDragEntered: (_) => setState(() => _dragActive = true),
+            onDragExited: (_) => setState(() => _dragActive = false),
+            onDragDone: (details) async {
+              setState(() => _dragActive = false);
+              final files = details.files
+                  .map((file) => file.path)
+                  .where((path) => path.isNotEmpty)
+                  .map(File.new)
+                  .where((file) => file.existsSync())
+                  .toList();
+              if (files.isNotEmpty) {
+                await widget.onUploadLocalFiles(files, column.parentID);
+              }
+            },
+            child: DragTarget<_DraggedCloudFiles>(
+              onWillAcceptWithDetails: (_) => true,
+              onAcceptWithDetails: (details) async {
+                setState(() => _dragActive = false);
+                await widget.onMoveCloudFiles(
+                  details.data.files,
+                  column.parentID,
+                );
+              },
+              onLeave: (_) => setState(() => _dragActive = false),
+              builder: (context, candidates, rejected) => AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                decoration: BoxDecoration(
                   color: _dragActive || candidates.isNotEmpty
-                      ? cs.primary
-                      : Colors.transparent,
-                  width: 2,
-                ),
-              ),
-            ),
-            child: Column(
-              children: [
-                Container(
-                  height: 34,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    column.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      color: cs.foreground,
+                      ? cs.primary.withValues(alpha: 0.10)
+                      : Colors.white.withValues(alpha: 0.22),
+                  border: Border(
+                    right: BorderSide(color: cs.border.withValues(alpha: 0.70)),
+                    left: BorderSide(
+                      color: _dragActive || candidates.isNotEmpty
+                          ? cs.primary
+                          : Colors.transparent,
+                      width: 2,
                     ),
                   ),
                 ),
-                Divider(height: 1, color: cs.border.withValues(alpha: 0.60)),
-                Expanded(
-                  child: column.isLoading
-                      ? const _ShadLoading()
-                      : column.errorMessage != null
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Text(
-                              column.errorMessage!,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: cs.destructive,
-                              ),
-                            ),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          itemCount: column.files.length,
-                          itemBuilder: (context, index) {
-                            final file = column.files[index];
-                            final selected = column.selectedIDs.contains(
-                              file.id,
-                            );
-                            final row = _FastTransferContextMenu(
-                              file: file,
-                              onCopyFastTransfer: () =>
-                                  widget.onCopyFastTransfer(file),
-                              child: _FinderColumnItem(
-                                file: file,
-                                selected: selected,
-                                onTap: () => widget.onSelect(file),
-                                onOpen: () {
-                                  if (file.isDirectory) {
-                                    widget.onOpenFolder(file);
-                                  } else {
-                                    widget.onOpenFile(file);
-                                  }
-                                },
-                              ),
-                            );
-                            return Draggable<_DraggedCloudFiles>(
-                              data: _DraggedCloudFiles(
-                                selected
-                                    ? column.files
-                                          .where(
-                                            (item) => column.selectedIDs
-                                                .contains(item.id),
-                                          )
-                                          .toList()
-                                    : [file],
-                                widget.source,
-                              ),
-                              feedback: _DragFeedback(label: file.name),
-                              childWhenDragging: Opacity(
-                                opacity: 0.35,
-                                child: row,
-                              ),
-                              child: _FolderMoveTarget(
-                                file: file,
-                                onMove: widget.onMoveCloudFiles,
-                                child: row,
-                              ),
-                            );
-                          },
+                child: Column(
+                  children: [
+                    Container(
+                      height: 34,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        column.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: cs.foreground,
                         ),
+                      ),
+                    ),
+                    Divider(
+                      height: 1,
+                      color: cs.border.withValues(alpha: 0.60),
+                    ),
+                    Expanded(
+                      child: column.isLoading
+                          ? const _ShadLoading()
+                          : column.errorMessage != null
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Text(
+                                  column.errorMessage!,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: cs.destructive,
+                                  ),
+                                ),
+                              ),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              itemCount: column.files.length,
+                              itemBuilder: (context, index) {
+                                final file = column.files[index];
+                                final selected = column.selectedIDs.contains(
+                                  file.id,
+                                );
+                                final row = _FastTransferContextMenu(
+                                  file: file,
+                                  onCopyFastTransfer: () =>
+                                      widget.onCopyFastTransfer(file),
+                                  child: _FinderColumnItem(
+                                    file: file,
+                                    selected: selected,
+                                    onTap: () => widget.onSelect(file),
+                                    onOpen: () {
+                                      if (file.isDirectory) {
+                                        widget.onOpenFolder(file);
+                                      } else {
+                                        widget.onOpenFile(file);
+                                      }
+                                    },
+                                  ),
+                                );
+                                return Draggable<_DraggedCloudFiles>(
+                                  data: _DraggedCloudFiles(
+                                    selected
+                                        ? column.files
+                                              .where(
+                                                (item) => column.selectedIDs
+                                                    .contains(item.id),
+                                              )
+                                              .toList()
+                                        : [file],
+                                    widget.source,
+                                  ),
+                                  feedback: _DragFeedback(label: file.name),
+                                  childWhenDragging: Opacity(
+                                    opacity: 0.35,
+                                    child: row,
+                                  ),
+                                  child: _FolderMoveTarget(
+                                    file: file,
+                                    onMove: widget.onMoveCloudFiles,
+                                    child: row,
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -2756,6 +2926,22 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               ..clear()
               ..addAll(ids);
           }),
+          onSelectAll: () => setState(() {
+            _selectedIDs
+              ..clear()
+              ..addAll(_files.map((file) => file.id));
+          }),
+          onDeleteSelected: () {
+            final selected = _files
+                .where((file) => _selectedIDs.contains(file.id))
+                .toList();
+            unawaited(
+              _confirmDeleteCloudFiles(context, selected, () async {
+                await ref.read(fileProvider.notifier).deleteFiles(selected);
+                if (mounted) await _load(parentID: _currentParentID);
+              }),
+            );
+          },
           itemBuilder: (context, index) {
             final file = _files[index];
             final selected = _selectedIDs.contains(file.id);

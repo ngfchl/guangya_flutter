@@ -531,11 +531,7 @@ class FileNotifier extends StateNotifier<FileState> {
   }
 
   void selectAll() {
-    if (state.selectedIDs.length == state.files.length) {
-      state = state.copyWith(selectedIDs: {});
-    } else {
-      state = state.copyWith(selectedIDs: state.files.map((f) => f.id).toSet());
-    }
+    state = state.copyWith(selectedIDs: state.files.map((f) => f.id).toSet());
   }
 
   void clearSelection() {
