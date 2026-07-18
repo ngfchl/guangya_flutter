@@ -331,8 +331,15 @@ class MediaLibraryItem {
     );
   }
 
-  factory MediaLibraryItem.fromFile(String libraryID, CloudFile file) {
-    final parsed = ParsedMediaName.parse(file.name);
+  factory MediaLibraryItem.fromFile(
+    String libraryID,
+    CloudFile file, {
+    String? directoryName,
+  }) {
+    final parsed = ParsedMediaName.parse(
+      file.name,
+      directoryName: directoryName,
+    );
     final kind = parsed.isEpisode ? TMDBMediaKind.tv : TMDBMediaKind.movie;
     return MediaLibraryItem(
       libraryID: libraryID,
@@ -506,7 +513,7 @@ class ParsedMediaName {
     this.dynamicRange,
   });
 
-  factory ParsedMediaName.parse(String name) {
+  factory ParsedMediaName.parse(String name, {String? directoryName}) {
     final stem = name.replaceFirst(RegExp(r'\.[^.]+$'), '');
     final normalized = stem.replaceAll(RegExp(r'[._]+'), ' ');
     final episodeMatch = RegExp(
@@ -558,14 +565,27 @@ class ParsedMediaName {
         .replaceAll(RegExp(r'[\[\]【】(){}]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+    final genericName =
+        title.isEmpty ||
+        RegExp(r'^\d+$').hasMatch(title) ||
+        RegExp(r'^S\d{1,2}E\d{1,3}$', caseSensitive: false).hasMatch(title);
+    ParsedMediaName? parent;
+    if (genericName &&
+        directoryName != null &&
+        directoryName.trim().isNotEmpty) {
+      parent = ParsedMediaName.parse(directoryName);
+      if (parent.title.isNotEmpty) title = parent.title;
+    }
     if (title.isEmpty) title = normalized.trim();
 
     return ParsedMediaName(
       title: title,
-      year: yearMatch == null ? null : int.tryParse(yearMatch.group(1)!),
-      season: season,
+      year: yearMatch == null
+          ? parent?.year
+          : int.tryParse(yearMatch.group(1)!),
+      season: season ?? parent?.season,
       episode: episode,
-      isEpisode: season != null && episode != null,
+      isEpisode: (season ?? parent?.season) != null && episode != null,
       resolution: first(r'\b(?:2160p|1080p|720p|480p|4k)\b'),
       source: first(
         r'\b(?:WEB[- ]?DL|WEBRip|BluRay|BDRip|REMUX|HDTV|DVD|UHD)\b',
@@ -574,7 +594,7 @@ class ParsedMediaName {
       audio: first(
         r'\b(?:Atmos|TrueHD|DTS(?:-HD)?|DDP?(?: ?[0-9.]+)?|AAC|FLAC)\b',
       ),
-      dynamicRange: first(r'\b(?:HDR10?\+?|Dolby[ .-]?Vision|DV)\b'),
+      dynamicRange: first(r'(?:HDR10?\+?|HDR|Dolby[ .-]?Vision|DV)'),
     );
   }
 }

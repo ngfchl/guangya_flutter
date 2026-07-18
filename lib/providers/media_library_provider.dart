@@ -318,7 +318,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         Future<void> worker() async {
           while (!_cancelScan && next < pending.length) {
             final file = pending[next++];
-            final fallback = MediaLibraryItem.fromFile(library.id, file);
+            final fallback = MediaLibraryItem.fromFile(
+              library.id,
+              file,
+              directoryName: _parentDirectoryName(file.cloudPath),
+            );
             final existing = unique[file.id];
             var item = existing == null
                 ? await _recognizeMediaItem(
@@ -656,7 +660,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     if (_api == null || item.tmdbID == null || item.mediaKind == null) {
       return item;
     }
-    final parsed = ParsedMediaName.parse(item.file.name);
+    final parsed = ParsedMediaName.parse(
+      item.file.name,
+      directoryName: _parentDirectoryName(item.file.cloudPath),
+    );
     final extension = _extensionOf(item.file.name);
     final year = item.year.isEmpty ? '' : '.${item.year}';
     final episode = item.mediaKind == TMDBMediaKind.tv && parsed.isEpisode
@@ -740,6 +747,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   String _extensionOf(String value) {
     final index = value.lastIndexOf('.');
     return index <= 0 ? '' : value.substring(index + 1).toLowerCase();
+  }
+
+  String? _parentDirectoryName(String cloudPath) {
+    final values = cloudPath
+        .split(RegExp(r'[\\/]'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    return values.length < 2 ? null : values[values.length - 2];
   }
 
   String _safeCloudName(String value) {
