@@ -126,6 +126,7 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
   String? _error;
   List<CloudFile> _emptyFolders = [];
   List<List<CloudFile>> _duplicates = [];
+  List<List<CloudFile>> _similarFolders = [];
 
   Future<void> _scan() async {
     final state = ref.read(fileProvider);
@@ -135,6 +136,7 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
       _error = null;
       _emptyFolders = [];
       _duplicates = [];
+      _similarFolders = [];
     });
     try {
       final empty = <CloudFile>[];
@@ -145,15 +147,28 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
       final files = <CloudFile>[
         ...state.files.where((file) => !file.isDirectory),
       ];
+      final folders = <CloudFile>[
+        ...state.files.where((file) => file.isDirectory),
+      ];
       while (queue.isNotEmpty) {
         final folder = queue.removeLast();
         final response = await api.fsFiles(parentID: folder.id, pageSize: 1000);
         final children = _extractFiles(response);
         if (children.isEmpty) empty.add(folder);
         for (final child in children) {
-          child.isDirectory ? queue.add(child) : files.add(child);
+          if (child.isDirectory) {
+            queue.add(child);
+            folders.add(child);
+          } else {
+            files.add(child);
+          }
         }
-        if (mounted) setState(() => _emptyFolders = List.of(empty));
+        if (mounted) {
+          setState(() {
+            _emptyFolders = List.of(empty);
+            _similarFolders = _groupSimilarFolders(folders);
+          });
+        }
       }
       for (final file in files) {
         final key = file.gcid;
@@ -167,6 +182,7 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
           _duplicates = groups.values
               .where((group) => group.length > 1)
               .toList();
+          _similarFolders = _groupSimilarFolders(folders);
         });
       }
     } catch (error) {
@@ -174,6 +190,31 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
+  }
+
+  List<List<CloudFile>> _groupSimilarFolders(List<CloudFile> folders) {
+    final groups = <String, List<CloudFile>>{};
+    for (final folder in folders) {
+      final key = _normalizedFolderName(folder.name);
+      if (key.isNotEmpty) groups.putIfAbsent(key, () => []).add(folder);
+    }
+    return groups.values.where((group) => group.length > 1).toList();
+  }
+
+  String _normalizedFolderName(String value) {
+    var normalized = value.toLowerCase().trim();
+    normalized = normalized.replaceAll(
+      RegExp(
+        r'(?:[\s._-]*(?:copy|duplicate|backup|副本|复制|拷贝|备份))(?:[\s._-]*\d+)?$',
+        caseSensitive: false,
+      ),
+      '',
+    );
+    normalized = normalized.replaceAll(
+      RegExp(r'(?:[（(\[]\s*\d{1,3}\s*[）)\]])$'),
+      '',
+    );
+    return normalized.replaceAll(RegExp(r'[\s._()\[\]{}-]+'), '');
   }
 
   List<CloudFile> _extractFiles(Map<String, dynamic> value) {
@@ -205,7 +246,7 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
       children: [
         _ToolSection(
           title: '当前目录扫描',
-          description: '检查空文件夹和具有相同 GCID 的重复文件。',
+          description: '检查空文件夹、相同 GCID 的重复文件和相似名称目录。',
           trailing: ShadButton(
             onPressed: _scanning ? null : _scan,
             leading: Icon(
@@ -253,7 +294,79 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
                   ],
                 ),
         ),
+        const SizedBox(height: 14),
+        _ToolSection(
+          title: '相似文件夹',
+          description: '扫描到 ${_similarFolders.length} 组，忽略空格、标点和副本后缀。',
+          child: _similarFolders.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(
+                    '开始扫描后显示相似名称的文件夹。',
+                    style: TextStyle(color: cs.mutedForeground),
+                  ),
+                )
+              : Column(
+                  children: [
+                    for (final group in _similarFolders)
+                      _SimilarFolderGroup(folders: group),
+                  ],
+                ),
+        ),
       ],
+    );
+  }
+}
+
+class _SimilarFolderGroup extends StatelessWidget {
+  final List<CloudFile> folders;
+
+  const _SimilarFolderGroup({required this.folders});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: cs.muted,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '相似名称组 · ${folders.length} 个文件夹',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: cs.primary,
+            ),
+          ),
+          for (final folder in folders)
+            Padding(
+              padding: const EdgeInsets.only(top: 7),
+              child: Row(
+                children: [
+                  Icon(Icons.folder_rounded, size: 17, color: cs.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      folder.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Text(
+                    folder.formattedSize,
+                    style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
