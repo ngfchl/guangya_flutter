@@ -15,6 +15,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   final _tmdbApiKeyController = TextEditingController();
   final _tmdbProxyHostController = TextEditingController();
   final _tmdbProxyPortController = TextEditingController();
+  final _tmdbImageProxyController = TextEditingController();
   final _httpProxyHostController = TextEditingController();
   final _httpProxyPortController = TextEditingController();
   final _scanConcurrencyController = TextEditingController();
@@ -31,6 +32,9 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
     _tmdbProxyPortController.text =
         StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
+    _tmdbImageProxyController.text =
+        StorageManager.get<String>(StorageKeys.tmdbImageProxy) ??
+        'https://wsrv.nl';
     _httpProxyHostController.text =
         StorageManager.get<String>(StorageKeys.httpProxyHost) ?? '';
     _httpProxyPortController.text =
@@ -50,6 +54,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     _tmdbApiKeyController.dispose();
     _tmdbProxyHostController.dispose();
     _tmdbProxyPortController.dispose();
+    _tmdbImageProxyController.dispose();
     _httpProxyHostController.dispose();
     _httpProxyPortController.dispose();
     _scanConcurrencyController.dispose();
@@ -270,6 +275,17 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                   ),
                 ),
               ),
+              _SettingsRow(
+                icon: Icons.image_rounded,
+                label: '图片加速代理',
+                child: SizedBox(
+                  width: 200,
+                  child: ShadInput(
+                    controller: _tmdbImageProxyController,
+                    placeholder: const Text('https://wsrv.nl（留空直连）'),
+                  ),
+                ),
+              ),
               const SizedBox(height: 16),
               const ShadSeparator.horizontal(),
               const SizedBox(height: 16),
@@ -309,6 +325,10 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     StorageManager.set(
       StorageKeys.tmdbProxyPort,
       _tmdbProxyPortController.text.trim(),
+    );
+    StorageManager.set(
+      StorageKeys.tmdbImageProxy,
+      _tmdbImageProxyController.text.trim(),
     );
     StorageManager.set(
       StorageKeys.httpProxyHost,

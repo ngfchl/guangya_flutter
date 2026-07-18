@@ -12,6 +12,7 @@ class StorageKeys {
   static const String tmdbApiKey = 'guangya.tmdbApiKey';
   static const String tmdbProxyHost = 'guangya.tmdbProxyHost';
   static const String tmdbProxyPort = 'guangya.tmdbProxyPort';
+  static const String tmdbImageProxy = 'guangya.tmdbImageProxy';
   static const String mediaLibraries = 'guangya.mediaLibraries';
   static const String mediaLibraryItems = 'guangya.mediaLibraryItems';
   static const String mediaCategoryRules = 'guangya.mediaCategoryRules';

@@ -16,11 +16,18 @@ enum _MediaWallFilter { all, movies, series, collections, unmatched }
 
 String _tmdbImageURL(String path, {required String size}) {
   final source = _tmdbDirectImageURL(path, size: size);
-  return Uri.https('wsrv.nl', '/', {
-    'url': source,
-    'output': 'webp',
-    'q': '85',
-  }).toString();
+  final configured = StorageManager.get<String>(
+    StorageKeys.tmdbImageProxy,
+  )?.trim();
+  if (configured != null && configured.isEmpty) return source;
+  final proxy = Uri.tryParse(configured ?? 'https://wsrv.nl');
+  if (proxy == null || !proxy.hasScheme || proxy.host.isEmpty) return source;
+  return proxy
+      .replace(
+        path: proxy.path.isEmpty ? '/' : proxy.path,
+        queryParameters: {'url': source, 'output': 'webp', 'q': '85'},
+      )
+      .toString();
 }
 
 String _tmdbDirectImageURL(String path, {required String size}) {
