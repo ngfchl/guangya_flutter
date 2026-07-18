@@ -293,6 +293,31 @@ class MediaLibraryStore {
     }
   }
 
+  Future<List<CloudFile>?> siblingFiles(String fileID) async {
+    final rows = await (await _db).query(
+      'folder_children',
+      columns: const ['children_json'],
+      where: 'child_ids LIKE ?',
+      whereArgs: ['%"$fileID"%'],
+    );
+    for (final row in rows) {
+      try {
+        final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
+        if (raw is! List) continue;
+        final files = raw
+            .whereType<Map>()
+            .map(
+              (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
+            )
+            .toList();
+        if (files.any((file) => file.id == fileID)) return files;
+      } catch (_) {
+        // A stale cache row should not prevent looking at the next folder.
+      }
+    }
+    return null;
+  }
+
   Future<CloudFile?> cachedFile(String fileID) async {
     final rows = await (await _db).rawQuery(
       '''SELECT d.file_json FROM file_index i

@@ -721,6 +721,17 @@ class FileNotifier extends StateNotifier<FileState> {
 
   Future<Uri> playbackUrl(CloudFile file) => _resolveOpenUrl(file);
 
+  Future<List<CloudFile>> siblingFiles(CloudFile file) async {
+    final siblings = await FileMetadataCache.siblingFiles(file.id);
+    if (siblings == null) return [file];
+    return siblings;
+  }
+
+  Future<List<CloudFile>> siblingMediaFiles(CloudFile file) async {
+    final siblings = await siblingFiles(file);
+    return siblings.where((candidate) => candidate.isVideo).toList();
+  }
+
   Future<void> _openRemoteFile(
     CloudFile file, {
     required String preparingMessage,

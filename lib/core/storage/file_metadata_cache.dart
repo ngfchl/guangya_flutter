@@ -16,6 +16,9 @@ class FileMetadataCache {
   static Future<List<CloudFile>?> folderChildren(String? folderID) =>
       _store.folderChildren(folderID);
 
+  static Future<List<CloudFile>?> siblingFiles(String fileID) =>
+      _store.siblingFiles(fileID);
+
   static Future<CloudFile?> file(String fileID) => _store.cachedFile(fileID);
 
   static Future<void> updateFolderChildren(
