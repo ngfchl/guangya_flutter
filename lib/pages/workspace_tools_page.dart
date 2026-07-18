@@ -753,7 +753,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   void initState() {
     super.initState();
     final state = ref.read(fileProvider);
-    _candidates = state.files;
+    _candidates = state.clipboard ?? state.files;
     _sourceID = state.folderPath.isEmpty ? null : state.folderPath.last.id;
     _sourceLabel = state.folderPath.isEmpty
         ? '云盘根目录'
@@ -761,6 +761,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
     _rules = [
       const BatchRenameRule(id: 'rule-0', kind: BatchRenameRuleKind.replace),
     ];
+    _selectedIDs.addAll(_candidates.map((file) => file.id));
   }
 
   @override

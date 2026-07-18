@@ -8,15 +8,18 @@ import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/file_list_tile.dart';
+import '../widgets/media_player_dialog.dart';
 
 class FileSearchResultsPage extends ConsumerStatefulWidget {
   final String query;
   final VoidCallback onClose;
+  final ValueChanged<List<CloudFile>> onBatchRename;
 
   const FileSearchResultsPage({
     super.key,
     required this.query,
     required this.onClose,
+    required this.onBatchRename,
   });
 
   @override
@@ -26,6 +29,7 @@ class FileSearchResultsPage extends ConsumerStatefulWidget {
 
 class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
   late Future<List<CloudFile>> _results = _search();
+  final _selectedIDs = <String>{};
 
   @override
   void didUpdateWidget(covariant FileSearchResultsPage oldWidget) {
@@ -118,20 +122,79 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
               ),
             );
           }
-          return ListView.builder(
-            itemCount: files.length,
-            itemBuilder: (context, index) {
-              final file = files[index];
-              return FileListTile(
-                file: file,
-                onOpen: () => notifier.downloadFile(file),
-                onCopy: () => notifier.copyToClipboard([file]),
-                onCut: () => notifier.cutToClipboard([file]),
-                onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
-                onDownload: () => notifier.downloadFile(file),
-                onDelete: () => notifier.deleteFiles([file]),
-              );
-            },
+          final selected = files
+              .where((file) => _selectedIDs.contains(file.id))
+              .toList();
+          return Column(
+            children: [
+              if (selected.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                  child: Row(
+                    children: [
+                      Text('已选择 ${selected.length} 项'),
+                      const Spacer(),
+                      ShadButton.ghost(
+                        size: ShadButtonSize.sm,
+                        onPressed: () => notifier.copyToClipboard(selected),
+                        leading: const Icon(Icons.copy_rounded, size: 16),
+                        child: const Text('复制'),
+                      ),
+                      ShadButton.ghost(
+                        size: ShadButtonSize.sm,
+                        onPressed: () => notifier.cutToClipboard(selected),
+                        leading: const Icon(
+                          Icons.content_cut_rounded,
+                          size: 16,
+                        ),
+                        child: const Text('剪切'),
+                      ),
+                      ShadButton.ghost(
+                        size: ShadButtonSize.sm,
+                        onPressed: () => widget.onBatchRename(selected),
+                        leading: const Icon(
+                          Icons.drive_file_rename_outline_rounded,
+                          size: 16,
+                        ),
+                        child: const Text('批量重命名'),
+                      ),
+                      ShadButton.ghost(
+                        size: ShadButtonSize.sm,
+                        onPressed: () => notifier.deleteFiles(selected),
+                        leading: const Icon(
+                          Icons.delete_outline_rounded,
+                          size: 16,
+                        ),
+                        child: const Text('删除'),
+                      ),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: files.length,
+                  itemBuilder: (context, index) {
+                    final file = files[index];
+                    return FileListTile(
+                      file: file,
+                      isSelected: _selectedIDs.contains(file.id),
+                      onSelect: () => setState(() {
+                        _selectedIDs.contains(file.id)
+                            ? _selectedIDs.remove(file.id)
+                            : _selectedIDs.add(file.id);
+                      }),
+                      onOpen: () => notifier.downloadFile(file),
+                      onCopy: () => notifier.copyToClipboard([file]),
+                      onCut: () => notifier.cutToClipboard([file]),
+                      onCopyFastTransfer: () =>
+                          notifier.copyFastTransferJSON(file),
+                      onDownload: () => notifier.downloadFile(file),
+                      onDelete: () => notifier.deleteFiles([file]),
+                    );
+                  },
+                ),
+              ),
+            ],
           );
         },
       ),
@@ -182,63 +245,109 @@ class MediaSearchResultsPage extends ConsumerWidget {
             itemCount: items.length,
             itemBuilder: (context, index) {
               final item = items[index];
-              return Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: cs.card,
-                  border: Border.all(color: cs.border),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 46,
-                      height: 64,
-                      decoration: BoxDecoration(
-                        color: cs.muted,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Icon(
-                        Icons.movie_rounded,
-                        color: cs.mutedForeground,
+              return ShadContextMenuRegion(
+                items: [
+                  ShadContextMenuItem.inset(
+                    leading: const Icon(LucideIcons.play, size: 16),
+                    onPressed: () => showMediaPlayerDialog(context, item.file),
+                    child: const Text('播放'),
+                  ),
+                  ShadContextMenuItem.inset(
+                    leading: const Icon(LucideIcons.monitorPlay, size: 16),
+                    onPressed: () => showShadDialog<void>(
+                      context: context,
+                      builder: (_) => ExternalPlayerDialog(file: item.file),
+                    ),
+                    child: const Text('外部播放器'),
+                  ),
+                  ShadContextMenuItem.inset(
+                    leading: const Icon(LucideIcons.download, size: 16),
+                    onPressed: () =>
+                        ref.read(fileProvider.notifier).downloadFile(item.file),
+                    child: const Text('下载'),
+                  ),
+                  ShadContextMenuItem.inset(
+                    leading: const Icon(LucideIcons.refreshCw, size: 16),
+                    onPressed: () => ref
+                        .read(mediaLibraryProvider.notifier)
+                        .scanSelectedLibrary(),
+                    child: const Text('重新扫描媒体库'),
+                  ),
+                ],
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => showShadDialog<void>(
+                      context: context,
+                      builder: (_) => ShadDialog(
+                        title: Text(item.title),
+                        description: const Text('影视资源信息'),
+                        child: SelectableText(
+                          'TMDB: ${item.tmdbID ?? '未匹配'}\n文件: ${item.file.name}\n路径: ${item.file.cloudPath}\n${item.overview}',
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: cs.card,
+                        border: Border.all(color: cs.border),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
                         children: [
-                          Text(
-                            item.title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: cs.foreground,
-                              fontWeight: FontWeight.w700,
+                          Container(
+                            width: 46,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: cs.muted,
+                              borderRadius: BorderRadius.circular(6),
                             ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            item.year.isEmpty ? '年份未知' : item.year,
-                            style: TextStyle(
-                              fontSize: 12,
+                            child: Icon(
+                              Icons.movie_rounded,
                               color: cs.mutedForeground,
                             ),
                           ),
-                          Text(
-                            item.file.cloudPath,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: cs.mutedForeground,
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.title,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: cs.foreground,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  item.year.isEmpty ? '年份未知' : item.year,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: cs.mutedForeground,
+                                  ),
+                                ),
+                                Text(
+                                  item.file.cloudPath,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: cs.mutedForeground,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ],
+                  ),
                 ),
               );
             },

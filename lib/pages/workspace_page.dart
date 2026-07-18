@@ -218,6 +218,13 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
             _fileSearchQuery = null;
             _searchController.clear();
           }),
+          onBatchRename: (files) {
+            ref.read(fileProvider.notifier).copyToClipboard(files);
+            setState(() {
+              _fileSearchQuery = null;
+              _cloudActiveTool = WorkspaceTool.rename;
+            });
+          },
         ),
       );
     }
