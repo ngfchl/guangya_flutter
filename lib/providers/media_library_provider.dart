@@ -27,6 +27,13 @@ bool isMediaScanDiscLayout(Iterable<CloudFile> children) {
   return directoryNames.contains('BDMV') || directoryNames.contains('VIDEO_TS');
 }
 
+class MediaTMDBMatchRequest {
+  final List<MediaLibraryItem> items;
+  final List<Map<String, dynamic>> candidates;
+
+  const MediaTMDBMatchRequest({required this.items, required this.candidates});
+}
+
 class MediaLibraryState {
   final List<MediaLibraryDefinition> libraries;
   final String? selectedLibraryID;
@@ -564,12 +571,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   /// Pulls current file metadata from the cloud before parsing and matching it.
   /// This is required after a file was renamed outside the media scanner.
-  Future<void> refreshAndRecognizeItems(
+  Future<List<MediaTMDBMatchRequest>> refreshAndRecognizeItems(
     Iterable<MediaLibraryItem> values,
   ) async {
-    if (_api == null) return;
+    if (_api == null) return const [];
     final originals = values.toList();
-    if (originals.isEmpty) return;
+    if (originals.isEmpty) return const [];
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
     state = state.copyWith(statusMessage: '正在同步云盘文件信息…', clearError: true);
     final synced = <_SyncedMediaItem>[];
@@ -613,12 +620,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             : '同步失败：${failures.first}',
         statusMessage: '未能同步云盘文件信息',
       );
-      return;
+      return const [];
     }
 
     state = state.copyWith(statusMessage: '正在自动识别并规范命名…');
     final updates = <MediaLibraryItem>[];
     final replacements = <String, MediaLibraryItem>{};
+    final pendingMatches = <MediaTMDBMatchRequest>[];
     var recognizedCount = 0;
     var renamedCount = 0;
     for (final entry in synced) {
@@ -634,16 +642,35 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           '标题=${parsed.title}，年份=${parsed.year ?? '-'}，'
           '类型=${fallback.mediaKind?.name ?? 'automatic'}',
         );
-        var updated = apiKey.trim().isEmpty
-            ? fallback
-            : await _recognizeMediaItem(
-                fallback,
-                apiKey,
-                proxyHost:
-                    StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
-                proxyPort:
-                    StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
-              );
+        var updated = fallback;
+        if (apiKey.trim().isNotEmpty) {
+          final candidates = await _tmdbCandidatesForItem(
+            fallback,
+            apiKey,
+            proxyHost:
+                StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+            proxyPort:
+                StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+          );
+          if (candidates.length == 1) {
+            updated = await _applyTMDBCandidateAndDetails(
+              fallback,
+              candidates.single,
+              apiKey,
+              proxyHost:
+                  StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+              proxyPort:
+                  StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+            );
+          } else if (candidates.length > 1 && original.tmdbID == null) {
+            pendingMatches.add(
+              MediaTMDBMatchRequest(items: [fallback], candidates: candidates),
+            );
+            _appendScanLog(
+              '[同步识别][DEBUG] 存在 ${candidates.length} 个 TMDB 候选，等待用户选择',
+            );
+          }
+        }
         if (updated.tmdbID != null) {
           recognizedCount++;
           _appendScanLog(
@@ -705,6 +732,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         errorMessage: failures.isEmpty ? null : failures.first,
       );
     }
+    return pendingMatches;
   }
 
   /// Keeps SQLite media records aligned with file-manager rename operations
@@ -786,12 +814,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         // A selected candidate is still valid if its detail request fails.
       }
     }
-    await _store.upsertItems([updated]);
+    updated = await _renameMatchedMediaFile(updated);
+    await _replaceItemsByPreviousIDs({'${item.libraryID}:${item.id}': updated});
     state = state.copyWith(
       items: state.items
-          .map((current) => current.id == updated.id ? updated : current)
+          .map(
+            (current) =>
+                current.libraryID == item.libraryID && current.id == item.id
+                ? updated
+                : current,
+          )
           .toList(),
-      statusMessage: '已匹配《${updated.title}》',
+      statusMessage: updated.file.name == item.file.name
+          ? '已匹配《${updated.title}》'
+          : '已匹配并规范命名《${updated.title}》',
       clearError: true,
     );
     return updated;
@@ -977,6 +1013,97 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     } catch (_) {
       return fallback;
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _tmdbCandidatesForItem(
+    MediaLibraryItem fallback,
+    String apiKey, {
+    required String proxyHost,
+    required String proxyPort,
+  }) async {
+    if (_api == null || apiKey.trim().isEmpty) return const [];
+    final parsed = ParsedMediaName.parse(
+      fallback.file.name,
+      directoryName: _parentDirectoryName(fallback.file.cloudPath),
+    );
+    final requestedKind = fallback.mediaKind == TMDBMediaKind.tv
+        ? 'tv'
+        : fallback.mediaKind == TMDBMediaKind.movie
+        ? 'movie'
+        : 'auto';
+    final result = await _api!.tmdbSearch(
+      fallback.title,
+      apiKey: apiKey,
+      mediaKind: requestedKind,
+      proxyHost: proxyHost,
+      proxyPort: proxyPort,
+      year: parsed.year,
+    );
+    final values = result['results'];
+    if (values is! List) return const [];
+    final expectedType = requestedKind == 'auto' ? null : requestedKind;
+    final normalizedTitle = _normalizeMediaTitle(fallback.title);
+    if (normalizedTitle.isEmpty) return const [];
+    final scored = <({int score, Map<String, dynamic> candidate})>[];
+    for (final value in values) {
+      if (value is! Map) continue;
+      final candidate = Map<String, dynamic>.from(value);
+      final type = candidate['media_type']?.toString() ?? expectedType;
+      if (type != 'movie' && type != 'tv') continue;
+      final releaseDate =
+          (candidate['release_date'] ?? candidate['first_air_date'])
+              ?.toString() ??
+          '';
+      if (parsed.year != null && !releaseDate.startsWith('${parsed.year}')) {
+        continue;
+      }
+      final title = _normalizeMediaTitle(
+        (candidate['title'] ?? candidate['name'] ?? '').toString(),
+      );
+      final originalTitle = _normalizeMediaTitle(
+        (candidate['original_title'] ?? candidate['original_name'] ?? '')
+            .toString(),
+      );
+      var score = 0;
+      if (title == normalizedTitle || originalTitle == normalizedTitle) {
+        score = 100;
+      } else if (title.contains(normalizedTitle) ||
+          normalizedTitle.contains(title) ||
+          originalTitle.contains(normalizedTitle) ||
+          normalizedTitle.contains(originalTitle)) {
+        score = 40;
+      }
+      if (score == 0) continue;
+      if (parsed.year != null) score += 30;
+      candidate['media_type'] = type;
+      scored.add((score: score, candidate: candidate));
+    }
+    scored.sort((a, b) => b.score.compareTo(a.score));
+    return scored.map((entry) => entry.candidate).toList();
+  }
+
+  Future<MediaLibraryItem> _applyTMDBCandidateAndDetails(
+    MediaLibraryItem fallback,
+    Map<String, dynamic> candidate,
+    String apiKey, {
+    required String proxyHost,
+    required String proxyPort,
+  }) async {
+    var item = _itemFromTMDBCandidate(fallback, candidate);
+    if (item.tmdbID == null) return item;
+    try {
+      final details = await _tmdbDetails(
+        item.tmdbID!,
+        item.mediaKind,
+        apiKey: apiKey,
+        proxyHost: proxyHost,
+        proxyPort: proxyPort,
+      );
+      item = _itemFromTMDBDetails(item, details);
+    } catch (_) {
+      // The selected search candidate remains usable when detail hydration fails.
+    }
+    return item;
   }
 
   Future<MediaLibraryItem> _renameMatchedMediaFile(

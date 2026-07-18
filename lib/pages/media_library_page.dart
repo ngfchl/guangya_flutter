@@ -476,10 +476,25 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         onManualMatch: () => _showManualTMDBMatch(current ?? _detailWork!),
         onRefreshAndRecognize: () async {
           final selected = current ?? _detailWork!;
-          await ref
+          final pendingMatches = await ref
               .read(mediaLibraryProvider.notifier)
               .refreshAndRecognizeItems(selected.resources);
-          if (!mounted || _detailWork == null) return;
+          for (final request in pendingMatches) {
+            if (!context.mounted) return;
+            final candidate = await showShadDialog<Map<String, dynamic>>(
+              context: context,
+              builder: (_) => _ManualTMDBMatchDialog(
+                initialQuery: request.items.first.title,
+                initialResults: request.candidates,
+              ),
+            );
+            if (candidate == null) continue;
+            final notifier = ref.read(mediaLibraryProvider.notifier);
+            for (final resource in request.items) {
+              await notifier.applyTMDBMatch(resource, candidate);
+            }
+          }
+          if (!context.mounted || _detailWork == null) return;
           final updatedWorks = _MediaWork.fromItems(
             ref.read(mediaLibraryProvider).items,
           );
@@ -1974,14 +1989,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             ShadButton.outline(
               size: ShadButtonSize.sm,
               onPressed: _refreshingMedia ? null : _refreshAndRecognize,
-              leading: _refreshingMedia
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.sync_rounded, size: 16),
-              child: Text(_refreshingMedia ? '正在同步并识别' : '同步云盘命名并识别'),
+              leading: const Icon(Icons.sync_rounded, size: 16),
+              child: const Text('同步云盘命名并识别'),
             ),
             const SizedBox(height: 6),
             ShadButton.ghost(
@@ -1991,21 +2000,15 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                 widget.onManualMatch();
               },
               leading: const Icon(Icons.edit_note_rounded, size: 16),
-              child: const Text('手动匹配 TMDB'),
+              child: const Text('手动选择匹配'),
             ),
           ],
         ),
       ),
       child: ShadButton.outline(
         onPressed: _refreshingMedia ? null : () => _updatePopover.toggle(),
-        leading: _refreshingMedia
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.sync_rounded, size: 16),
-        child: Text(_refreshingMedia ? '正在识别' : '更新媒体信息'),
+        leading: const Icon(Icons.expand_more_rounded, size: 16),
+        child: const Text('更新媒体'),
       ),
     );
   }
@@ -2065,76 +2068,78 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final cs = ShadTheme.of(context).colorScheme;
     final item = widget.work.primary;
     final isSeries = item.mediaKind == TMDBMediaKind.tv;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Stack(
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ShadButton.ghost(
-              size: ShadButtonSize.sm,
-              onPressed: widget.onBack,
-              leading: const Icon(Icons.arrow_back_rounded, size: 16),
-              child: const Text('返回海报墙'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: widget.onBack,
+                  leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                  child: const Text('返回海报墙'),
+                ),
+                ShadButton(
+                  onPressed: () => widget.onPlay(_resource),
+                  leading: const Icon(Icons.play_arrow_rounded, size: 16),
+                  child: const Text('播放'),
+                ),
+                ShadButton.outline(
+                  onPressed: () => widget.onExternalPlay(_resource),
+                  leading: const Icon(Icons.launch_rounded, size: 16),
+                  child: const Text('外部播放'),
+                ),
+                ShadButton.outline(
+                  onPressed: () => widget.onDownload(_resource),
+                  leading: const Icon(Icons.download_rounded, size: 16),
+                  child: const Text('下载'),
+                ),
+                _updateMediaMenu(),
+              ],
             ),
-            _updateMediaMenu(),
-            const SizedBox(width: 8),
-            ShadButton(
-              onPressed: () => widget.onPlay(_resource),
-              leading: const Icon(Icons.play_arrow_rounded, size: 16),
-              child: const Text('播放'),
-            ),
-            ShadButton.outline(
-              onPressed: () => widget.onExternalPlay(_resource),
-              leading: const Icon(Icons.launch_rounded, size: 16),
-              child: const Text('外部播放器'),
-            ),
-            ShadButton.outline(
-              onPressed: () => widget.onDownload(_resource),
-              leading: const Icon(Icons.download_rounded, size: 16),
-              child: const Text('下载'),
+            const SizedBox(height: 14),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _detailInformation(context, item, isSeries),
+                    if (item.isMatched) ...[
+                      const SizedBox(height: 22),
+                      _tmdbEnrichment(context),
+                    ],
+                    const SizedBox(height: 26),
+                    _resourceList(context, cs),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
-        const SizedBox(height: 14),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxWidth < 700;
-              final information = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _detailInformation(context, item, isSeries),
-                  if (item.isMatched) ...[
-                    const SizedBox(height: 22),
-                    _tmdbEnrichment(context),
+        if (_refreshingMedia)
+          Positioned.fill(
+            child: ColoredBox(
+              color: cs.background.withValues(alpha: 0.86),
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 38,
+                      height: 38,
+                      child: CircularProgressIndicator(strokeWidth: 3),
+                    ),
+                    SizedBox(height: 14),
+                    Text('正在同步、识别并匹配媒体信息'),
                   ],
-                ],
-              );
-              final resources = _resourceList(context, cs);
-              return SingleChildScrollView(
-                child: compact
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          information,
-                          const SizedBox(height: 18),
-                          resources,
-                        ],
-                      )
-                    : Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(flex: 3, child: information),
-                          const SizedBox(width: 28),
-                          SizedBox(width: 310, child: resources),
-                        ],
-                      ),
-              );
-            },
+                ),
+              ),
+            ),
           ),
-        ),
       ],
     );
   }
@@ -2625,8 +2630,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
 
 class _ManualTMDBMatchDialog extends ConsumerStatefulWidget {
   final String initialQuery;
+  final List<Map<String, dynamic>>? initialResults;
 
-  const _ManualTMDBMatchDialog({required this.initialQuery});
+  const _ManualTMDBMatchDialog({
+    required this.initialQuery,
+    this.initialResults,
+  });
 
   @override
   ConsumerState<_ManualTMDBMatchDialog> createState() =>
@@ -2644,7 +2653,11 @@ class _ManualTMDBMatchDialogState
   void initState() {
     super.initState();
     _queryController = TextEditingController(text: widget.initialQuery);
-    Future.microtask(_search);
+    if (widget.initialResults != null) {
+      _results = widget.initialResults!;
+    } else {
+      Future.microtask(_search);
+    }
   }
 
   @override
