@@ -1,9 +1,11 @@
 import 'dart:io';
+import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:media_kit/media_kit.dart';
 import 'core/storage/storage_manager.dart';
+import 'core/logging/app_logger.dart';
 import 'core/http/dio_client.dart';
 import 'app/app.dart';
 
@@ -13,6 +15,19 @@ void main() async {
 
   // Init Hive for persistent storage
   await StorageManager.init();
+  await AppLogger.initialize();
+  FlutterError.onError = (details) {
+    AppLogger.error(
+      'Flutter',
+      details.exceptionAsString(),
+      stackTrace: details.stack,
+    );
+    FlutterError.presentError(details);
+  };
+  PlatformDispatcher.instance.onError = (error, stackTrace) {
+    AppLogger.error('Dart', '未捕获异常', error: error, stackTrace: stackTrace);
+    return true;
+  };
 
   // Init Dio HTTP client
   DioClient.init();

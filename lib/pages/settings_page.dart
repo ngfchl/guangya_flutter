@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import '../providers/theme_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../widgets/app_log_dialog.dart';
 import '../core/storage/storage_manager.dart';
 
 class SettingsDialog extends ConsumerStatefulWidget {
@@ -301,6 +302,30 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                     controller: _tmdbImageProxyController,
                     placeholder: const Text('https://wsrv.nl（留空直连）'),
                   ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const ShadSeparator.horizontal(),
+              const SizedBox(height: 16),
+              Text(
+                '诊断',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: cs.foreground,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _SettingsRow(
+                icon: Icons.subject_rounded,
+                label: '运行日志',
+                child: ShadButton.outline(
+                  size: ShadButtonSize.sm,
+                  onPressed: () => showShadDialog(
+                    context: context,
+                    builder: (_) => const AppLogDialog(),
+                  ),
+                  child: const Text('查看'),
                 ),
               ),
               const SizedBox(height: 16),

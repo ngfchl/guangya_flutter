@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_riverpod/legacy.dart';
 
 import '../api/guangya_api.dart';
+import '../core/logging/app_logger.dart';
 import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/media_library_store.dart';
 import '../core/storage/storage_manager.dart';
@@ -619,6 +620,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   void _appendScanLog(String message, {bool isError = false}) {
+    if (isError) {
+      AppLogger.error('Media', message);
+    } else {
+      AppLogger.info('Media', message);
+    }
     final logs = [
       ...state.scanLogs,
       MediaLibraryScanLog(

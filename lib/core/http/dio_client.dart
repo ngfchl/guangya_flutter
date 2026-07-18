@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 
 import '../config/app_config.dart';
+import 'interceptors/app_log_interceptor.dart';
 import 'interceptors/auth_interceptor.dart';
 import 'interceptors/response_interceptor.dart';
 
@@ -20,15 +21,14 @@ class DioClient {
       baseUrl: AppConfig.apiBase,
       interceptors: [
         _authInterceptor!,
+        AppLogInterceptor(),
         ResponseInterceptor(),
       ],
     );
 
     accountDio = _createDio(
       baseUrl: AppConfig.accountBase,
-      interceptors: [
-        ResponseInterceptor(),
-      ],
+      interceptors: [AppLogInterceptor(), ResponseInterceptor()],
     );
   }
 
