@@ -931,11 +931,16 @@ class _CloudToolbar extends ConsumerWidget {
           currentSort: state.serverSort,
           currentDirection: state.serverSortDirection,
           onSortChanged: notifier.setSort,
+          onDirectionToggle: notifier.toggleSortDirection,
         ),
         const SizedBox(width: 8),
-        _ToolbarSegment(value: paneMode, onChanged: onPaneModeChanged),
-        const SizedBox(width: 8),
-        _FileViewButtons(value: viewMode, onChanged: onViewModeChanged),
+        _ToolbarControlGroup(
+          children: [
+            _ToolbarSegment(value: paneMode, onChanged: onPaneModeChanged),
+            const _ToolbarGroupDivider(),
+            _FileViewButtons(value: viewMode, onChanged: onViewModeChanged),
+          ],
+        ),
         const SizedBox(width: 8),
         _ToolbarButton(
           icon: Icons.upload_rounded,
@@ -943,21 +948,29 @@ class _CloudToolbar extends ConsumerWidget {
           primary: true,
           onTap: () => _pickAndUpload(ref),
         ),
-        const SizedBox(width: 6),
-        _ToolbarButton(
-          icon: Icons.create_new_folder_rounded,
-          label: '新建文件夹',
-          onTap: () => _showCreateFolderDialog(context, ref),
-        ),
-        _ToolbarButton(
-          icon: Icons.refresh_rounded,
-          label: '刷新',
-          onTap: () => notifier.loadFiles(),
-        ),
-        _ToolbarButton(
-          icon: Icons.more_horiz_rounded,
-          label: sidePanelOpen ? '隐藏详情' : '显示详情',
-          onTap: onToggleSidePanel,
+        const SizedBox(width: 8),
+        _ToolbarControlGroup(
+          children: [
+            _ToolbarButton(
+              icon: Icons.create_new_folder_rounded,
+              label: '新建文件夹',
+              onTap: () => _showCreateFolderDialog(context, ref),
+              grouped: true,
+            ),
+            _ToolbarButton(
+              icon: Icons.refresh_rounded,
+              label: '刷新',
+              onTap: () => notifier.loadFiles(),
+              grouped: true,
+            ),
+            _ToolbarButton(
+              icon: Icons.more_horiz_rounded,
+              label: sidePanelOpen ? '隐藏详情' : '显示详情',
+              onTap: onToggleSidePanel,
+              grouped: true,
+              selected: sidePanelOpen,
+            ),
+          ],
         ),
       ],
     );
@@ -1017,6 +1030,8 @@ class _ToolbarSegment extends StatelessWidget {
     return _ToolbarButton(
       icon: isDual ? Icons.view_agenda_rounded : Icons.view_column_rounded,
       label: isDual ? '切换单面板' : '切换双面板',
+      grouped: true,
+      selected: isDual,
       onTap: () =>
           onChanged(isDual ? _PaneLayoutMode.single : _PaneLayoutMode.dual),
     );
@@ -1037,16 +1052,22 @@ class _FileViewButtons extends StatelessWidget {
         _ToolbarButton(
           icon: Icons.view_list_rounded,
           label: '列表显示',
+          grouped: true,
+          selected: value == _FileViewMode.list,
           onTap: () => onChanged(_FileViewMode.list),
         ),
         _ToolbarButton(
           icon: Icons.view_column_rounded,
           label: 'Finder 分栏显示',
+          grouped: true,
+          selected: value == _FileViewMode.columns,
           onTap: () => onChanged(_FileViewMode.columns),
         ),
         _ToolbarButton(
           icon: Icons.grid_view_rounded,
           label: '网格显示',
+          grouped: true,
+          selected: value == _FileViewMode.grid,
           onTap: () => onChanged(_FileViewMode.grid),
         ),
       ],
@@ -1059,12 +1080,16 @@ class _ToolbarButton extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   final bool primary;
+  final bool grouped;
+  final bool selected;
 
   const _ToolbarButton({
     required this.icon,
     required this.label,
     required this.onTap,
     this.primary = false,
+    this.grouped = false,
+    this.selected = false,
   });
 
   @override
@@ -1073,22 +1098,30 @@ class _ToolbarButton extends StatelessWidget {
     return ShadTooltip(
       builder: (_) => Text(label),
       child: Padding(
-        padding: const EdgeInsets.only(left: 6),
+        padding: EdgeInsets.only(left: grouped ? 0 : 6),
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
           child: Container(
-            constraints: BoxConstraints(minWidth: primary ? 72 : 38),
+            constraints: BoxConstraints(minWidth: primary ? 72 : 36),
             height: 32,
             padding: EdgeInsets.symmetric(horizontal: primary ? 10 : 0),
             decoration: BoxDecoration(
               color: primary
                   ? cs.primary
+                  : selected
+                  ? cs.primary.withValues(alpha: 0.14)
+                  : grouped
+                  ? Colors.transparent
                   : Colors.white.withValues(alpha: 0.46),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
                 color: primary
                     ? cs.primary
+                    : selected
+                    ? cs.primary.withValues(alpha: 0.45)
+                    : grouped
+                    ? Colors.transparent
                     : Colors.white.withValues(alpha: 0.54),
               ),
             ),
@@ -1098,7 +1131,11 @@ class _ToolbarButton extends StatelessWidget {
                 Icon(
                   icon,
                   size: 18,
-                  color: primary ? cs.primaryForeground : cs.mutedForeground,
+                  color: primary
+                      ? cs.primaryForeground
+                      : selected
+                      ? cs.primary
+                      : cs.mutedForeground,
                 ),
                 if (primary) ...[
                   const SizedBox(width: 6),
@@ -1116,6 +1153,41 @@ class _ToolbarButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ToolbarControlGroup extends StatelessWidget {
+  final List<Widget> children;
+
+  const _ToolbarControlGroup({required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.46),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.54)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: children),
+    );
+  }
+}
+
+class _ToolbarGroupDivider extends StatelessWidget {
+  const _ToolbarGroupDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Container(
+      width: 1,
+      height: 20,
+      margin: const EdgeInsets.symmetric(horizontal: 2),
+      color: cs.border,
     );
   }
 }
@@ -1380,11 +1452,18 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
   List<_ColumnListing> _columns = const [];
   List<CloudFile> _path = const [];
   var _generation = 0;
+  final _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
     _restorePath(widget.initialPath, initialFiles: widget.initialFiles);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   @override
@@ -1414,6 +1493,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
         const _ColumnListing(parentID: null, title: '全部文件', isLoading: true),
       ];
     });
+    _scrollToStart();
     await _loadColumn(0, generation: generation);
     for (var index = 0; index < restoredPath.length; index++) {
       if (!mounted || generation != _generation) return;
@@ -1508,7 +1588,27 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
       _columns = columns;
     });
     unawaited(_loadColumn(index + 1, generation: generation));
+    _scrollToLatestColumn();
     _notifyPathChanged(path);
+  }
+
+  void _scrollToStart() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scrollController.hasClients) {
+        _scrollController.jumpTo(0);
+      }
+    });
+  }
+
+  void _scrollToLatestColumn() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   void _navigateBreadcrumb(int index) {
@@ -1588,6 +1688,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) => SingleChildScrollView(
+          controller: _scrollController,
           scrollDirection: Axis.horizontal,
           child: SizedBox(
             height: constraints.maxHeight,

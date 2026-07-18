@@ -171,7 +171,7 @@ class FileNotifier extends StateNotifier<FileState> {
     final generation = ++_detailGeneration;
     final resolvedParentID = parentID ?? _currentParentID;
     final cacheKey =
-        '${state.section.name}:${resolvedParentID ?? 'root'}:${state.currentPage}:${state.pageSize}';
+        '${state.section.name}:${resolvedParentID ?? 'root'}:${state.currentPage}:${state.pageSize}:${state.serverSort.name}:${state.serverSortDirection.name}';
     final cached = _readCachedFiles(cacheKey);
     if (cached != null) {
       state = state.copyWith(files: cached, clearError: true);
@@ -182,7 +182,7 @@ class FileNotifier extends StateNotifier<FileState> {
 
     try {
       final result = await _fetchFiles(resolvedParentID);
-      final extracted = _extractFiles(result);
+      final extracted = _sortFiles(_extractFiles(result));
       final totalPages = _extractTotalPages(result, extracted.length);
       state = state.copyWith(files: extracted, totalPages: totalPages);
       await _writeCachedFiles(cacheKey, extracted);
@@ -511,6 +511,37 @@ class FileNotifier extends StateNotifier<FileState> {
     loadFiles(parentID: _currentParentID);
   }
 
+  void toggleSortDirection() {
+    final direction = state.serverSortDirection == SortDirection.ascending
+        ? SortDirection.descending
+        : SortDirection.ascending;
+    state = state.copyWith(serverSortDirection: direction, currentPage: 0);
+    loadFiles(parentID: _currentParentID);
+  }
+
+  List<CloudFile> _sortFiles(List<CloudFile> files) {
+    final sorted = List<CloudFile>.from(files);
+    int compare(CloudFile a, CloudFile b) {
+      if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
+      final value = switch (state.serverSort) {
+        FileSort.name => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        FileSort.size => (a.size ?? 0).compareTo(b.size ?? 0),
+        FileSort.modifiedAt ||
+        FileSort.createdAt => a.modifiedAt.compareTo(b.modifiedAt),
+        FileSort.type => a.typeName.compareTo(b.typeName),
+      };
+      if (value != 0) {
+        return state.serverSortDirection == SortDirection.ascending
+            ? value
+            : -value;
+      }
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    }
+
+    sorted.sort(compare);
+    return sorted;
+  }
+
   void nextPage() {
     if (state.currentPage < state.totalPages - 1) {
       state = state.copyWith(currentPage: state.currentPage + 1);
@@ -693,7 +724,8 @@ class FileNotifier extends StateNotifier<FileState> {
         final result = await Process.run('/usr/bin/mdfind', [
           "kMDItemCFBundleIdentifier == '${player.bundleID}'",
         ]);
-        if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
+        if (result.exitCode == 0 &&
+            result.stdout.toString().trim().isNotEmpty) {
           installed.add(player);
         }
       } catch (_) {

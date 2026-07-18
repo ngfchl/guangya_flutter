@@ -126,7 +126,13 @@ class CloudFile {
     if (bytes < 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    if (bytes < 1024 * 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    }
+    if (bytes < 1024 * 1024 * 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024 * 1024)).toStringAsFixed(2)} TB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024 * 1024 * 1024)).toStringAsFixed(2)} PB';
   }
 
   factory CloudFile.fromJson(Map<String, dynamic> json) {
