@@ -22,9 +22,9 @@ class GuangyaApp extends ConsumerWidget {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final fp = ref.read(fileProvider.notifier);
         fp.api = ref.read(authProvider.notifier).api;
-        ref.read(mediaLibraryProvider.notifier).api = ref
-            .read(authProvider.notifier)
-            .api;
+        final media = ref.read(mediaLibraryProvider.notifier);
+        media.api = ref.read(authProvider.notifier).api;
+        media.load();
         final fileState = ref.read(fileProvider);
         if (fileState.files.isEmpty && !fileState.isLoading) {
           fp.loadFiles();

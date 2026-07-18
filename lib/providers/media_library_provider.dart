@@ -120,6 +120,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   bool _loaded = false;
   bool _cancelScan = false;
   bool _cancelDetailSync = false;
+  bool _refreshingCloudIndex = false;
+  Timer? _cloudIndexTimer;
 
   MediaLibraryNotifier() : super(const MediaLibraryState());
 
@@ -151,6 +153,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (selectedID != null) {
         unawaited(_hydrateMissingArtwork(selectedID, items));
       }
+      unawaited(refreshGlobalCloudIndex());
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
     } finally {
@@ -430,7 +433,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
       if (forceRemote) {
         _appendScanLog('正在获取云盘全量文件索引…');
-        final globalFiles = await _allGlobalRemoteFiles();
+        await refreshGlobalCloudIndex(force: true);
+        final globalFiles = await _cachedGlobalFiles();
         final seen = <String>{};
         final mediaFiles = <CloudFile>[];
         for (final source in library.sources) {
@@ -542,6 +546,76 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   void cancelDetailSync() {
     _cancelDetailSync = true;
     _appendScanLog('[同步识别][DEBUG] 已请求取消同步识别');
+  }
+
+  Future<void> refreshGlobalCloudIndex({bool force = false}) async {
+    if (_api == null || _refreshingCloudIndex) return;
+    final minutes =
+        (int.tryParse(
+                  StorageManager.get<String>(
+                        StorageKeys.cloudIndexRefreshMinutes,
+                      ) ??
+                      '30',
+                ) ??
+                30)
+            .clamp(5, 1440);
+    final lastUpdated = int.tryParse(
+      StorageManager.get<String>(StorageKeys.cloudIndexLastUpdatedAt) ?? '',
+    );
+    if (!force && lastUpdated != null) {
+      final elapsed = DateTime.now().difference(
+        DateTime.fromMillisecondsSinceEpoch(lastUpdated),
+      );
+      if (elapsed < Duration(minutes: minutes)) {
+        _scheduleCloudIndexRefresh(minutes);
+        return;
+      }
+    }
+    _refreshingCloudIndex = true;
+    try {
+      final files = await _allGlobalRemoteFiles();
+      final folders = <String?, List<CloudFile>>{};
+      for (final file in files) {
+        (folders[file.parentID] ??= []).add(file);
+      }
+      await FileMetadataCache.cacheFolderChildrenBatch(folders);
+      await StorageManager.set(
+        StorageKeys.cloudIndexLastUpdatedAt,
+        DateTime.now().millisecondsSinceEpoch.toString(),
+      );
+      _appendScanLog('[云盘索引] 已刷新 ${files.length} 个文件与目录缓存');
+    } catch (error) {
+      _appendScanLog('[云盘索引] 刷新失败：$error', isError: true);
+    } finally {
+      _refreshingCloudIndex = false;
+      _scheduleCloudIndexRefresh(minutes);
+    }
+  }
+
+  void _scheduleCloudIndexRefresh(int minutes) {
+    _cloudIndexTimer?.cancel();
+    _cloudIndexTimer = Timer(Duration(minutes: minutes), () {
+      unawaited(refreshGlobalCloudIndex(force: true));
+    });
+  }
+
+  void updateCloudIndexRefreshSchedule() {
+    final minutes =
+        (int.tryParse(
+                  StorageManager.get<String>(
+                        StorageKeys.cloudIndexRefreshMinutes,
+                      ) ??
+                      '30',
+                ) ??
+                30)
+            .clamp(5, 1440);
+    _scheduleCloudIndexRefresh(minutes);
+  }
+
+  @override
+  void dispose() {
+    _cloudIndexTimer?.cancel();
+    super.dispose();
   }
 
   void _appendScanLog(String message, {bool isError = false}) {
@@ -1491,6 +1565,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     };
     final values = unique.values.toList();
     await FileMetadataCache.cacheFiles(values);
+    return values;
+  }
+
+  Future<List<CloudFile>> _cachedGlobalFiles() async {
+    final values = await FileMetadataCache.allCachedFolderChildren();
+    if (values.isEmpty) return _allGlobalRemoteFiles();
     return values;
   }
 

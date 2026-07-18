@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import '../providers/theme_provider.dart';
+import '../providers/media_library_provider.dart';
 import '../core/storage/storage_manager.dart';
 
 class SettingsDialog extends ConsumerStatefulWidget {
@@ -21,6 +22,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   final _scanConcurrencyController = TextEditingController();
   final _transferConcurrencyController = TextEditingController();
   final _cacheTTLController = TextEditingController();
+  final _cloudIndexRefreshController = TextEditingController();
   final _pageSizeController = TextEditingController();
 
   @override
@@ -45,6 +47,9 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         StorageManager.get<String>(StorageKeys.fastTransferConcurrency) ?? '3';
     _cacheTTLController.text =
         StorageManager.get<String>(StorageKeys.fileCacheTTLMinutes) ?? '3';
+    _cloudIndexRefreshController.text =
+        StorageManager.get<String>(StorageKeys.cloudIndexRefreshMinutes) ??
+        '30';
     _pageSizeController.text =
         StorageManager.get<String>(StorageKeys.defaultFilePageSize) ?? '50';
   }
@@ -60,6 +65,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     _scanConcurrencyController.dispose();
     _transferConcurrencyController.dispose();
     _cacheTTLController.dispose();
+    _cloudIndexRefreshController.dispose();
     _pageSizeController.dispose();
     super.dispose();
   }
@@ -78,9 +84,9 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       actions: [
         ShadButton(
           child: const Text('完成'),
-          onPressed: () {
-            _saveSettings();
-            Navigator.of(context).pop();
+          onPressed: () async {
+            await _saveSettings();
+            if (context.mounted) Navigator.of(context).pop();
           },
         ),
       ],
@@ -218,6 +224,17 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                 ),
               ),
               _SettingsRow(
+                icon: Icons.cloud_sync_rounded,
+                label: '全盘索引刷新分钟',
+                child: SizedBox(
+                  width: 100,
+                  child: ShadInput(
+                    controller: _cloudIndexRefreshController,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ),
+              _SettingsRow(
                 icon: Icons.format_list_numbered_rounded,
                 label: '默认分页大小',
                 child: SizedBox(
@@ -313,7 +330,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     );
   }
 
-  void _saveSettings() {
+  Future<void> _saveSettings() async {
     StorageManager.set(
       StorageKeys.tmdbApiKey,
       _tmdbApiKeyController.text.trim(),
@@ -350,6 +367,11 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       StorageKeys.fileCacheTTLMinutes,
       _cacheTTLController.text.trim(),
     );
+    await StorageManager.set(
+      StorageKeys.cloudIndexRefreshMinutes,
+      _cloudIndexRefreshController.text.trim(),
+    );
+    ref.read(mediaLibraryProvider.notifier).updateCloudIndexRefreshSchedule();
     StorageManager.set(
       StorageKeys.defaultFilePageSize,
       _pageSizeController.text.trim(),

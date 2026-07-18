@@ -310,6 +310,37 @@ class MediaLibraryStore {
     });
   }
 
+  Future<void> cacheFolderChildrenBatch(
+    Map<String?, List<CloudFile>> folders,
+  ) async {
+    if (folders.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final entry in folders.entries) {
+        final files = entry.value;
+        for (final file in files) {
+          final gcid = file.gcid?.trim();
+          if (gcid == null || gcid.isEmpty) continue;
+          await txn.insert('file_index', {
+            'file_id': file.id,
+            'gcid': gcid,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+          await txn.insert('gcid_details', {
+            'gcid': gcid,
+            'file_json': jsonEncode(file.toJson()),
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+        await txn.insert('folder_children', {
+          'folder_id': _folderID(entry.key),
+          'child_ids': jsonEncode(files.map((file) => file.id).toList()),
+          'children_json': jsonEncode(
+            files.map((file) => file.toJson()).toList(),
+          ),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
   Future<List<CloudFile>?> folderChildren(String? folderID) async {
     final rows = await (await _db).query(
       'folder_children',
@@ -331,6 +362,27 @@ class MediaLibraryStore {
     } catch (_) {
       return null;
     }
+  }
+
+  Future<List<CloudFile>> allCachedFolderChildren() async {
+    final rows = await (await _db).query(
+      'folder_children',
+      columns: const ['children_json'],
+    );
+    final values = <String, CloudFile>{};
+    for (final row in rows) {
+      try {
+        final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
+        if (raw is! List) continue;
+        for (final value in raw.whereType<Map>()) {
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+          values[file.id] = file;
+        }
+      } catch (_) {
+        // Ignore a malformed stale folder row and keep the remaining index.
+      }
+    }
+    return values.values.toList();
   }
 
   Future<List<CloudFile>?> siblingFiles(String fileID) async {
