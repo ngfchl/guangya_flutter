@@ -10,6 +10,13 @@ import '../models/cloud_file.dart';
 
 enum FileSort { name, size, modifiedAt, createdAt, type }
 
+class ExternalPlayer {
+  final String name;
+  final String bundleID;
+
+  const ExternalPlayer(this.name, this.bundleID);
+}
+
 extension FileSortExt on FileSort {
   String get title {
     switch (this) {
@@ -655,13 +662,64 @@ class FileNotifier extends StateNotifier<FileState> {
     );
   }
 
-  Future<void> playInBrowser(CloudFile file) async {
-    await _openRemoteFile(
-      file,
-      preparingMessage: '正在准备浏览器播放…',
-      completedMessage: '已在外部浏览器打开播放链接',
-    );
+  static const supportedExternalPlayers = [
+    ExternalPlayer('IINA', 'com.colliderli.iina'),
+    ExternalPlayer('VLC', 'org.videolan.vlc'),
+    ExternalPlayer('Infuse', 'com.firecore.Infuse'),
+    ExternalPlayer('nPlayer', 'com.nplayer.nplayer'),
+    ExternalPlayer('Movist Pro', 'com.movist.MovistPro'),
+    ExternalPlayer('VidHub', 'com.mac.utility.media.hub'),
+    ExternalPlayer('Forward', 'flux.inchmade.app'),
+    ExternalPlayer('SenPlayer', 'com.wuziqi.SenPlayer'),
+    ExternalPlayer('PotPlayer', 'com.kakao.PotPlayer'),
+    ExternalPlayer('mpv', 'io.mpv'),
+  ];
+
+  Future<List<ExternalPlayer>> availableExternalPlayers() async {
+    if (!Platform.isMacOS) return const [];
+    final installed = <ExternalPlayer>[];
+    for (final player in supportedExternalPlayers) {
+      try {
+        final result = await Process.run('/usr/bin/open', ['-Ra', player.name]);
+        if (result.exitCode == 0) installed.add(player);
+      } catch (_) {
+        // A missing application is expected and should not affect playback.
+      }
+    }
+    return installed;
   }
+
+  Future<void> playWithExternalPlayer(
+    CloudFile file, [
+    ExternalPlayer? player,
+  ]) async {
+    if (_api == null) return;
+    try {
+      state = state.copyWith(
+        statusMessage: player == null ? '正在准备外部播放…' : '正在使用 ${player.name} 播放…',
+      );
+      final url = await _resolveOpenUrl(file);
+      if (Platform.isMacOS && player != null) {
+        final result = await Process.run('/usr/bin/open', [
+          '-b',
+          player.bundleID,
+          url.toString(),
+        ]);
+        if (result.exitCode != 0) {
+          throw Exception('无法启动 ${player.name}：${result.stderr}');
+        }
+      } else if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        throw Exception('无法调用系统默认外部播放器');
+      }
+      state = state.copyWith(
+        statusMessage: player == null ? '已交给外部播放器' : '已交给 ${player.name}',
+      );
+    } catch (e) {
+      state = state.copyWith(errorMessage: e.toString());
+    }
+  }
+
+  Future<Uri> playbackUrl(CloudFile file) => _resolveOpenUrl(file);
 
   Future<void> _openRemoteFile(
     CloudFile file, {

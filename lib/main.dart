@@ -2,12 +2,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:media_kit/media_kit.dart';
 import 'core/storage/storage_manager.dart';
 import 'core/http/dio_client.dart';
 import 'app/app.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
 
   // Init Hive for persistent storage
   await StorageManager.init();

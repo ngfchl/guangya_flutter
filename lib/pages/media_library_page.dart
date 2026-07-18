@@ -11,6 +11,7 @@ import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../widgets/media_player_dialog.dart';
 
 enum _MediaWallFilter { all, movies, series, collections, unmatched }
 
@@ -445,9 +446,14 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         onBack: () => setState(() => _detailWork = null),
         onDownload: (item) =>
             ref.read(fileProvider.notifier).downloadFile(item.file),
-        onPlay: (item) => ref.read(fileProvider.notifier).playFile(item.file),
-        onPlayInBrowser: (item) =>
-            ref.read(fileProvider.notifier).playInBrowser(item.file),
+        onPlay: (item) => showShadDialog(
+          context: context,
+          builder: (_) => MediaPlayerDialog(file: item.file),
+        ),
+        onExternalPlay: (item) => showShadDialog(
+          context: context,
+          builder: (_) => ExternalPlayerDialog(file: item.file),
+        ),
         onManualMatch: () => _showManualTMDBMatch(current ?? _detailWork!),
         onRescan: state.isScanning
             ? null
@@ -1783,7 +1789,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final VoidCallback onBack;
   final ValueChanged<MediaLibraryItem> onDownload;
   final ValueChanged<MediaLibraryItem> onPlay;
-  final ValueChanged<MediaLibraryItem> onPlayInBrowser;
+  final ValueChanged<MediaLibraryItem> onExternalPlay;
   final VoidCallback onManualMatch;
   final VoidCallback? onRescan;
 
@@ -1792,7 +1798,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onBack,
     required this.onDownload,
     required this.onPlay,
-    required this.onPlayInBrowser,
+    required this.onExternalPlay,
     required this.onManualMatch,
     this.onRescan,
   });
@@ -1848,9 +1854,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               child: const Text('播放'),
             ),
             ShadButton.outline(
-              onPressed: () => widget.onPlayInBrowser(_resource),
-              leading: const Icon(Icons.open_in_browser_rounded, size: 16),
-              child: const Text('浏览器播放'),
+              onPressed: () => widget.onExternalPlay(_resource),
+              leading: const Icon(Icons.launch_rounded, size: 16),
+              child: const Text('外部播放器'),
             ),
             ShadButton.outline(
               onPressed: () => widget.onDownload(_resource),
@@ -2050,9 +2056,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                   child: const Text('播放'),
                 ),
                 ShadContextMenuItem.inset(
-                  leading: const Icon(LucideIcons.externalLink, size: 16),
-                  onPressed: () => widget.onPlayInBrowser(resource),
-                  child: const Text('浏览器播放'),
+                  leading: const Icon(LucideIcons.monitorPlay, size: 16),
+                  onPressed: () => widget.onExternalPlay(resource),
+                  child: const Text('外部播放器'),
                 ),
                 ShadContextMenuItem.inset(
                   leading: const Icon(LucideIcons.download, size: 16),
