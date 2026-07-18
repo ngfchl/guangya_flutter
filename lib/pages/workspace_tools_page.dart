@@ -741,6 +741,8 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   int _total = 0;
   String _status = '';
   BatchRenameItemType _itemType = BatchRenameItemType.all;
+  BatchRenameConflictStrategy _conflictStrategy =
+      BatchRenameConflictStrategy.reject;
   final _selectedIDs = <String>{};
   late List<CloudFile> _candidates;
   late String? _sourceID;
@@ -753,11 +755,17 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   void initState() {
     super.initState();
     final state = ref.read(fileProvider);
-    _candidates = state.clipboard ?? state.files;
     _sourceID = state.folderPath.isEmpty ? null : state.folderPath.last.id;
     _sourceLabel = state.folderPath.isEmpty
         ? '云盘根目录'
         : state.folderPath.map((folder) => folder.name).join(' / ');
+    _candidates = (state.clipboard ?? state.files)
+        .map(
+          (file) => file.copyWith(
+            cloudPath: _fullCloudPath(file.cloudPath, fallbackName: file.name),
+          ),
+        )
+        .toList();
     _rules = [
       const BatchRenameRule(id: 'rule-0', kind: BatchRenameRuleKind.replace),
     ];
@@ -784,6 +792,17 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
       next[destination] = rule;
       _rules = next;
     });
+  }
+
+  String _fullCloudPath(String path, {required String fallbackName}) {
+    final value = path.trim().isEmpty ? fallbackName : path.trim();
+    if (value.startsWith('/')) return value;
+    final source = _sourceLabel == '云盘根目录'
+        ? ''
+        : _sourceLabel.split(' / ').join('/');
+    if (source.isEmpty) return '/$value';
+    if (value == source || value.startsWith('$source/')) return '/$value';
+    return '/$source/$value';
   }
 
   Future<void> _pickSource() async {
@@ -820,7 +839,9 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
           final path = node.path.isEmpty
               ? child.name
               : '${node.path}/${child.name}';
-          final candidate = child.copyWith(cloudPath: path);
+          final candidate = child.copyWith(
+            cloudPath: _fullCloudPath(path, fallbackName: child.name),
+          );
           result.add(candidate);
           if (_recursive &&
               candidate.isDirectory &&
@@ -941,6 +962,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
       files,
       _rules,
       preserveExtension: _preserveExtension,
+      conflictStrategy: _conflictStrategy,
     );
     final filterText = _filter.text.trim().toLowerCase();
     final previews = allPreviews.where((preview) {
@@ -986,6 +1008,27 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                     ],
                     onChanged: (value) {
                       if (value != null) setState(() => _itemType = value);
+                    },
+                  ),
+                ),
+                SizedBox(
+                  width: 152,
+                  child: ShadSelect<BatchRenameConflictStrategy>(
+                    key: ValueKey(_conflictStrategy),
+                    initialValue: _conflictStrategy,
+                    selectedOptionBuilder: (_, value) =>
+                        Text(_conflictStrategyLabel(value)),
+                    options: [
+                      for (final value in BatchRenameConflictStrategy.values)
+                        ShadOption(
+                          value: value,
+                          child: Text(_conflictStrategyLabel(value)),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _conflictStrategy = value);
+                      }
                     },
                   ),
                 ),
@@ -1205,6 +1248,12 @@ String _itemTypeLabel(BatchRenameItemType value) => switch (value) {
   BatchRenameItemType.files => '仅文件',
   BatchRenameItemType.folders => '仅文件夹',
 };
+
+String _conflictStrategyLabel(BatchRenameConflictStrategy value) =>
+    switch (value) {
+      BatchRenameConflictStrategy.reject => '同名：阻止执行',
+      BatchRenameConflictStrategy.appendIndex => '同名：自动编号',
+    };
 
 String _ruleKindLabel(BatchRenameRuleKind value) => switch (value) {
   BatchRenameRuleKind.remove => '删除字符',

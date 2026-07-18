@@ -4,6 +4,9 @@ enum BatchRenameRuleKind { remove, replace, regex, prefix, suffix }
 
 enum BatchRenameItemType { all, files, folders }
 
+/// How a rename rule handles a destination that is already occupied.
+enum BatchRenameConflictStrategy { reject, appendIndex }
+
 class BatchRenameRule {
   final String id;
   final bool enabled;
@@ -86,6 +89,8 @@ List<BatchRenamePreview> buildRenamePreviews(
   List<CloudFile> files,
   List<BatchRenameRule> rules, {
   required bool preserveExtension,
+  BatchRenameConflictStrategy conflictStrategy =
+      BatchRenameConflictStrategy.reject,
 }) {
   final values = <BatchRenamePreview>[];
   for (final file in files) {
@@ -116,37 +121,73 @@ List<BatchRenamePreview> buildRenamePreviews(
       );
     }
   }
-  final proposed = <String, int>{};
   final existing = <String, Set<String>>{};
   for (final file in files) {
     final key = _destinationKey(file.cloudPath, file.name);
     (existing[key] ??= <String>{}).add(file.id);
   }
+  final reserved = <String, Set<String>>{
+    for (final entry in existing.entries) entry.key: {...entry.value},
+  };
+  final proposedCounts = <String, int>{};
   for (final item in values.where((item) => item.applicable)) {
     final key = _destinationKey(item.file.cloudPath, item.newName);
-    proposed[key] = (proposed[key] ?? 0) + 1;
+    proposedCounts[key] = (proposedCounts[key] ?? 0) + 1;
   }
-  return values.map((item) {
-    if (!item.applicable) return item;
-    final key = _destinationKey(item.file.cloudPath, item.newName);
-    if (proposed[key] != null && proposed[key]! > 1) {
-      return BatchRenamePreview(
-        file: item.file,
-        newName: item.newName,
-        error: '规则产生同名项目',
-      );
+  final result = <BatchRenamePreview>[];
+  for (final item in values) {
+    if (!item.applicable) {
+      result.add(item);
+      continue;
     }
-    if (existing[key]?.any((id) => id != item.file.id) ?? false) {
-      return BatchRenamePreview(
-        file: item.file,
-        newName: item.newName,
-        error: '目标名称已存在',
+    var targetName = item.newName;
+    var targetKey = _destinationKey(item.file.cloudPath, targetName);
+    if (conflictStrategy == BatchRenameConflictStrategy.reject &&
+        proposedCounts[targetKey]! > 1) {
+      result.add(
+        BatchRenamePreview(
+          file: item.file,
+          newName: item.newName,
+          error: '规则产生同名项目',
+        ),
       );
+      continue;
     }
-    return item;
-  }).toList();
+    bool conflicts() =>
+        reserved[targetKey]?.any((id) => id != item.file.id) ?? false;
+    if (conflicts() &&
+        conflictStrategy == BatchRenameConflictStrategy.appendIndex) {
+      var index = 2;
+      do {
+        targetName = _appendIndex(item.newName, index++);
+        targetKey = _destinationKey(item.file.cloudPath, targetName);
+      } while (conflicts());
+    }
+    if (conflicts()) {
+      result.add(
+        BatchRenamePreview(
+          file: item.file,
+          newName: item.newName,
+          error: '规则产生同名项目或目标名称已存在',
+        ),
+      );
+      continue;
+    }
+    (reserved[targetKey] ??= <String>{}).add(item.file.id);
+    result.add(BatchRenamePreview(file: item.file, newName: targetName));
+  }
+  return result;
 }
 
+String _appendIndex(String name, int index) {
+  final dot = name.lastIndexOf('.');
+  if (dot > 0) {
+    return '${name.substring(0, dot)} ($index)${name.substring(dot)}';
+  }
+  return '$name ($index)';
+}
+
+/// Collision scope is a single cloud directory, never the whole drive.
 String _destinationKey(String path, String name) {
   final separator = path.lastIndexOf('/');
   final parent = separator < 0 ? '' : path.substring(0, separator);
