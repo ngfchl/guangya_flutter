@@ -680,8 +680,12 @@ class FileNotifier extends StateNotifier<FileState> {
     final installed = <ExternalPlayer>[];
     for (final player in supportedExternalPlayers) {
       try {
-        final result = await Process.run('/usr/bin/open', ['-Ra', player.name]);
-        if (result.exitCode == 0) installed.add(player);
+        final result = await Process.run('/usr/bin/mdfind', [
+          "kMDItemCFBundleIdentifier == '${player.bundleID}'",
+        ]);
+        if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
+          installed.add(player);
+        }
       } catch (_) {
         // A missing application is expected and should not affect playback.
       }
