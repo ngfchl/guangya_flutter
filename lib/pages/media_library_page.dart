@@ -38,6 +38,14 @@ String _tmdbDirectImageURL(String path, {required String size}) {
       : 'https://image.tmdb.org/t/p/$size$path';
 }
 
+String? _parentDirectoryName(String cloudPath) {
+  final segments = cloudPath
+      .split(RegExp(r'[/\\]+'))
+      .where((segment) => segment.isNotEmpty)
+      .toList();
+  return segments.length < 2 ? null : segments[segments.length - 2];
+}
+
 Widget _tmdbDirectFallback({
   required String path,
   required String size,
@@ -2112,6 +2120,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                       const SizedBox(height: 22),
                       _tmdbEnrichment(context),
                     ],
+                    const SizedBox(height: 22),
+                    _fileInformation(context, item),
                     const SizedBox(height: 26),
                     _resourceList(context, cs),
                   ],
@@ -2153,86 +2163,176 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final posterURL = item.posterPath?.isNotEmpty == true
         ? _tmdbImageURL(item.posterPath!, size: 'w342')
         : null;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 180,
-          height: 270,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: posterURL == null
-                ? _detailPosterFallback(cs, isSeries)
-                : CachedNetworkImage(
-                    imageUrl: posterURL,
-                    fit: BoxFit.cover,
-                    errorWidget: (_, _, _) => _tmdbDirectFallback(
-                      path: item.posterPath!,
-                      size: 'w342',
-                      fallback: _detailPosterFallback(cs, isSeries),
+    final backdropPath = item.backdropPath?.isNotEmpty == true
+        ? item.backdropPath
+        : _tmdbDetails?['backdrop_path']?.toString();
+    return SizedBox(
+      height: 340,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (backdropPath != null && backdropPath.isNotEmpty)
+              CachedNetworkImage(
+                imageUrl: _tmdbImageURL(backdropPath, size: 'w1280'),
+                fit: BoxFit.cover,
+                errorWidget: (_, _, _) => _tmdbDirectFallback(
+                  path: backdropPath,
+                  size: 'w1280',
+                  fallback: ColoredBox(color: cs.muted),
+                ),
+              )
+            else
+              ColoredBox(color: cs.muted),
+            ColoredBox(color: Colors.black.withValues(alpha: 0.58)),
+            Padding(
+              padding: const EdgeInsets.all(22),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  SizedBox(
+                    width: 150,
+                    height: 225,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: posterURL == null
+                          ? _detailPosterFallback(cs, isSeries)
+                          : CachedNetworkImage(
+                              imageUrl: posterURL,
+                              fit: BoxFit.cover,
+                              errorWidget: (_, _, _) => _tmdbDirectFallback(
+                                path: item.posterPath!,
+                                size: 'w342',
+                                fallback: _detailPosterFallback(cs, isSeries),
+                              ),
+                            ),
                     ),
                   ),
-          ),
-        ),
-        const SizedBox(width: 18),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SelectableText(
-                item.title,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  color: cs.foreground,
-                ),
-              ),
-              if (item.originalTitle.isNotEmpty &&
-                  item.originalTitle != item.title) ...[
-                const SizedBox(height: 3),
-                SelectableText(
-                  item.originalTitle,
-                  style: TextStyle(fontSize: 13, color: cs.mutedForeground),
-                ),
-              ],
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  ShadBadge(child: Text(isSeries ? '剧集' : '电影')),
-                  if (item.year.isNotEmpty)
-                    ShadBadge.outline(child: Text(item.year)),
-                  if (item.hasChineseAudio)
-                    const ShadBadge.outline(child: Text('中文音轨')),
-                  if (item.hasChineseSubtitle)
-                    const ShadBadge.outline(child: Text('中文字幕')),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SelectableText(
+                          item.title,
+                          style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                        if (item.originalTitle.isNotEmpty &&
+                            item.originalTitle != item.title) ...[
+                          const SizedBox(height: 3),
+                          SelectableText(
+                            item.originalTitle,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.white.withValues(alpha: 0.72),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            ShadBadge(child: Text(isSeries ? '剧集' : '电影')),
+                            if (item.year.isNotEmpty)
+                              ShadBadge.outline(child: Text(item.year)),
+                            if (item.hasChineseAudio)
+                              const ShadBadge.outline(child: Text('中文音轨')),
+                            if (item.hasChineseSubtitle)
+                              const ShadBadge.outline(child: Text('中文字幕')),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        SelectableText(
+                          item.overview.isEmpty ? '暂无影视简介。' : item.overview,
+                          maxLines: 4,
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.55,
+                            color: Colors.white.withValues(alpha: 0.82),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 16),
-              SelectableText(
-                item.overview.isEmpty ? '暂无影视简介。' : item.overview,
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.55,
-                  color: cs.mutedForeground,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _metadataRow(context, 'TMDB', item.tmdbID?.toString() ?? '未匹配'),
-              _metadataRow(context, '资源数', '${widget.work.resources.length}'),
-              _metadataRow(context, '当前文件', _resource.file.name),
-              _metadataRow(context, '文件 ID', _resource.file.id),
-              _metadataRow(
-                context,
-                'GCID',
-                _resource.file.gcid?.isNotEmpty == true
-                    ? _resource.file.gcid!
-                    : '未获取',
-              ),
-              _metadataRow(context, '文件大小', _resource.file.formattedSize),
-              _metadataRow(context, '云盘位置', _resource.file.cloudPath),
-            ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _fileInformation(BuildContext context, MediaLibraryItem item) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final parsed = ParsedMediaName.parse(
+      _resource.file.name,
+      directoryName: _parentDirectoryName(_resource.file.cloudPath),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '文件与媒体信息',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: cs.foreground,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 20,
+          runSpacing: 10,
+          children: [
+            _metadataPill(context, 'TMDB', item.tmdbID?.toString() ?? '未匹配'),
+            _metadataPill(context, '资源', '${widget.work.resources.length}'),
+            _metadataPill(context, '大小', _resource.file.formattedSize),
+            if (parsed.resolution != null)
+              _metadataPill(context, '分辨率', parsed.resolution!),
+            if (parsed.videoCodec != null)
+              _metadataPill(context, '编码', parsed.videoCodec!),
+            if (parsed.audio != null)
+              _metadataPill(context, '音频', parsed.audio!),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _metadataRow(context, '当前文件', _resource.file.name),
+        _metadataRow(context, '文件 ID', _resource.file.id),
+        _metadataRow(
+          context,
+          'GCID',
+          _resource.file.gcid?.isNotEmpty == true
+              ? _resource.file.gcid!
+              : '未获取',
+        ),
+        _metadataRow(context, '云盘位置', _resource.file.cloudPath),
+      ],
+    );
+  }
+
+  Widget _metadataPill(BuildContext context, String label, String value) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '$label ',
+          style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+        ),
+        SelectableText(
+          value,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: cs.foreground,
           ),
         ),
       ],
