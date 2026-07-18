@@ -605,20 +605,23 @@ class _TrackPickerDialog<T> extends StatelessWidget {
     final cs = ShadTheme.of(context).colorScheme;
     return ShadDialog(
       title: Text(title),
-      child: SizedBox(
-        width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final track in tracks)
-              ListTile(
-                onTap: () => Navigator.of(context).pop(track),
-                title: Text(label(track)),
-                trailing: id(track) == selectedID
-                    ? Icon(Icons.check_rounded, color: cs.primary)
-                    : null,
-              ),
-          ],
+      child: Material(
+        color: Colors.transparent,
+        child: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final track in tracks)
+                ListTile(
+                  onTap: () => Navigator.of(context).pop(track),
+                  title: Text(label(track)),
+                  trailing: id(track) == selectedID
+                      ? Icon(Icons.check_rounded, color: cs.primary)
+                      : null,
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -637,25 +640,28 @@ class _SubtitlePickerDialog extends StatelessWidget {
     return ShadDialog(
       title: Text(title),
       description: const Text('从当前视频同目录的缓存文件中匹配'),
-      child: SizedBox(
-        width: 520,
-        height: 360,
-        child: ListView.separated(
-          itemCount: subtitles.length,
-          separatorBuilder: (_, _) => Divider(height: 1, color: cs.border),
-          itemBuilder: (context, index) {
-            final subtitle = subtitles[index];
-            return ListTile(
-              onTap: () => Navigator.of(context).pop(subtitle),
-              leading: Icon(Icons.closed_caption_rounded, color: cs.primary),
-              title: Text(
-                subtitle.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(subtitle.formattedSize),
-            );
-          },
+      child: Material(
+        color: Colors.transparent,
+        child: SizedBox(
+          width: 520,
+          height: 360,
+          child: ListView.separated(
+            itemCount: subtitles.length,
+            separatorBuilder: (_, _) => Divider(height: 1, color: cs.border),
+            itemBuilder: (context, index) {
+              final subtitle = subtitles[index];
+              return ListTile(
+                onTap: () => Navigator.of(context).pop(subtitle),
+                leading: Icon(Icons.closed_caption_rounded, color: cs.primary),
+                title: Text(
+                  subtitle.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(subtitle.formattedSize),
+              );
+            },
+          ),
         ),
       ),
     );
