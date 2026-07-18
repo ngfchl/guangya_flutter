@@ -547,12 +547,26 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             fromCloud?.name ??
             _findStringDeep(detail, const ['fileName', 'name', 'resName']) ??
             original.file.name;
+        final latestGCID =
+            fromCloud?.gcid ??
+            _findStringDeep(detail, const [
+              'gcid',
+              'gcId',
+              'gcidValue',
+              'hash',
+            ]) ??
+            original.file.gcid;
         final parentPath = _parentPath(original.file.cloudPath);
-        final latestFile = (fromCloud ?? original.file).copyWith(
+        final latestFile = original.file.copyWith(
           name: latestName,
+          size: fromCloud?.size,
+          gcid: latestGCID,
+          modifiedAt: fromCloud?.modifiedAt,
           cloudPath: parentPath.isEmpty
               ? latestName
               : '$parentPath/$latestName',
+          parentID: fromCloud?.parentID,
+          fullParentIDs: fromCloud?.fullParentIDs,
         );
         await FileMetadataCache.cacheFiles([latestFile]);
         final fallback = MediaLibraryItem.fromFile(
@@ -764,7 +778,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       return item;
     }
     final directoryName = _parentDirectoryName(item.file.cloudPath);
-    final fileParsed = ParsedMediaName.parse(item.file.name);
+    // Parse with the parent context first: numeric/disc file names commonly
+    // keep title, year, season and release tags only on their parent folder.
+    final fileParsed = ParsedMediaName.parse(
+      item.file.name,
+      directoryName: directoryName,
+    );
     final parentParsed = directoryName == null
         ? null
         : ParsedMediaName.parse(directoryName);

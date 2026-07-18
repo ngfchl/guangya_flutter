@@ -2135,6 +2135,14 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               _metadataRow(context, 'TMDB', item.tmdbID?.toString() ?? '未匹配'),
               _metadataRow(context, '资源数', '${widget.work.resources.length}'),
               _metadataRow(context, '当前文件', _resource.file.name),
+              _metadataRow(context, '文件 ID', _resource.file.id),
+              _metadataRow(
+                context,
+                'GCID',
+                _resource.file.gcid?.isNotEmpty == true
+                    ? _resource.file.gcid!
+                    : '未获取',
+              ),
               _metadataRow(context, '文件大小', _resource.file.formattedSize),
               _metadataRow(context, '云盘位置', _resource.file.cloudPath),
             ],
