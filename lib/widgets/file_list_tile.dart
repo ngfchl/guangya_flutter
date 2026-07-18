@@ -14,6 +14,7 @@ class FileListTile extends StatelessWidget {
   final VoidCallback? onCut;
   final VoidCallback? onDownload;
   final VoidCallback? onShare;
+  final VoidCallback? onCopyFastTransfer;
   final VoidCallback? onDelete;
   final bool isRecycleItem;
 
@@ -28,6 +29,7 @@ class FileListTile extends StatelessWidget {
     this.onCut,
     this.onDownload,
     this.onShare,
+    this.onCopyFastTransfer,
     this.onDelete,
     this.isRecycleItem = false,
   });
@@ -74,6 +76,11 @@ class FileListTile extends StatelessWidget {
           trailing: const Icon(LucideIcons.chevronRight),
           onPressed: onShare,
           child: const Text('分享'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.zap, size: 16),
+          onPressed: onCopyFastTransfer,
+          child: const Text('复制秒传'),
         ),
         const Divider(height: 8),
         ShadContextMenuItem.inset(

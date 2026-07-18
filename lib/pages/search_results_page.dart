@@ -127,6 +127,7 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                 onOpen: () => notifier.downloadFile(file),
                 onCopy: () => notifier.copyToClipboard([file]),
                 onCut: () => notifier.cutToClipboard([file]),
+                onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
                 onDownload: () => notifier.downloadFile(file),
                 onDelete: () => notifier.deleteFiles([file]),
               );

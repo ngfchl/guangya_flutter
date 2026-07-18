@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/legacy.dart';
@@ -7,6 +8,7 @@ import '../api/guangya_api.dart';
 import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
+import '../models/fast_transfer.dart';
 
 enum FileSort { name, size, modifiedAt, createdAt, type }
 
@@ -15,6 +17,13 @@ class ExternalPlayer {
   final String bundleID;
 
   const ExternalPlayer(this.name, this.bundleID);
+}
+
+class _FastTransferSource {
+  final CloudFile file;
+  final String path;
+
+  const _FastTransferSource(this.file, this.path);
 }
 
 extension FileSortExt on FileSort {
@@ -685,6 +694,135 @@ class FileNotifier extends StateNotifier<FileState> {
 
   void clearClipboard() {
     state = state.copyWith(clearClipboard: true);
+  }
+
+  Future<void> copyFastTransferJSON(CloudFile target) async {
+    if (_api == null) return;
+    state = state.copyWith(statusMessage: '正在生成秒传信息…', clearError: true);
+    try {
+      final sources = target.isDirectory
+          ? await _collectFastTransferFolder(target)
+          : [_FastTransferSource(target, target.name)];
+      if (sources.isEmpty) {
+        throw Exception('该目录中没有可生成秒传信息的文件');
+      }
+      final entries = <FastTransferEntry>[];
+      var skipped = 0;
+      var next = 0;
+      Future<void> worker() async {
+        while (next < sources.length) {
+          final source = sources[next++];
+          final file = await _resolveFastTransferFile(source.file);
+          final gcid = file.gcid?.trim();
+          final size = file.size;
+          if (gcid == null || gcid.isEmpty || size == null || size < 0) {
+            skipped += 1;
+            continue;
+          }
+          entries.add(
+            FastTransferEntry(path: source.path, size: size, gcid: gcid),
+          );
+        }
+      }
+
+      await Future.wait(List.generate(6, (_) => worker()));
+      if (entries.isEmpty) {
+        throw Exception('没有找到包含 GCID 和大小的有效文件');
+      }
+      entries.sort((a, b) => a.path.compareTo(b.path));
+      await Clipboard.setData(
+        ClipboardData(
+          text: jsonEncode({
+            'files': entries.map((entry) => entry.toJson()).toList(),
+          }),
+        ),
+      );
+      state = state.copyWith(
+        statusMessage: skipped == 0
+            ? '已复制 ${entries.length} 个文件的秒传 JSON'
+            : '已复制 ${entries.length} 个文件的秒传 JSON，跳过 $skipped 个无 GCID 项目',
+      );
+    } catch (error) {
+      state = state.copyWith(errorMessage: '复制秒传失败：$error');
+    }
+  }
+
+  Future<List<_FastTransferSource>> _collectFastTransferFolder(
+    CloudFile folder,
+  ) async {
+    final queue = <_FastTransferSource>[
+      _FastTransferSource(folder, folder.name),
+    ];
+    final result = <_FastTransferSource>[];
+    final visited = <String>{};
+    while (queue.isNotEmpty) {
+      final current = queue.removeLast();
+      if (!visited.add(current.file.id)) continue;
+      final children = await _folderChildrenForFastTransfer(current.file);
+      for (final child in children) {
+        final path = '${current.path}/${child.name}';
+        if (child.isDirectory) {
+          queue.add(_FastTransferSource(child, path));
+        } else {
+          result.add(_FastTransferSource(child, path));
+        }
+      }
+    }
+    return result;
+  }
+
+  Future<List<CloudFile>> _folderChildrenForFastTransfer(
+    CloudFile folder,
+  ) async {
+    final cached = await FileMetadataCache.folderChildren(folder.id);
+    if (cached != null) return cached;
+    final children = <CloudFile>[];
+    var page = 0;
+    while (true) {
+      final response = await _api!.fsFiles(
+        parentID: folder.id,
+        page: page,
+        pageSize: 200,
+        orderBy: 0,
+        sortType: 0,
+      );
+      final values = _extractFiles(response);
+      children.addAll(values);
+      if (values.length < 200) break;
+      page += 1;
+    }
+    await FileMetadataCache.cacheFolderChildren(folder.id, children);
+    return children;
+  }
+
+  Future<CloudFile> _resolveFastTransferFile(CloudFile file) async {
+    final cached = await FileMetadataCache.file(file.id);
+    var resolved = cached == null
+        ? file
+        : file.copyWith(size: cached.size, gcid: cached.gcid);
+    if (resolved.gcid?.isNotEmpty == true && resolved.size != null) {
+      return resolved;
+    }
+    final detail = await _api!.fsDetail(file.id);
+    final detailFile = _extractFiles(detail).cast<CloudFile?>().firstWhere(
+      (candidate) => candidate?.id == file.id,
+      orElse: () => null,
+    );
+    resolved = resolved.copyWith(
+      gcid:
+          detailFile?.gcid ??
+          _findStringDeep(detail, const ['gcid', 'gcId', 'gcidValue', 'hash']),
+      size:
+          detailFile?.size ??
+          _findIntDeep(detail, const [
+            'size',
+            'fileSize',
+            'resSize',
+            'totalSize',
+          ]),
+    );
+    await FileMetadataCache.cacheFiles([resolved]);
+    return resolved;
   }
 
   Future<void> downloadFile(CloudFile file) async {

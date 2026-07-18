@@ -1319,6 +1319,7 @@ class _PrimaryFilePane extends ConsumerWidget {
               onCut: () => notifier.cutToClipboard([file]),
               onDownload: () => notifier.downloadFile(file),
               onShare: () => notifier.createShare(file),
+              onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
               isRecycleItem: state.section == WorkspaceSection.recycle,
               onDelete: () => state.section == WorkspaceSection.recycle
                   ? notifier.restoreFiles([file])
@@ -1351,19 +1352,23 @@ class _PrimaryFilePane extends ConsumerWidget {
                       : () => _openCloudFile(context, ref, file),
                 ),
               ),
-              child: _FileGridCard(
+              child: _FastTransferContextMenu(
                 file: file,
-                isSelected: selected,
-                onSelect: () {
-                  if (file.isDirectory && !selected) {
-                    notifier.navigateToFolder(file);
-                  } else {
-                    notifier.toggleSelection(file.id);
-                  }
-                },
-                onOpen: file.isDirectory
-                    ? () => notifier.navigateToFolder(file)
-                    : () => _openCloudFile(context, ref, file),
+                onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
+                child: _FileGridCard(
+                  file: file,
+                  isSelected: selected,
+                  onSelect: () {
+                    if (file.isDirectory && !selected) {
+                      notifier.navigateToFolder(file);
+                    } else {
+                      notifier.toggleSelection(file.id);
+                    }
+                  },
+                  onOpen: file.isDirectory
+                      ? () => notifier.navigateToFolder(file)
+                      : () => _openCloudFile(context, ref, file),
+                ),
               ),
             );
           },
@@ -1760,6 +1765,9 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
                           _moveFiles(files, parentID, index),
                       onUploadLocalFiles: (files, parentID) =>
                           _uploadFiles(files, parentID, index),
+                      onCopyFastTransfer: (file) => ref
+                          .read(fileProvider.notifier)
+                          .copyFastTransferJSON(file),
                     ),
                 ],
               ),
@@ -1796,6 +1804,7 @@ class _FinderColumn extends StatefulWidget {
   final _PaneIdentity source;
   final ValueChanged<CloudFile> onOpenFolder;
   final ValueChanged<CloudFile> onOpenFile;
+  final ValueChanged<CloudFile> onCopyFastTransfer;
   final Future<void> Function(List<CloudFile> files, String? parentID)
   onMoveCloudFiles;
   final Future<void> Function(List<File> files, String? parentID)
@@ -1807,6 +1816,7 @@ class _FinderColumn extends StatefulWidget {
     required this.source,
     required this.onOpenFolder,
     required this.onOpenFile,
+    required this.onCopyFastTransfer,
     required this.onMoveCloudFiles,
     required this.onUploadLocalFiles,
   });
@@ -1903,21 +1913,26 @@ class _FinderColumnState extends State<_FinderColumn> {
                           itemBuilder: (context, index) {
                             final file = column.files[index];
                             final selected = column.selectedID == file.id;
-                            final row = _FinderColumnItem(
+                            final row = _FastTransferContextMenu(
                               file: file,
-                              selected: selected,
-                              onTap: () {
-                                if (file.isDirectory) {
-                                  widget.onOpenFolder(file);
-                                }
-                              },
-                              onOpen: () {
-                                if (file.isDirectory) {
-                                  widget.onOpenFolder(file);
-                                } else {
-                                  widget.onOpenFile(file);
-                                }
-                              },
+                              onCopyFastTransfer: () =>
+                                  widget.onCopyFastTransfer(file),
+                              child: _FinderColumnItem(
+                                file: file,
+                                selected: selected,
+                                onTap: () {
+                                  if (file.isDirectory) {
+                                    widget.onOpenFolder(file);
+                                  }
+                                },
+                                onOpen: () {
+                                  if (file.isDirectory) {
+                                    widget.onOpenFolder(file);
+                                  } else {
+                                    widget.onOpenFile(file);
+                                  }
+                                },
+                              ),
                             );
                             return Draggable<_DraggedCloudFiles>(
                               data: _DraggedCloudFiles([file], widget.source),
@@ -2081,6 +2096,32 @@ class _FileGridCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _FastTransferContextMenu extends StatelessWidget {
+  final CloudFile file;
+  final VoidCallback onCopyFastTransfer;
+  final Widget child;
+
+  const _FastTransferContextMenu({
+    required this.file,
+    required this.onCopyFastTransfer,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ShadContextMenuRegion(
+      items: [
+        ShadContextMenuItem.inset(
+          leading: const Icon(Icons.bolt_rounded, size: 16),
+          onPressed: onCopyFastTransfer,
+          child: Text(file.isDirectory ? '复制目录秒传' : '复制秒传'),
+        ),
+      ],
+      child: child,
     );
   }
 }
@@ -2411,6 +2452,8 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               onDownload: () =>
                   ref.read(fileProvider.notifier).downloadFile(file),
               onShare: () => ref.read(fileProvider.notifier).createShare(file),
+              onCopyFastTransfer: () =>
+                  ref.read(fileProvider.notifier).copyFastTransferJSON(file),
               onDelete: () =>
                   ref.read(fileProvider.notifier).deleteFiles([file]),
             );
@@ -2434,10 +2477,11 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               }
             }
 
-            final card = _FileGridCard(
+            final card = _FastTransferContextMenu(
               file: file,
-              onSelect: open,
-              onOpen: open,
+              onCopyFastTransfer: () =>
+                  ref.read(fileProvider.notifier).copyFastTransferJSON(file),
+              child: _FileGridCard(file: file, onSelect: open, onOpen: open),
             );
             return Draggable<_DraggedCloudFiles>(
               data: _DraggedCloudFiles([file], _PaneIdentity.secondary),
