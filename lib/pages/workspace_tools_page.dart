@@ -481,6 +481,8 @@ class _FastTransferTool extends ConsumerStatefulWidget {
 class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   final _json = TextEditingController();
   bool _running = false;
+  bool _paused = false;
+  bool _cancelRequested = false;
   bool _createDirectories = true;
   bool _skipExisting = true;
   String _result = '';
@@ -523,6 +525,8 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     }
     setState(() {
       _running = true;
+      _paused = false;
+      _cancelRequested = false;
       _result = '';
     });
     await StorageManager.set(StorageKeys.fastTransferSession, {
@@ -546,7 +550,11 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
             .clamp(1, 20);
     try {
       Future<void> worker() async {
-        while (nextIndex < entries.length) {
+        while (nextIndex < entries.length && !_cancelRequested) {
+          while (_paused && !_cancelRequested) {
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+          }
+          if (_cancelRequested) return;
           final entry = entries[nextIndex++];
           try {
             final targetID = await _resolveTargetDirectory(
@@ -590,11 +598,17 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       await Future.wait(List.generate(concurrency, (_) => worker()));
       await ref.read(fileProvider.notifier).loadFiles();
       if (mounted) {
-        setState(() => _result = '秒传完成：成功 $completed，失败 $failed');
+        setState(
+          () => _result = _cancelRequested
+              ? '秒传已终止：成功 $completed，失败 $failed，待处理 ${entries.length - completed - failed}'
+              : '秒传完成：成功 $completed，失败 $failed',
+        );
       }
       await StorageManager.set(StorageKeys.fastTransferSession, {
         'entries': entries.map((entry) => entry.toJson()).toList(),
-        'result': '秒传完成：成功 $completed，失败 $failed',
+        'result': _cancelRequested
+            ? '秒传已终止：成功 $completed，失败 $failed'
+            : '秒传完成：成功 $completed，失败 $failed',
       });
     } catch (error) {
       if (mounted) {
@@ -715,14 +729,34 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           _ToolSection(
             title: '导入秒传 JSON',
             description: '支持递归解析包含 name、size、gcid（或 gcId）的 JSON。任务将写入当前目录。',
-            trailing: ShadButton(
-              onPressed: _running ? null : _submit,
-              leading: Icon(
-                _running ? Icons.hourglass_top_rounded : Icons.bolt_rounded,
-                size: 16,
-              ),
-              child: Text(_running ? '提交中' : '开始秒传'),
-            ),
+            trailing: _running
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ShadButton.outline(
+                        onPressed: () => setState(() => _paused = !_paused),
+                        leading: Icon(
+                          _paused
+                              ? Icons.play_arrow_rounded
+                              : Icons.pause_rounded,
+                          size: 16,
+                        ),
+                        child: Text(_paused ? '继续' : '暂停'),
+                      ),
+                      const SizedBox(width: 8),
+                      ShadButton.destructive(
+                        onPressed: () =>
+                            setState(() => _cancelRequested = true),
+                        leading: const Icon(Icons.stop_rounded, size: 16),
+                        child: const Text('终止'),
+                      ),
+                    ],
+                  )
+                : ShadButton(
+                    onPressed: _submit,
+                    leading: const Icon(Icons.bolt_rounded, size: 16),
+                    child: const Text('开始秒传'),
+                  ),
             child: Padding(
               padding: const EdgeInsets.only(top: 12),
               child: Column(
