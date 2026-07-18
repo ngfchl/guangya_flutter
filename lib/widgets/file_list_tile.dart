@@ -209,7 +209,7 @@ class _FileListTileState extends State<FileListTile> {
         onTap: _isRenaming ? null : widget.onSelect,
         onDoubleTap: _isRenaming ? null : widget.onOpen,
         child: Container(
-          height: 48,
+          height: 62,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: widget.isSelected
@@ -277,10 +277,10 @@ class _FileListTileState extends State<FileListTile> {
                             ),
                             overflow: TextOverflow.ellipsis,
                           ),
-                          if (widget.file.isDirectory &&
-                              widget.file.subFileCount != null)
+                          if (widget.file.directoryContentSummary
+                              case final String summary)
                             Text(
-                              '${widget.file.subFileCount} 个项目',
+                              summary,
                               style: TextStyle(
                                 fontSize: 11,
                                 color: theme.colorScheme.mutedForeground,

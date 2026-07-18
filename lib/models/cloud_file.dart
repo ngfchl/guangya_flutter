@@ -100,6 +100,23 @@ class CloudFile {
     return _formatBytes(size!);
   }
 
+  /// Finder 列表中目录名称下方显示的子项统计。
+  String? get directoryContentSummary {
+    if (!isDirectory) return null;
+    final counts = <String>[];
+    if (subDirectoryCount != null) {
+      counts.add(
+        '${NumberFormat.decimalPattern('zh_CN').format(subDirectoryCount)} 个文件夹',
+      );
+    }
+    if (subFileCount != null) {
+      counts.add(
+        '${NumberFormat.decimalPattern('zh_CN').format(subFileCount)} 个文件',
+      );
+    }
+    return counts.isEmpty ? '文件夹' : '文件夹 · ${counts.join('，')}';
+  }
+
   CloudFile copyWith({
     String? id,
     String? name,
@@ -190,8 +207,17 @@ class CloudFile {
       isDirectory: isDir,
       size: fileSize,
       gcid: _extractStringDeep(json, ['gcid', 'gcId', 'gcidValue', 'hash']),
-      subDirectoryCount: _extractIntDeep(json, ['subDirCount']),
-      subFileCount: _extractIntDeep(json, ['subFileCount']),
+      subDirectoryCount: _extractIntDeep(json, [
+        'subDirCount',
+        'subDirectoryCount',
+        'directoryCount',
+        'dirCount',
+      ]),
+      subFileCount: _extractIntDeep(json, [
+        'subFileCount',
+        'subFileNum',
+        'fileCount',
+      ]),
       modifiedAt:
           json['updateTime']?.toString() ??
           json['updatedAt']?.toString() ??

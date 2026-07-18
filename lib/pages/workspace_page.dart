@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show PointerDeviceKind;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -80,24 +80,57 @@ void _selectDesktopFile(FileNotifier notifier, CloudFile file) {
   );
 }
 
-class _FolderMoveTarget extends StatelessWidget {
+class _FolderMoveTarget extends StatefulWidget {
   final CloudFile file;
   final Future<void> Function(List<CloudFile> files, String? parentID) onMove;
+  final VoidCallback? onOpen;
   final Widget child;
 
   const _FolderMoveTarget({
     required this.file,
     required this.onMove,
+    this.onOpen,
     required this.child,
   });
 
   @override
+  State<_FolderMoveTarget> createState() => _FolderMoveTargetState();
+}
+
+class _FolderMoveTargetState extends State<_FolderMoveTarget> {
+  Timer? _openTimer;
+
+  @override
+  void dispose() {
+    _openTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleOpen() {
+    if (_openTimer?.isActive == true || widget.onOpen == null) return;
+    _openTimer = Timer(const Duration(milliseconds: 700), () {
+      _openTimer = null;
+      if (mounted) widget.onOpen?.call();
+    });
+  }
+
+  void _cancelOpen() {
+    _openTimer?.cancel();
+    _openTimer = null;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (!file.isDirectory) return child;
+    if (!widget.file.isDirectory) return widget.child;
     return DragTarget<_DraggedCloudFiles>(
       onWillAcceptWithDetails: (details) =>
-          !details.data.files.any((source) => source.id == file.id),
-      onAcceptWithDetails: (details) => onMove(details.data.files, file.id),
+          !details.data.files.any((source) => source.id == widget.file.id),
+      onMove: (_) => _scheduleOpen(),
+      onLeave: (_) => _cancelOpen(),
+      onAcceptWithDetails: (details) async {
+        _cancelOpen();
+        await widget.onMove(details.data.files, widget.file.id);
+      },
       builder: (context, candidates, _) => DecoratedBox(
         decoration: BoxDecoration(
           border: candidates.isEmpty
@@ -108,7 +141,7 @@ class _FolderMoveTarget extends StatelessWidget {
                 ),
           borderRadius: BorderRadius.circular(6),
         ),
-        child: child,
+        child: widget.child,
       ),
     );
   }
@@ -1440,6 +1473,7 @@ class _PrimaryFilePane extends ConsumerWidget {
                 file: file,
                 onMove: (sources, parentID) =>
                     notifier.moveFilesTo(sources, parentID: parentID),
+                onOpen: () => notifier.navigateToFolder(file),
                 child: tile,
               ),
             );
@@ -1469,6 +1503,7 @@ class _PrimaryFilePane extends ConsumerWidget {
                 file: file,
                 onMove: (sources, parentID) =>
                     notifier.moveFilesTo(sources, parentID: parentID),
+                onOpen: () => notifier.navigateToFolder(file),
                 child: _FastTransferContextMenu(
                   file: file,
                   onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
@@ -1935,6 +1970,20 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     _notifyPathChanged(path);
   }
 
+  void _collapseToColumn(int index) {
+    if (index < 0 || index >= _columns.length || index == _columns.length - 1) {
+      return;
+    }
+    final path = _path.take(index).toList(growable: false);
+    ++_generation;
+    setState(() {
+      _path = List<CloudFile>.unmodifiable(path);
+      _columns = _columns.take(index + 1).toList(growable: false);
+    });
+    _notifyPathChanged(path);
+    _scrollToColumn(index);
+  }
+
   void _selectColumnFile(int columnIndex, CloudFile file) {
     if (columnIndex >= _columns.length) return;
     final column = _columns[columnIndex];
@@ -1998,6 +2047,21 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
       if (!mounted || !_scrollController.hasClients) return;
       _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  void _scrollToColumn(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final target = (index * 244.0).clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
+      _scrollController.animateTo(
+        target,
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOutCubic,
       );
@@ -2150,49 +2214,58 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
         onChanged: widget.onViewModeChanged,
       ),
       child: LayoutBuilder(
-        builder: (context, constraints) => SingleChildScrollView(
+        builder: (context, constraints) => Scrollbar(
           controller: _scrollController,
-          scrollDirection: Axis.horizontal,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minWidth: constraints.maxWidth),
-            child: SizedBox(
-              height: constraints.maxHeight,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.start,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var index = 0; index < _columns.length; index++)
-                    _FinderColumn(
-                      key: ValueKey('${_columns[index].parentID}-$index'),
-                      column: _columns[index],
-                      source: widget.source,
-                      onSelect: (file) => _selectColumnFile(index, file),
-                      onSelectAll: () => _selectAllColumn(index),
-                      onDeleteSelected: (files) =>
-                          _deleteColumnFiles(index, files),
-                      onRename: _renameColumnFile,
-                      onCopy: (file) => ref
-                          .read(fileProvider.notifier)
-                          .copyToClipboard([file]),
-                      onCut: (file) => ref
-                          .read(fileProvider.notifier)
-                          .cutToClipboard([file]),
-                      onDownload: (file) =>
-                          ref.read(fileProvider.notifier).downloadFile(file),
-                      onShare: (file) =>
-                          ref.read(fileProvider.notifier).createShare(file),
-                      onOpenFolder: (folder) => _openFolder(index, folder),
-                      onOpenFile: (file) => _openCloudFile(context, ref, file),
-                      onMoveCloudFiles: (files, parentID) =>
-                          _moveFiles(files, parentID, index),
-                      onUploadLocalFiles: (files, parentID) =>
-                          _uploadFiles(files, parentID, index),
-                      onCopyFastTransfer: (file) => ref
-                          .read(fileProvider.notifier)
-                          .copyFastTransferJSON(file),
-                    ),
-                ],
+          thumbVisibility: true,
+          trackVisibility: true,
+          interactive: true,
+          scrollbarOrientation: ScrollbarOrientation.bottom,
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: SizedBox(
+                height: constraints.maxHeight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var index = 0; index < _columns.length; index++)
+                      _FinderColumn(
+                        key: ValueKey('${_columns[index].parentID}-$index'),
+                        column: _columns[index],
+                        source: widget.source,
+                        onActivate: () => _collapseToColumn(index),
+                        onSelect: (file) => _selectColumnFile(index, file),
+                        onSelectAll: () => _selectAllColumn(index),
+                        onDeleteSelected: (files) =>
+                            _deleteColumnFiles(index, files),
+                        onRename: _renameColumnFile,
+                        onCopy: (file) => ref
+                            .read(fileProvider.notifier)
+                            .copyToClipboard([file]),
+                        onCut: (file) => ref
+                            .read(fileProvider.notifier)
+                            .cutToClipboard([file]),
+                        onDownload: (file) =>
+                            ref.read(fileProvider.notifier).downloadFile(file),
+                        onShare: (file) =>
+                            ref.read(fileProvider.notifier).createShare(file),
+                        onOpenFolder: (folder) => _openFolder(index, folder),
+                        onOpenFile: (file) =>
+                            _openCloudFile(context, ref, file),
+                        onMoveCloudFiles: (files, parentID) =>
+                            _moveFiles(files, parentID, index),
+                        onUploadLocalFiles: (files, parentID) =>
+                            _uploadFiles(files, parentID, index),
+                        onCopyFastTransfer: (file) => ref
+                            .read(fileProvider.notifier)
+                            .copyFastTransferJSON(file),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -2225,6 +2298,7 @@ class _ColumnPaneHeader extends StatelessWidget {
 class _FinderColumn extends StatefulWidget {
   final _ColumnListing column;
   final _PaneIdentity source;
+  final VoidCallback onActivate;
   final ValueChanged<CloudFile> onSelect;
   final VoidCallback onSelectAll;
   final ValueChanged<List<CloudFile>> onDeleteSelected;
@@ -2245,6 +2319,7 @@ class _FinderColumn extends StatefulWidget {
     super.key,
     required this.column,
     required this.source,
+    required this.onActivate,
     required this.onSelect,
     required this.onSelectAll,
     required this.onDeleteSelected,
@@ -2299,7 +2374,19 @@ class _FinderColumnState extends State<_FinderColumn> {
         ),
       },
       child: Listener(
-        onPointerDown: (_) => _focusNode.requestFocus(),
+        onPointerDown: (event) {
+          _focusNode.requestFocus();
+          final hasModifier =
+              _hasPressedKey(LogicalKeyboardKey.metaLeft) ||
+              _hasPressedKey(LogicalKeyboardKey.metaRight) ||
+              _hasPressedKey(LogicalKeyboardKey.controlLeft) ||
+              _hasPressedKey(LogicalKeyboardKey.controlRight) ||
+              _hasPressedKey(LogicalKeyboardKey.shiftLeft) ||
+              _hasPressedKey(LogicalKeyboardKey.shiftRight);
+          if (event.buttons == kPrimaryButton && !hasModifier) {
+            widget.onActivate();
+          }
+        },
         child: SizedBox(
           width: 244,
           child: DropTarget(
@@ -2456,6 +2543,7 @@ class _FinderColumnState extends State<_FinderColumn> {
                                   child: _FolderMoveTarget(
                                     file: file,
                                     onMove: widget.onMoveCloudFiles,
+                                    onOpen: () => widget.onOpenFolder(file),
                                     child: row,
                                   ),
                                 );
@@ -2683,9 +2771,7 @@ class _FileGridCard extends StatelessWidget {
               ),
               const SizedBox(height: 3),
               Text(
-                file.isDirectory && file.subFileCount != null
-                    ? '${file.formattedSize} · ${file.subFileCount} 项'
-                    : file.formattedSize,
+                file.directoryContentSummary ?? file.formattedSize,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 11, color: cs.mutedForeground),
@@ -3152,6 +3238,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
                 child: _FolderMoveTarget(
                   file: file,
                   onMove: _moveCloudFiles,
+                  onOpen: () => _open(file),
                   child: row,
                 ),
               );
@@ -3182,6 +3269,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               child: _FolderMoveTarget(
                 file: file,
                 onMove: _moveCloudFiles,
+                onOpen: () => _open(file),
                 child: card,
               ),
             );
