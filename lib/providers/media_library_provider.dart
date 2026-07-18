@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter_riverpod/legacy.dart';
@@ -120,6 +119,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   final _artworkHydrationLibraries = <String>{};
   bool _loaded = false;
   bool _cancelScan = false;
+  bool _cancelDetailSync = false;
 
   MediaLibraryNotifier() : super(const MediaLibraryState());
 
@@ -307,7 +307,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
   }
 
-  Future<void> scanSelectedLibrary() async {
+  Future<void> scanSelectedLibrary({bool forceRemote = false}) async {
     final library = state.selectedLibrary;
     if (library == null || _api == null || state.isScanning) return;
 
@@ -318,7 +318,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       scanLogs: [
         MediaLibraryScanLog(
           createdAt: DateTime.now(),
-          message: '任务已创建，开始扫描「${library.name}」',
+          message: forceRemote
+              ? '任务已创建，正在重新扫描「${library.name}」'
+              : '任务已创建，开始扫描「${library.name}」',
         ),
       ],
       clearError: true,
@@ -330,10 +332,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (removedDiscStreams > 0) {
         _appendScanLog('已清理 $removedDiscStreams 个已入库的光盘目录内部文件');
       }
+      final previousLibraryItems = await _loadItems(library.id);
       final initialItems = await _loadAllItems()
         ..removeWhere((item) => item.libraryID == library.id);
       final unique = <String, MediaLibraryItem>{
-        for (final item in await _loadItems(library.id)) item.file.id: item,
+        if (!forceRemote)
+          for (final item in previousLibraryItems) item.file.id: item,
       };
       state = state.copyWith(items: unique.values.toList());
       final tmdbApiKey =
@@ -426,16 +430,34 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           source.path,
           recursive: library.recursive,
           minimumSizeBytes: library.minimumSizeMB * 1024 * 1024,
+          forceRemote: forceRemote,
           onMediaFiles: indexBatch,
         );
       }
       await pendingPersistence;
-      final items = unique.values.toList()
+      var items = unique.values.toList()
         ..sort(
           (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
         );
-
+      // A cancelled full rescan has only seen a subset of the cloud tree. Keep
+      // unseen rows rather than incorrectly treating them as deleted.
+      if (_cancelScan && forceRemote) {
+        final merged = <String, MediaLibraryItem>{
+          for (final item in previousLibraryItems) item.id: item,
+          for (final item in items) item.id: item,
+        };
+        items = merged.values.toList()
+          ..sort(
+            (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+          );
+      }
       final allItems = [...initialItems, ...items];
+      final discoveredIDs = items.map((item) => item.id).toSet();
+      final removedMissing = _cancelScan || !forceRemote
+          ? 0
+          : previousLibraryItems
+                .where((item) => !discoveredIDs.contains(item.id))
+                .length;
       final updatedLibrary = library.copyWith(updatedAt: DateTime.now());
       final libraries = state.libraries
           .map((item) => item.id == library.id ? updatedLibrary : item)
@@ -448,12 +470,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         items: items,
         statusMessage: _cancelScan
             ? '扫描已停止，已保留 ${items.length} 个项目'
-            : '扫描完成：${items.length} 个视频文件',
+            : removedMissing == 0
+            ? '扫描完成：${items.length} 个视频文件'
+            : '重新扫描完成：${items.length} 个视频文件，已移除 $removedMissing 个不存在的条目',
       );
       _appendScanLog(
         _cancelScan
             ? '扫描已停止，已保留 ${items.length} 个条目'
-            : '扫描完成，共入库 ${items.length} 个条目',
+            : removedMissing == 0
+            ? '扫描完成，共入库 ${items.length} 个条目'
+            : '重新扫描完成，共入库 ${items.length} 个条目，已清理 $removedMissing 个失效条目',
       );
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
@@ -473,6 +499,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       progress: const MediaLibraryScanProgress(phase: '正在停止扫描'),
     );
     _appendScanLog('正在请求停止扫描…');
+  }
+
+  Future<void> rescanSelectedLibrary() =>
+      scanSelectedLibrary(forceRemote: true);
+
+  void cancelDetailSync() {
+    _cancelDetailSync = true;
+    _appendScanLog('[同步识别][DEBUG] 已请求取消同步识别');
   }
 
   void _appendScanLog(String message, {bool isError = false}) {
@@ -578,11 +612,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     if (_api == null) return const [];
     final originals = values.toList();
     if (originals.isEmpty) return const [];
+    _cancelDetailSync = false;
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
     state = state.copyWith(statusMessage: '正在同步云盘文件信息…', clearError: true);
     final synced = <_SyncedMediaItem>[];
     final failures = <String>[];
     for (final original in originals) {
+      if (_cancelDetailSync) break;
       try {
         _appendScanLog(
           '[同步识别][DEBUG] 开始：${original.file.name} '
@@ -619,10 +655,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
     if (synced.isEmpty) {
       state = state.copyWith(
-        errorMessage: failures.isEmpty
+        errorMessage: _cancelDetailSync
+            ? null
+            : failures.isEmpty
             ? '未能同步云盘文件信息'
             : '同步失败：${failures.first}',
-        statusMessage: '未能同步云盘文件信息',
+        statusMessage: _cancelDetailSync ? '同步识别已取消' : '未能同步云盘文件信息',
       );
       return const [];
     }
@@ -634,6 +672,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     var recognizedCount = 0;
     var renamedCount = 0;
     for (final entry in synced) {
+      if (_cancelDetailSync) break;
       final original = entry.original;
       try {
         final fallback = entry.fallback;
@@ -730,6 +769,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             .toList(),
         statusMessage: apiKey.trim().isEmpty
             ? '已同步 ${updates.length} 个资源，未配置 TMDB，未执行自动识别'
+            : _cancelDetailSync
+            ? '同步识别已取消，已处理 ${updates.length} 个资源'
             : failures.isEmpty
             ? '已同步 ${updates.length} 个资源，自动识别 $recognizedCount 个，规范命名 $renamedCount 个'
             : '已同步 ${updates.length} 个资源，识别 $recognizedCount 个，规范命名 $renamedCount 个，${failures.length} 个失败',
@@ -1410,6 +1451,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     String rootPath, {
     required bool recursive,
     required int minimumSizeBytes,
+    required bool forceRemote,
     required Future<void> Function(List<CloudFile> files) onMediaFiles,
   }) async {
     final folders = <_ScanFolder>[_ScanFolder(rootID, rootPath)];
@@ -1429,7 +1471,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
 
       var page = 0;
-      final cachedFolder = await FileMetadataCache.folderChildren(folder.id);
+      final cachedFolder = forceRemote
+          ? null
+          : await FileMetadataCache.folderChildren(folder.id);
       final folderSnapshot = <CloudFile>[];
       while (!_cancelScan) {
         late List<CloudFile> files;
@@ -1714,55 +1758,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       return _cacheResolvedCloudFile(knownFile, resolved);
     }
 
-    // The user may have renamed the file outside this app, so its old name is
-    // no longer searchable. Resolve the previous parent directory by name and
-    // compare every child by GCID, which remains stable across a rename.
-    final parentName = _parentDirectoryName(knownFile.cloudPath);
-    if (gcid != null && gcid.isNotEmpty && parentName != null) {
-      try {
-        _appendScanLog('[同步识别][DEBUG] 按父目录 GCID 定位：目录=$parentName，gcid=$gcid');
-        final foldersResponse = await _api!.searchFiles(
-          parentName,
-          page: 0,
-          pageSize: 100,
-        );
-        final folders = _extractFiles(
-          foldersResponse,
-        ).where((file) => file.isDirectory && file.name == parentName);
-        for (final folder in folders) {
-          final response = await _api!.fsFiles(
-            parentID: folder.id,
-            page: 0,
-            pageSize: 1000,
-            orderBy: 0,
-            sortType: 0,
-          );
-          for (final candidate in _extractFiles(response)) {
-            if (candidate.isDirectory) continue;
-            var resolved = candidate;
-            if (resolved.gcid != gcid) {
-              try {
-                final detail = await _api!.fsDetail(candidate.id);
-                resolved =
-                    _fileFromDetail(detail, candidate.id, candidate) ??
-                    candidate;
-              } catch (_) {
-                continue;
-              }
-            }
-            if (resolved.gcid == gcid) {
-              _appendScanLog(
-                '[同步识别][DEBUG] GCID 定位成功：${knownFile.id} -> '
-                '${resolved.id}，名称=${resolved.name}',
-              );
-              return _cacheResolvedCloudFile(knownFile, resolved);
-            }
-          }
-        }
-      } catch (_) {
-        // The caller emits the final diagnostic after all resolution paths fail.
-      }
-    }
     if (gcid != null && gcid.isNotEmpty && parentID != null) {
       final located = await _resolveFromCurrentDirectory(
         knownFile,
@@ -1770,11 +1765,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       if (located != null) return located;
     }
-    final located = await _resolveFromLibrarySources(
-      knownFile,
-      libraryID: libraryID,
+    _appendScanLog(
+      '[同步识别][DEBUG] 未定位到当前文件目录中的 GCID；停止自动查找，建议重新扫描媒体库',
+      isError: true,
     );
-    if (located != null) return located;
     return null;
   }
 
@@ -1784,119 +1778,51 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }) async {
     final gcid = knownFile.gcid?.trim();
     if (gcid == null || gcid.isEmpty) return null;
-    const maxFolders = 1200;
-    final parentPath = _parentPath(knownFile.cloudPath);
-    final queue = Queue<_ScanFolder>()..add(_ScanFolder(parentID, parentPath));
-    final visited = <String>{};
-    var searchedFolders = 0;
     _appendScanLog('[同步识别][DEBUG] 从当前文件目录扫描：parentId=$parentID，gcid=$gcid');
-    while (queue.isNotEmpty && searchedFolders < maxFolders) {
-      final folder = queue.removeFirst();
-      if (folder.id == null || !visited.add(folder.id!)) continue;
-      searchedFolders++;
-      List<CloudFile> children;
-      try {
-        children = await _allRemoteFolderFiles(folder.id);
-      } catch (_) {
-        continue;
-      }
-      await FileMetadataCache.cacheFolderChildren(folder.id, children);
-      for (final child in children) {
-        final childPath = '${folder.path}/${child.name}';
-        if (child.isDirectory) {
-          queue.add(_ScanFolder(child.id, childPath));
+    final parentPath = _parentPath(knownFile.cloudPath);
+    List<CloudFile> children;
+    try {
+      children = await _allRemoteFolderFiles(parentID);
+    } catch (_) {
+      return null;
+    }
+    await FileMetadataCache.cacheFolderChildren(parentID, children);
+    final extension = _extensionOf(knownFile.name).toLowerCase();
+    final candidates = children
+        .where((child) {
+          if (child.isDirectory) return false;
+          if (knownFile.size != null && child.size != knownFile.size) {
+            return false;
+          }
+          return extension.isEmpty ||
+              _extensionOf(child.name).toLowerCase() == extension;
+        })
+        .take(12);
+    for (final child in candidates) {
+      var resolved = child;
+      if (resolved.gcid != gcid) {
+        try {
+          final detail = await _api!.fsDetail(child.id);
+          resolved = _fileFromDetail(detail, child.id, child) ?? child;
+        } catch (_) {
           continue;
         }
-        var resolved = child;
-        if (resolved.gcid != gcid) {
-          try {
-            final detail = await _api!.fsDetail(child.id);
-            resolved = _fileFromDetail(detail, child.id, child) ?? child;
-          } catch (_) {
-            continue;
-          }
-        }
-        if (resolved.gcid == gcid) {
-          final exact = _withPath(resolved, childPath);
-          _appendScanLog(
-            '[同步识别][DEBUG] 当前目录定位成功：${knownFile.id} -> '
-            '${exact.id}，路径=${exact.cloudPath}',
-          );
-          return _cacheResolvedCloudFile(
-            knownFile,
-            exact,
-            cloudPath: exact.cloudPath,
-          );
-        }
       }
-    }
-    _appendScanLog('[同步识别][DEBUG] 当前文件目录未命中：已检查 $searchedFolders 个目录');
-    return null;
-  }
-
-  Future<CloudFile?> _resolveFromLibrarySources(
-    CloudFile knownFile, {
-    String? libraryID,
-  }) async {
-    final gcid = knownFile.gcid?.trim();
-    if (gcid == null || gcid.isEmpty) return null;
-    final library = state.libraries
-        .where((item) => item.id == libraryID)
-        .firstOrNull;
-    if (library == null) return null;
-
-    const maxFolders = 6000;
-    final queue = Queue<_ScanFolder>();
-    for (final source in library.sources) {
-      queue.add(_ScanFolder(source.rootID, source.path));
-    }
-    final visited = <String>{};
-    var searchedFolders = 0;
-    _appendScanLog('[同步识别][DEBUG] 启动媒体库根目录 GCID 定向扫描：$gcid');
-    while (queue.isNotEmpty && searchedFolders < maxFolders) {
-      final folder = queue.removeFirst();
-      final key = folder.id ?? 'root:${folder.path}';
-      if (!visited.add(key)) continue;
-      searchedFolders++;
-      List<CloudFile> children;
-      try {
-        children = await _allRemoteFolderFiles(folder.id);
-      } catch (_) {
-        continue;
-      }
-      await FileMetadataCache.cacheFolderChildren(folder.id, children);
-      for (final child in children) {
-        final childPath = '${folder.path}/${child.name}';
-        if (child.isDirectory) {
-          queue.add(_ScanFolder(child.id, childPath));
-          continue;
-        }
-        var resolved = child;
-        if (resolved.gcid != gcid) {
-          try {
-            final detail = await _api!.fsDetail(child.id);
-            resolved = _fileFromDetail(detail, child.id, child) ?? child;
-          } catch (_) {
-            continue;
-          }
-        }
-        if (resolved.gcid == gcid) {
-          final exact = _withPath(resolved, childPath);
-          _appendScanLog(
-            '[同步识别][DEBUG] 媒体库源目录定位成功：${knownFile.id} -> '
-            '${exact.id}，路径=${exact.cloudPath}',
-          );
-          return _cacheResolvedCloudFile(
-            knownFile,
-            exact,
-            cloudPath: exact.cloudPath,
-          );
-        }
+      if (resolved.gcid == gcid) {
+        final exact = _withPath(resolved, '$parentPath/${resolved.name}');
+        _appendScanLog(
+          '[同步识别][DEBUG] 当前目录定位成功：${knownFile.id} -> '
+          '${exact.id}，路径=${exact.cloudPath}',
+        );
+        return _cacheResolvedCloudFile(
+          knownFile,
+          exact,
+          cloudPath: exact.cloudPath,
+        );
       }
     }
     _appendScanLog(
-      '[同步识别][DEBUG] 媒体库源目录扫描未命中：已检查 $searchedFolders 个目录',
-      isError: true,
+      '[同步识别][DEBUG] 当前文件目录未命中：已检查 ${children.length} 个条目，详情查询不超过 12 次',
     );
     return null;
   }

@@ -325,9 +325,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               ? null
               : () => ref
                     .read(mediaLibraryProvider.notifier)
-                    .scanSelectedLibrary(),
+                    .rescanSelectedLibrary(),
           leading: const Icon(Icons.refresh_rounded, size: 16),
-          child: const Text('扫描'),
+          child: const Text('重新扫描'),
         ),
         if (state.isScanning) ...[
           const SizedBox(width: 8),
@@ -482,6 +482,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           builder: (_) => ExternalPlayerDialog(file: item.file),
         ),
         onManualMatch: () => _showManualTMDBMatch(current ?? _detailWork!),
+        onCancelRefresh: () =>
+            ref.read(mediaLibraryProvider.notifier).cancelDetailSync(),
         onRefreshAndRecognize: () async {
           final selected = current ?? _detailWork!;
           final pendingMatches = await ref
@@ -554,7 +556,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                       ? null
                       : () => ref
                             .read(mediaLibraryProvider.notifier)
-                            .scanSelectedLibrary(),
+                            .rescanSelectedLibrary(),
                 ),
               );
             },
@@ -1932,6 +1934,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final ValueChanged<MediaLibraryItem> onPlay;
   final ValueChanged<MediaLibraryItem> onExternalPlay;
   final VoidCallback onManualMatch;
+  final VoidCallback onCancelRefresh;
   final Future<void> Function() onRefreshAndRecognize;
 
   const _MediaDetailPanel({
@@ -1941,6 +1944,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onPlay,
     required this.onExternalPlay,
     required this.onManualMatch,
+    required this.onCancelRefresh,
     required this.onRefreshAndRecognize,
   });
 
@@ -2168,17 +2172,24 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           Positioned.fill(
             child: ColoredBox(
               color: cs.background.withValues(alpha: 0.86),
-              child: const Center(
+              child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    SizedBox(
+                    const SizedBox(
                       width: 38,
                       height: 38,
                       child: CircularProgressIndicator(strokeWidth: 3),
                     ),
-                    SizedBox(height: 14),
-                    Text('正在同步、识别并匹配媒体信息'),
+                    const SizedBox(height: 14),
+                    const Text('正在同步、识别并匹配媒体信息'),
+                    const SizedBox(height: 14),
+                    ShadButton.destructive(
+                      size: ShadButtonSize.sm,
+                      onPressed: widget.onCancelRefresh,
+                      leading: const Icon(Icons.stop_rounded, size: 16),
+                      child: const Text('取消'),
+                    ),
                   ],
                 ),
               ),
