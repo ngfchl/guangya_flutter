@@ -333,6 +333,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         _appendScanLog('已清理 $removedDiscStreams 个已入库的光盘目录内部文件');
       }
       final previousLibraryItems = await _loadItems(library.id);
+      final existingByID = {
+        for (final item in previousLibraryItems) item.id: item,
+      };
+      final existingByGCID = {
+        for (final item in previousLibraryItems)
+          if (item.file.gcid?.isNotEmpty == true) item.file.gcid!: item,
+      };
       final initialItems = await _loadAllItems()
         ..removeWhere((item) => item.libraryID == library.id);
       final unique = <String, MediaLibraryItem>{
@@ -361,13 +368,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               file,
               directoryName: _parentDirectoryName(file.cloudPath),
             );
-            final existing = unique[file.id];
-            final fileChanged =
+            final existing =
+                unique[file.id] ??
+                existingByID[file.id] ??
+                (file.gcid?.isNotEmpty == true
+                    ? existingByGCID[file.gcid!]
+                    : null);
+            final sameCloudResource =
                 existing != null &&
-                (existing.file.name != file.name ||
-                    existing.file.gcid != file.gcid ||
-                    existing.file.cloudPath != file.cloudPath);
-            var item = existing == null || fileChanged
+                (existing.id == file.id ||
+                    (file.gcid?.isNotEmpty == true &&
+                        file.gcid == existing.file.gcid));
+            var item = existing == null || !sameCloudResource
                 ? await _recognizeMediaItem(
                     fallback,
                     tmdbApiKey,
@@ -416,23 +428,46 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         await Future.wait(List.generate(concurrency, (_) => worker()));
       }
 
-      for (final source in library.sources) {
-        if (_cancelScan) break;
-        _appendScanLog('扫描目录：${source.path}');
-        state = state.copyWith(
-          progress: MediaLibraryScanProgress(
-            phase: '扫描 ${source.path}',
-            completed: completed,
-          ),
-        );
-        await _scanSource(
-          source.rootID,
-          source.path,
-          recursive: library.recursive,
-          minimumSizeBytes: library.minimumSizeMB * 1024 * 1024,
-          forceRemote: forceRemote,
-          onMediaFiles: indexBatch,
-        );
+      if (forceRemote) {
+        _appendScanLog('正在获取云盘全量文件索引…');
+        final globalFiles = await _allGlobalRemoteFiles();
+        final seen = <String>{};
+        final mediaFiles = <CloudFile>[];
+        for (final source in library.sources) {
+          for (final file in globalFiles) {
+            if (!file.isVideo ||
+                (file.size ?? 0) < library.minimumSizeMB * 1024 * 1024 ||
+                !_isWithinLibrarySource(file, source) ||
+                !seen.add(file.id)) {
+              continue;
+            }
+            final path = _globalCloudPath(file, globalFiles, source.path);
+            if (!isMediaScanDiscInternalPath(path)) {
+              mediaFiles.add(_withPath(file, path));
+            }
+          }
+        }
+        _appendScanLog('全量索引完成，发现 ${mediaFiles.length} 个媒体文件');
+        await indexBatch(mediaFiles);
+      } else {
+        for (final source in library.sources) {
+          if (_cancelScan) break;
+          _appendScanLog('扫描目录：${source.path}');
+          state = state.copyWith(
+            progress: MediaLibraryScanProgress(
+              phase: '扫描 ${source.path}',
+              completed: completed,
+            ),
+          );
+          await _scanSource(
+            source.rootID,
+            source.path,
+            recursive: library.recursive,
+            minimumSizeBytes: library.minimumSizeMB * 1024 * 1024,
+            forceRemote: false,
+            onMediaFiles: indexBatch,
+          );
+        }
       }
       await pendingPersistence;
       var items = unique.values.toList()
@@ -1444,6 +1479,72 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
+  Future<List<CloudFile>> _allGlobalRemoteFiles() async {
+    final batches = await Future.wait([
+      _allGlobalRemoteFilesByType(),
+      _allGlobalRemoteFilesByType(resType: 2),
+    ]);
+    final unique = {
+      for (final file in batches.expand((files) => files)) file.id: file,
+    };
+    final values = unique.values.toList();
+    await FileMetadataCache.cacheFiles(values);
+    return values;
+  }
+
+  Future<List<CloudFile>> _allGlobalRemoteFilesByType({int? resType}) async {
+    const pageSize = 10000;
+    final values = <CloudFile>[];
+    for (var page = 0; !_cancelScan; page++) {
+      final response = await _api!.fsFiles(
+        parentID: '*',
+        page: page,
+        pageSize: pageSize,
+        orderBy: 0,
+        sortType: 0,
+        resType: resType,
+      );
+      final batch = _extractFiles(response);
+      values.addAll(batch);
+      final total = _findIntDeep(response, const [
+        'total',
+        'totalCount',
+        'count',
+      ]);
+      if (batch.length < pageSize ||
+          (total != null && values.length >= total)) {
+        break;
+      }
+    }
+    return values;
+  }
+
+  bool _isWithinLibrarySource(CloudFile file, MediaLibrarySource source) {
+    final rootID = source.rootID;
+    if (rootID == null || rootID.isEmpty) return true;
+    if (file.parentID == rootID || file.id == rootID) return true;
+    return (file.fullParentIDs ?? '')
+        .split('/')
+        .where((id) => id.isNotEmpty)
+        .contains(rootID);
+  }
+
+  String _globalCloudPath(
+    CloudFile file,
+    Iterable<CloudFile> allFiles,
+    String sourcePath,
+  ) {
+    final namesByID = {for (final item in allFiles) item.id: item.name};
+    final parents = (file.fullParentIDs ?? '')
+        .split('/')
+        .where((id) => id.isNotEmpty)
+        .map((id) => namesByID[id])
+        .whereType<String>()
+        .toList();
+    if (parents.isEmpty) return '$sourcePath/${file.name}';
+    return '/${[...parents, file.name].join('/')}';
   }
 
   Future<void> _scanSource(
