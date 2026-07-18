@@ -67,7 +67,28 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   bool _searchOpen = false;
   String? _fileSearchQuery;
   String? _mediaSearchQuery;
-  WorkspaceTool? _activeTool;
+  WorkspaceTool? _cloudActiveTool;
+  WorkspaceTool? _mediaActiveTool;
+
+  void _openTool(WorkspaceTool tool) {
+    setState(() {
+      if (_mode == WorkspaceMode.cloud) {
+        _cloudActiveTool = tool;
+      } else {
+        _mediaActiveTool = tool;
+      }
+    });
+  }
+
+  void _closeActiveTool() {
+    setState(() {
+      if (_mode == WorkspaceMode.cloud) {
+        _cloudActiveTool = null;
+      } else {
+        _mediaActiveTool = null;
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -96,12 +117,12 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                         onSettings: () => _showSettings(context),
                         onSignOut: () =>
                             ref.read(authProvider.notifier).signOut(),
-                        onTool: (tool) => setState(() => _activeTool = tool),
+                        onTool: _openTool,
                       )
                     : _MediaSidebar(
                         onCreate: () =>
                             MediaLibraryPage.showCreateDialog(context, ref),
-                        onTool: (tool) => setState(() => _activeTool = tool),
+                        onTool: _openTool,
                       ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -113,9 +134,6 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                           if (_mode == mode) return;
                           setState(() {
                             _mode = mode;
-                            _activeTool = null;
-                            _fileSearchQuery = null;
-                            _mediaSearchQuery = null;
                             _searchOpen = false;
                             _searchController.clear();
                           });
@@ -155,62 +173,13 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       ),
                       const SizedBox(height: 14),
                       Expanded(
-                        child: _activeTool != null
-                            ? OS26Glass(
-                                radius: 18,
-                                opacity: 0.42,
-                                padding: EdgeInsets.zero,
-                                child: WorkspaceToolsPage(
-                                  tool: _activeTool!,
-                                  onClose: () =>
-                                      setState(() => _activeTool = null),
-                                ),
-                              )
-                            : _fileSearchQuery != null
-                            ? OS26Glass(
-                                radius: 18,
-                                opacity: 0.42,
-                                padding: EdgeInsets.zero,
-                                child: FileSearchResultsPage(
-                                  query: _fileSearchQuery!,
-                                  onClose: () => setState(() {
-                                    _fileSearchQuery = null;
-                                    _searchController.clear();
-                                  }),
-                                ),
-                              )
-                            : _mediaSearchQuery != null
-                            ? OS26Glass(
-                                radius: 18,
-                                opacity: 0.42,
-                                padding: EdgeInsets.zero,
-                                child: MediaSearchResultsPage(
-                                  query: _mediaSearchQuery!,
-                                  onClose: () => setState(() {
-                                    _mediaSearchQuery = null;
-                                    _searchController.clear();
-                                    ref
-                                        .read(mediaLibraryProvider.notifier)
-                                        .setSearchQuery('');
-                                  }),
-                                ),
-                              )
-                            : _mode == WorkspaceMode.cloud
-                            ? _CloudWorkspace(
-                                state: fp,
-                                sidePanelOpen: _isSidePanelOpen,
-                                onToggleSidePanel: () => setState(
-                                  () => _isSidePanelOpen = !_isSidePanelOpen,
-                                ),
-                              )
-                            : OS26Glass(
-                                radius: 18,
-                                opacity: 0.42,
-                                padding: EdgeInsets.zero,
-                                child: MediaLibraryPage(
-                                  showLibrarySidebar: false,
-                                ),
-                              ),
+                        child: IndexedStack(
+                          index: _mode == WorkspaceMode.cloud ? 0 : 1,
+                          children: [
+                            _buildCloudContent(fp),
+                            _buildMediaContent(),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -225,6 +194,79 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
 
   void _showSettings(BuildContext context) {
     showDialog(context: context, builder: (_) => const SettingsDialog());
+  }
+
+  Widget _buildCloudContent(FileState state) {
+    if (_cloudActiveTool != null) {
+      return OS26Glass(
+        radius: 18,
+        opacity: 0.42,
+        padding: EdgeInsets.zero,
+        child: WorkspaceToolsPage(
+          key: const PageStorageKey('cloud-tools'),
+          tool: _cloudActiveTool!,
+          onClose: _closeActiveTool,
+        ),
+      );
+    }
+    if (_fileSearchQuery != null) {
+      return OS26Glass(
+        radius: 18,
+        opacity: 0.42,
+        padding: EdgeInsets.zero,
+        child: FileSearchResultsPage(
+          key: const PageStorageKey('file-search-results'),
+          query: _fileSearchQuery!,
+          onClose: () => setState(() {
+            _fileSearchQuery = null;
+            _searchController.clear();
+          }),
+        ),
+      );
+    }
+    return _CloudWorkspace(
+      state: state,
+      sidePanelOpen: _isSidePanelOpen,
+      onToggleSidePanel: () =>
+          setState(() => _isSidePanelOpen = !_isSidePanelOpen),
+    );
+  }
+
+  Widget _buildMediaContent() {
+    if (_mediaActiveTool != null) {
+      return OS26Glass(
+        radius: 18,
+        opacity: 0.42,
+        padding: EdgeInsets.zero,
+        child: WorkspaceToolsPage(
+          key: const PageStorageKey('media-tools'),
+          tool: _mediaActiveTool!,
+          onClose: _closeActiveTool,
+        ),
+      );
+    }
+    if (_mediaSearchQuery != null) {
+      return OS26Glass(
+        radius: 18,
+        opacity: 0.42,
+        padding: EdgeInsets.zero,
+        child: MediaSearchResultsPage(
+          key: const PageStorageKey('media-search-results'),
+          query: _mediaSearchQuery!,
+          onClose: () => setState(() {
+            _mediaSearchQuery = null;
+            _searchController.clear();
+            ref.read(mediaLibraryProvider.notifier).setSearchQuery('');
+          }),
+        ),
+      );
+    }
+    return OS26Glass(
+      radius: 18,
+      opacity: 0.42,
+      padding: EdgeInsets.zero,
+      child: const MediaLibraryPage(showLibrarySidebar: false),
+    );
   }
 }
 
