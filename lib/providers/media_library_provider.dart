@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_riverpod/legacy.dart';
 
@@ -311,21 +312,23 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       Future<void> pendingPersistence = Future.value();
 
       Future<void> indexBatch(List<CloudFile> files) async {
-        final pending = files
-            .where((file) => !unique.containsKey(file.id))
-            .toList();
+        final pending = files.toList();
         if (pending.isEmpty || _cancelScan) return;
         var next = 0;
         Future<void> worker() async {
           while (!_cancelScan && next < pending.length) {
             final file = pending[next++];
             final fallback = MediaLibraryItem.fromFile(library.id, file);
-            final item = await _recognizeMediaItem(
-              fallback,
-              tmdbApiKey,
-              proxyHost: tmdbProxyHost,
-              proxyPort: tmdbProxyPort,
-            );
+            final existing = unique[file.id];
+            var item = existing == null
+                ? await _recognizeMediaItem(
+                    fallback,
+                    tmdbApiKey,
+                    proxyHost: tmdbProxyHost,
+                    proxyPort: tmdbProxyPort,
+                  )
+                : existing.copyWith(file: file);
+            item = await _renameMatchedMediaFile(item);
             unique[file.id] = item;
             completed += 1;
             final visible = unique.values.toList()
@@ -347,7 +350,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             _appendScanLog(
               item.tmdbID == null
                   ? '已入库：${file.name}（未匹配 TMDB）'
-                  : '已识别并入库：${file.name} → ${item.title}',
+                  : item.file.name == file.name
+                  ? '已识别并入库：${file.name} → ${item.title}'
+                  : '已识别并重命名：${file.name} → ${item.file.name}',
             );
           }
         }
@@ -644,6 +649,114 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       return fallback;
     }
   }
+
+  Future<MediaLibraryItem> _renameMatchedMediaFile(
+    MediaLibraryItem item,
+  ) async {
+    if (_api == null || item.tmdbID == null || item.mediaKind == null) {
+      return item;
+    }
+    final parsed = ParsedMediaName.parse(item.file.name);
+    final extension = _extensionOf(item.file.name);
+    final year = item.year.isEmpty ? '' : '.${item.year}';
+    final episode = item.mediaKind == TMDBMediaKind.tv && parsed.isEpisode
+        ? '.S${parsed.season!.toString().padLeft(2, '0')}E${parsed.episode!.toString().padLeft(2, '0')}'
+        : '';
+    final targetName =
+        '${_safeCloudName('${item.title}$year$episode')}${extension.isEmpty ? '' : '.$extension'}';
+    if (targetName == item.file.name) return item;
+
+    try {
+      await _api!.fsRename(item.file.id, targetName);
+      final updated = item.copyWith(file: item.file.copyWith(name: targetName));
+      await _writeNfoForRenamedMedia(updated, parsed);
+      return updated;
+    } catch (_) {
+      return item;
+    }
+  }
+
+  Future<void> _writeNfoForRenamedMedia(
+    MediaLibraryItem item,
+    ParsedMediaName parsed,
+  ) async {
+    try {
+      final detail = await _api!.fsDetail(item.file.id);
+      final parentID = _findStringDeep(detail, const [
+        'parentId',
+        'parent_id',
+        'parentFileId',
+      ]);
+      if (parentID == null || parentID.isEmpty) return;
+      final isEpisode = item.mediaKind == TMDBMediaKind.tv && parsed.isEpisode;
+      final nfoName = isEpisode
+          ? '${_safeCloudName(item.title)}.S${parsed.season!.toString().padLeft(2, '0')}E${parsed.episode!.toString().padLeft(2, '0')}.nfo'
+          : item.mediaKind == TMDBMediaKind.tv
+          ? 'tvshow.nfo'
+          : 'movie.nfo';
+      final root = isEpisode
+          ? 'episodedetails'
+          : item.mediaKind == TMDBMediaKind.tv
+          ? 'tvshow'
+          : 'movie';
+      final technical = <String>[
+        if (parsed.resolution != null)
+          '<resolution>${_xml(parsed.resolution!)}</resolution>',
+        if (parsed.source != null) '<source>${_xml(parsed.source!)}</source>',
+        if (parsed.videoCodec != null)
+          '<codec>${_xml(parsed.videoCodec!)}</codec>',
+        if (parsed.dynamicRange != null)
+          '<hdr>${_xml(parsed.dynamicRange!)}</hdr>',
+        if (parsed.audio != null) '<audio>${_xml(parsed.audio!)}</audio>',
+      ].join();
+      final episodeFields = isEpisode
+          ? '<season>${parsed.season}</season><episode>${parsed.episode}</episode>'
+          : '';
+      final xml =
+          '<?xml version="1.0" encoding="UTF-8"?>'
+          '<$root><uniqueid type="tmdb" default="true">${item.tmdbID}</uniqueid>'
+          '<title>${_xml(item.title)}</title>'
+          '<originaltitle>${_xml(item.originalTitle)}</originaltitle>'
+          '<year>${_xml(item.year)}</year>'
+          '<plot>${_xml(item.overview)}</plot>$episodeFields'
+          '<fileinfo><streamdetails><video>$technical</video></streamdetails></fileinfo>'
+          '</$root>';
+      final temp = File('${Directory.systemTemp.path}/$nfoName');
+      await temp.writeAsString(xml, flush: true);
+      try {
+        await _api!.fileUpload(
+          temp,
+          parentID: parentID,
+          contentType: 'application/xml',
+        );
+      } finally {
+        if (await temp.exists()) await temp.delete();
+      }
+    } catch (_) {
+      // File renaming remains successful if sidecar upload is unavailable.
+    }
+  }
+
+  String _extensionOf(String value) {
+    final index = value.lastIndexOf('.');
+    return index <= 0 ? '' : value.substring(index + 1).toLowerCase();
+  }
+
+  String _safeCloudName(String value) {
+    final cleaned = value
+        .replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1F]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    final fallback = cleaned.isEmpty ? 'Untitled' : cleaned;
+    return fallback.length > 180 ? fallback.substring(0, 180).trim() : fallback;
+  }
+
+  String _xml(String value) => value
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&apos;');
 
   MediaLibraryItem _itemFromTMDBCandidate(
     MediaLibraryItem fallback,

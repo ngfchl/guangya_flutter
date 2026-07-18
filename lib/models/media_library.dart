@@ -487,6 +487,11 @@ class ParsedMediaName {
   final int? season;
   final int? episode;
   final bool isEpisode;
+  final String? resolution;
+  final String? source;
+  final String? videoCodec;
+  final String? audio;
+  final String? dynamicRange;
 
   const ParsedMediaName({
     required this.title,
@@ -494,50 +499,82 @@ class ParsedMediaName {
     this.season,
     this.episode,
     this.isEpisode = false,
+    this.resolution,
+    this.source,
+    this.videoCodec,
+    this.audio,
+    this.dynamicRange,
   });
 
   factory ParsedMediaName.parse(String name) {
-    var stem = name.replaceFirst(RegExp(r'\.[^.]+$'), '');
-    stem = stem.replaceAll(RegExp(r'[\._]+'), ' ');
-
-    final episodeMatch =
-        RegExp(
-          r'(?:S|第)\s*(\d{1,2})\s*(?:E|季\s*第?)\s*(\d{1,3})',
-          caseSensitive: false,
-        ).firstMatch(stem) ??
-        RegExp(r'(\d{1,2})x(\d{1,3})', caseSensitive: false).firstMatch(stem);
-    final yearMatch = RegExp(r'(19\d{2}|20\d{2})').firstMatch(stem);
-
-    final cutIndex =
-        [
-          episodeMatch?.start,
-          yearMatch?.start,
-          RegExp(
-            r'\b(2160p|1080p|720p|bluray|web[- ]?dl|hdtv|x264|x265|hevc)\b',
+    final stem = name.replaceFirst(RegExp(r'\.[^.]+$'), '');
+    final normalized = stem.replaceAll(RegExp(r'[._]+'), ' ');
+    final episodeMatch = RegExp(
+      r'\bS(\d{1,2})[ ._-]*E(\d{1,3})\b|\b(\d{1,2})x(\d{1,3})\b|第\s*(\d{1,2})\s*季\s*第?\s*(\d{1,3})\s*[集话]',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    int? season;
+    int? episode;
+    if (episodeMatch != null) {
+      final groups = [
+        [1, 2],
+        [3, 4],
+        [5, 6],
+      ];
+      for (final pair in groups) {
+        final a = episodeMatch.group(pair[0]);
+        final b = episodeMatch.group(pair[1]);
+        if (a != null && b != null) {
+          season = int.tryParse(a);
+          episode = int.tryParse(b);
+          break;
+        }
+      }
+    }
+    final episodeOnly = season == null
+        ? RegExp(
+            r'\b(?:E|EP|Episode)[ ._-]*(\d{1,3})\b|第\s*(\d{1,3})\s*[集话]',
             caseSensitive: false,
-          ).firstMatch(stem)?.start,
-        ].whereType<int>().fold<int?>(
-          null,
-          (min, value) => min == null || value < min ? value : min,
-        );
-
-    var title = cutIndex == null ? stem : stem.substring(0, cutIndex);
+          ).firstMatch(normalized)
+        : null;
+    if (episodeOnly != null) {
+      season = 1;
+      episode = int.tryParse(
+        episodeOnly.group(1) ?? episodeOnly.group(2) ?? '',
+      );
+    }
+    String? first(String pattern) =>
+        RegExp(pattern, caseSensitive: false).firstMatch(normalized)?.group(0);
+    final yearMatch = RegExp(r'\b(19\d{2}|20\d{2})\b').firstMatch(normalized);
+    final boundary = RegExp(
+      r'\b(?:19\d{2}|20\d{2}|S\d{1,2}[ ._-]*E\d{1,3}|\d{1,2}x\d{1,3}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv)\b',
+      caseSensitive: false,
+    );
+    final boundaryMatch = boundary.firstMatch(normalized);
+    var title = boundaryMatch != null
+        ? normalized.substring(0, boundaryMatch.start)
+        : normalized;
     title = title
-        .replaceAll(RegExp(r'[\[\]\(\)]'), ' ')
+        .replaceAll(RegExp(r'[\[\]【】(){}]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
-    if (title.isEmpty) title = stem.trim();
+    if (title.isEmpty) title = normalized.trim();
 
     return ParsedMediaName(
       title: title,
       year: yearMatch == null ? null : int.tryParse(yearMatch.group(1)!),
-      season: episodeMatch == null
-          ? null
-          : int.tryParse(episodeMatch.group(1)!),
-      episode: episodeMatch == null
-          ? null
-          : int.tryParse(episodeMatch.group(2)!),
-      isEpisode: episodeMatch != null,
+      season: season,
+      episode: episode,
+      isEpisode: season != null && episode != null,
+      resolution: first(r'\b(?:2160p|1080p|720p|480p|4k)\b'),
+      source: first(
+        r'\b(?:WEB[- ]?DL|WEBRip|BluRay|BDRip|REMUX|HDTV|DVD|UHD)\b',
+      ),
+      videoCodec: first(r'\b(?:x26[45]|h\.?26[45]|HEVC|AV1|VC-1)\b'),
+      audio: first(
+        r'\b(?:Atmos|TrueHD|DTS(?:-HD)?|DDP?(?: ?[0-9.]+)?|AAC|FLAC)\b',
+      ),
+      dynamicRange: first(r'\b(?:HDR10?\+?|Dolby[ .-]?Vision|DV)\b'),
     );
   }
 }

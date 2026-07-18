@@ -18,6 +18,7 @@ Future<void> showMediaPlayerDialog(
   BuildContext context,
   CloudFile file, {
   List<CloudFile> episodeCandidates = const [],
+  CloudFile? initialSubtitle,
 }) async {
   Future<void> openExternalPlayer() async {
     await Future<void>.delayed(Duration.zero);
@@ -34,6 +35,7 @@ Future<void> showMediaPlayerDialog(
       builder: (_) => MediaPlayerDialog(
         file: file,
         episodeCandidates: episodeCandidates,
+        initialSubtitle: initialSubtitle,
         onPlaybackFailure: openExternalPlayer,
       ),
     );
@@ -45,12 +47,14 @@ Future<void> showMediaPlayerDialog(
 class MediaPlayerDialog extends ConsumerStatefulWidget {
   final CloudFile file;
   final List<CloudFile> episodeCandidates;
+  final CloudFile? initialSubtitle;
   final Future<void> Function()? onPlaybackFailure;
 
   const MediaPlayerDialog({
     super.key,
     required this.file,
     this.episodeCandidates = const [],
+    this.initialSubtitle,
     this.onPlaybackFailure,
   });
 
@@ -131,6 +135,10 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
           .read(fileProvider.notifier)
           .playbackUrl(_currentFile);
       await _player.open(Media(url.toString()), play: true);
+      final initialSubtitle = widget.initialSubtitle;
+      if (initialSubtitle != null) {
+        await _setDirectorySubtitle(initialSubtitle);
+      }
       _videoDimensionFallbackTimer?.cancel();
       _videoDimensionFallbackTimer = Timer(const Duration(seconds: 4), () {
         if (mounted && _loading && _error == null) {
@@ -234,6 +242,16 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     } catch (error) {
       if (mounted) setState(() => _error = '加载字幕失败：$error');
     }
+  }
+
+  Future<void> _searchDirectorySubtitles() async {
+    final siblings = await ref
+        .read(fileProvider.notifier)
+        .siblingFiles(_currentFile);
+    if (!mounted) return;
+    setState(() {
+      _subtitleCandidates = _matchingSubtitles(_currentFile, siblings);
+    });
   }
 
   Future<void> _loadLocalSubtitle() async {
@@ -343,6 +361,8 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
                               player: _player,
                               directorySubtitles: _subtitleCandidates,
                               onSelectDirectorySubtitle: _setDirectorySubtitle,
+                              onSearchDirectorySubtitles:
+                                  _searchDirectorySubtitles,
                               onLoadLocalSubtitle: _loadLocalSubtitle,
                               onToggleFullscreen: videoState.toggleFullscreen,
                             ),
@@ -422,6 +442,7 @@ class _MediaPlaybackControls extends StatefulWidget {
   final Player player;
   final List<CloudFile> directorySubtitles;
   final Future<void> Function(CloudFile subtitle) onSelectDirectorySubtitle;
+  final Future<void> Function() onSearchDirectorySubtitles;
   final Future<void> Function() onLoadLocalSubtitle;
   final Future<void> Function() onToggleFullscreen;
 
@@ -429,6 +450,7 @@ class _MediaPlaybackControls extends StatefulWidget {
     required this.player,
     required this.directorySubtitles,
     required this.onSelectDirectorySubtitle,
+    required this.onSearchDirectorySubtitles,
     required this.onLoadLocalSubtitle,
     required this.onToggleFullscreen,
   });
@@ -524,6 +546,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
     final tracks = widget.player.state.tracks.subtitle;
     return ShadPopover(
       controller: _subtitlePopover,
+      padding: const EdgeInsets.all(8),
       popover: (_) => _subtitlePopoverContent(tracks),
       child: _menuButton('字幕', () async => _subtitlePopover.toggle()),
     );
@@ -531,13 +554,22 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
 
   Widget _subtitlePopoverContent(List<SubtitleTrack> tracks) {
     final selectedID = widget.player.state.track.subtitle.id;
+    final cs = ShadTheme.of(context).colorScheme;
+    final itemStyle = TextStyle(fontSize: 13, color: cs.foreground);
     return SizedBox(
-      width: 300,
+      width: 320,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('字幕', style: TextStyle(fontWeight: FontWeight.w700)),
+          Text(
+            '字幕',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: cs.foreground,
+            ),
+          ),
           if (tracks.isNotEmpty) ...[
             const SizedBox(height: 6),
             ConstrainedBox(
@@ -550,6 +582,11 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                   final selected = track.id == selectedID;
                   return ShadButton.ghost(
                     size: ShadButtonSize.sm,
+                    height: 32,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    foregroundColor: selected ? cs.primary : cs.foreground,
+                    textStyle: itemStyle,
+                    mainAxisAlignment: MainAxisAlignment.start,
                     onPressed: () async {
                       await widget.player.setSubtitleTrack(track);
                       _subtitlePopover.hide();
@@ -575,10 +612,14 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
             ),
           ],
           if (widget.directorySubtitles.isNotEmpty) ...[
-            const Divider(height: 16),
+            const Divider(height: 14),
             Text(
               '同目录字幕 (${widget.directorySubtitles.length})',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: cs.mutedForeground,
+              ),
             ),
             const SizedBox(height: 4),
             ConstrainedBox(
@@ -590,6 +631,11 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                   final subtitle = widget.directorySubtitles[index];
                   return ShadButton.ghost(
                     size: ShadButtonSize.sm,
+                    height: 32,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    foregroundColor: cs.foreground,
+                    textStyle: itemStyle,
+                    mainAxisAlignment: MainAxisAlignment.start,
                     onPressed: () async {
                       await widget.onSelectDirectorySubtitle(subtitle);
                       _subtitlePopover.hide();
@@ -608,9 +654,28 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
               ),
             ),
           ],
-          const Divider(height: 16),
+          const Divider(height: 14),
           ShadButton.ghost(
             size: ShadButtonSize.sm,
+            height: 32,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            foregroundColor: cs.foreground,
+            textStyle: itemStyle,
+            mainAxisAlignment: MainAxisAlignment.start,
+            onPressed: () async {
+              await widget.onSearchDirectorySubtitles();
+              if (mounted) setState(() {});
+            },
+            leading: const Icon(Icons.search_rounded, size: 15),
+            child: const Text('搜索同目录字幕'),
+          ),
+          ShadButton.ghost(
+            size: ShadButtonSize.sm,
+            height: 32,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            foregroundColor: cs.foreground,
+            textStyle: itemStyle,
+            mainAxisAlignment: MainAxisAlignment.start,
             onPressed: () async {
               _subtitlePopover.hide();
               await widget.onLoadLocalSubtitle();
