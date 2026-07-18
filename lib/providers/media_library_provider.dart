@@ -203,8 +203,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
 
       final unique = <String, MediaLibraryItem>{};
+      final tmdbApiKey =
+          StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
       for (final file in discovered) {
-        unique[file.id] = MediaLibraryItem.fromFile(library.id, file);
+        if (_cancelScan) break;
+        final fallback = MediaLibraryItem.fromFile(library.id, file);
+        unique[file.id] = await _recognizeMediaItem(fallback, tmdbApiKey);
+        state = state.copyWith(
+          progress: MediaLibraryScanProgress(
+            phase: tmdbApiKey.isEmpty ? '正在建立本地索引' : '正在识别 ${file.name}',
+            completed: unique.length,
+            total: discovered.length,
+          ),
+        );
       }
       final items = unique.values.toList()
         ..sort(
@@ -262,6 +273,63 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   void clearError() {
     state = state.copyWith(clearError: true);
+  }
+
+  Future<MediaLibraryItem> _recognizeMediaItem(
+    MediaLibraryItem fallback,
+    String apiKey,
+  ) async {
+    if (_api == null || apiKey.trim().isEmpty) return fallback;
+    try {
+      final result = await _api!.tmdbSearch(fallback.title, apiKey: apiKey);
+      final values = result['results'];
+      if (values is! List) return fallback;
+      Map<String, dynamic>? candidate;
+      for (final value in values) {
+        if (value is! Map) continue;
+        final map = Map<String, dynamic>.from(value);
+        final type = map['media_type']?.toString();
+        if (type == 'movie' || type == 'tv') {
+          candidate = map;
+          break;
+        }
+      }
+      if (candidate == null) return fallback;
+      final type = candidate['media_type']?.toString();
+      final title = (candidate['title'] ?? candidate['name'])
+          ?.toString()
+          .trim();
+      final originalTitle =
+          (candidate['original_title'] ?? candidate['original_name'])
+              ?.toString()
+              .trim();
+      final releaseDate =
+          (candidate['release_date'] ?? candidate['first_air_date'])
+              ?.toString() ??
+          '';
+      return MediaLibraryItem(
+        libraryID: fallback.libraryID,
+        file: fallback.file,
+        tmdbID: _toInt(candidate['id']),
+        title: title == null || title.isEmpty ? fallback.title : title,
+        originalTitle: originalTitle == null || originalTitle.isEmpty
+            ? fallback.originalTitle
+            : originalTitle,
+        mediaKind: type == 'tv' ? TMDBMediaKind.tv : TMDBMediaKind.movie,
+        releaseDate: releaseDate,
+        overview: candidate['overview']?.toString() ?? '',
+        posterPath: candidate['poster_path']?.toString(),
+        backdropPath: candidate['backdrop_path']?.toString(),
+        updatedAt: DateTime.now(),
+      );
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  int? _toInt(dynamic value) {
+    if (value is int) return value;
+    return int.tryParse(value?.toString() ?? '');
   }
 
   Future<List<CloudFile>> _scanSource(

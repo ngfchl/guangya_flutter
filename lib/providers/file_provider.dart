@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/legacy.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../api/guangya_api.dart';
 import '../models/cloud_file.dart';
 
@@ -430,18 +432,80 @@ class FileNotifier extends StateNotifier<FileState> {
   Future<void> downloadFile(CloudFile file) async {
     if (_api == null) return;
     try {
-      final result = await _api!.downloadURL(file.id);
-      final url = _findStringDeep(result, [
+      state = state.copyWith(statusMessage: '正在准备外部打开…');
+      final url = await _resolveOpenUrl(file);
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        throw Exception('无法调用系统默认应用打开链接');
+      }
+      state = state.copyWith(statusMessage: '已交给系统默认应用');
+    } catch (e) {
+      state = state.copyWith(errorMessage: e.toString());
+    }
+  }
+
+  Future<void> createShare(CloudFile file) async {
+    if (_api == null) return;
+    try {
+      state = state.copyWith(statusMessage: '正在创建分享…');
+      final result = await _api!.shareCreate([file.id], title: file.name);
+      final link = _findStringDeep(result, const [
         'url',
-        'downloadUrl',
-        'download_url',
+        'shareUrl',
+        'share_url',
+        'link',
       ]);
-      if (url != null) {
-        state = state.copyWith(statusMessage: '下载链接: $url');
+      if (link != null) {
+        await Clipboard.setData(ClipboardData(text: link));
+        state = state.copyWith(statusMessage: '分享链接已复制');
+      } else {
+        state = state.copyWith(statusMessage: '分享已创建');
       }
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
     }
+  }
+
+  Future<void> restoreFiles(List<CloudFile> files) async {
+    if (_api == null || files.isEmpty) return;
+    try {
+      state = state.copyWith(statusMessage: '正在恢复 ${files.length} 个项目…');
+      await _api!.fsRecycle(files.map((file) => file.id).toList());
+      state = state.copyWith(statusMessage: '已恢复 ${files.length} 个项目');
+      await loadFiles(parentID: _currentParentID);
+    } catch (e) {
+      state = state.copyWith(errorMessage: e.toString());
+    }
+  }
+
+  Future<Uri> _resolveOpenUrl(CloudFile file) async {
+    String? url;
+    if (file.isVideo) {
+      final detail = await _api!.fsDetail(file.id);
+      final gcid = file.gcid ?? _findStringDeep(detail, const ['gcid', 'gcId']);
+      if (gcid != null && gcid.isNotEmpty) {
+        final videoResult = await _api!.vodDownloadURL(file.id, gcid);
+        url = _findStringDeep(videoResult, const [
+          'signedURL',
+          'signedUrl',
+          'url',
+          'downloadUrl',
+          'download_url',
+          'dlink',
+        ]);
+      }
+    }
+    if (url == null) {
+      final result = await _api!.downloadURL(file.id);
+      url = _findStringDeep(result, const [
+        'url',
+        'downloadUrl',
+        'download_url',
+        'dlink',
+      ]);
+    }
+    final uri = url == null ? null : Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme) throw Exception('响应缺少可打开的签名链接');
+    return uri;
   }
 
   Future<void> uploadLocalFiles(List<File> files, {String? parentID}) async {

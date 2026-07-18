@@ -15,6 +15,7 @@ class FileListTile extends StatelessWidget {
   final VoidCallback? onDownload;
   final VoidCallback? onShare;
   final VoidCallback? onDelete;
+  final bool isRecycleItem;
 
   const FileListTile({
     super.key,
@@ -28,6 +29,7 @@ class FileListTile extends StatelessWidget {
     this.onDownload,
     this.onShare,
     this.onDelete,
+    this.isRecycleItem = false,
   });
 
   @override
@@ -43,8 +45,9 @@ class FileListTile extends StatelessWidget {
           onPressed: onOpen,
           child: const Text('打开'),
         ),
-        const ShadContextMenuItem.inset(
-          enabled: false,
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.pencil, size: 16),
+          onPressed: onRename,
           child: Text('重命名'),
         ),
         ShadContextMenuItem.inset(
@@ -74,12 +77,27 @@ class FileListTile extends StatelessWidget {
         ),
         const Divider(height: 8),
         ShadContextMenuItem.inset(
-          leading: Icon(LucideIcons.trash2, size: 16, color: theme.colorScheme.destructive),
-          trailing: Icon(LucideIcons.chevronRight, color: theme.colorScheme.destructive),
+          leading: Icon(
+            isRecycleItem ? LucideIcons.rotateCcw : LucideIcons.trash2,
+            size: 16,
+            color: isRecycleItem
+                ? theme.colorScheme.primary
+                : theme.colorScheme.destructive,
+          ),
+          trailing: Icon(
+            LucideIcons.chevronRight,
+            color: isRecycleItem
+                ? theme.colorScheme.primary
+                : theme.colorScheme.destructive,
+          ),
           onPressed: onDelete,
           child: Text(
-            '删除',
-            style: TextStyle(color: theme.colorScheme.destructive),
+            isRecycleItem ? '恢复' : '删除',
+            style: TextStyle(
+              color: isRecycleItem
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.destructive,
+            ),
           ),
         ),
       ],
@@ -92,11 +110,11 @@ class FileListTile extends StatelessWidget {
           decoration: BoxDecoration(
             color: isSelected
                 ? (isDark
-                    ? theme.colorScheme.primary.withAlpha(30)
-                    : theme.colorScheme.primary.withAlpha(15))
+                      ? theme.colorScheme.primary.withAlpha(30)
+                      : theme.colorScheme.primary.withAlpha(15))
                 : (isDark
-                    ? Colors.white.withAlpha(3)
-                    : Colors.black.withAlpha(2)),
+                      ? Colors.white.withAlpha(3)
+                      : Colors.black.withAlpha(2)),
             border: Border(
               bottom: BorderSide(
                 color: isDark
@@ -120,11 +138,7 @@ class FileListTile extends StatelessWidget {
                 ),
 
               // File icon
-              SizedBox(
-                width: 32,
-                height: 32,
-                child: FileIcon(file: file),
-              ),
+              SizedBox(width: 32, height: 32, child: FileIcon(file: file)),
               const SizedBox(width: 12),
 
               // File name
