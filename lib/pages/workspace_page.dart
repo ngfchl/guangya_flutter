@@ -383,7 +383,10 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _showSettings(BuildContext context) {
-    showDialog(context: context, builder: (_) => const SettingsDialog());
+    showShadDialog<void>(
+      context: context,
+      builder: (_) => const SettingsDialog(),
+    );
   }
 
   Widget _buildCloudContent(FileState state) {

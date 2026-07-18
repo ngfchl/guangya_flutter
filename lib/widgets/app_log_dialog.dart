@@ -9,6 +9,8 @@ class AppLogDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final screen = MediaQuery.sizeOf(context);
+    final compact = screen.width < 720;
     return ShadDialog(
       title: const Text('运行日志'),
       description: const Text('实时显示当前会话日志；RELEASE 同时写入本地日志文件。'),
@@ -26,8 +28,8 @@ class AppLogDialog extends StatelessWidget {
         ),
       ],
       child: SizedBox(
-        width: 840,
-        height: 520,
+        width: compact ? screen.width - 32 : 840,
+        height: compact ? (screen.height * 0.56).clamp(280, 440) : 520,
         child: ValueListenableBuilder<List<AppLogEntry>>(
           valueListenable: AppLogger.entries,
           builder: (_, entries, _) {

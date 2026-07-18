@@ -9,17 +9,27 @@ import '../pages/login_page.dart';
 import '../pages/workspace_page.dart';
 import 'app_theme.dart';
 
-class GuangyaApp extends ConsumerWidget {
+class GuangyaApp extends ConsumerStatefulWidget {
   const GuangyaApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<GuangyaApp> createState() => _GuangyaAppState();
+}
+
+class _GuangyaAppState extends ConsumerState<GuangyaApp> {
+  var _sessionInitialized = false;
+
+  @override
+  Widget build(BuildContext context) {
     final themeState = ref.watch(themeProvider);
     final auth = ref.watch(authProvider);
 
-    // Auto-load files when signed in
-    if (auth.isSignedIn) {
+    if (!auth.isSignedIn) {
+      _sessionInitialized = false;
+    } else if (!_sessionInitialized) {
+      _sessionInitialized = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !ref.read(authProvider).isSignedIn) return;
         final fp = ref.read(fileProvider.notifier);
         fp.api = ref.read(authProvider.notifier).api;
         final media = ref.read(mediaLibraryProvider.notifier);

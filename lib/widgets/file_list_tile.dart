@@ -206,124 +206,132 @@ class _FileListTileState extends State<FileListTile> {
           ),
         ],
       ],
-      child: GestureDetector(
-        onTap: _isRenaming ? null : widget.onSelect,
-        onDoubleTap: _isRenaming ? null : widget.onOpen,
-        child: Container(
-          height: compact ? 74 : 62,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: widget.isSelected
-                ? cs.primary.withValues(alpha: 0.14)
-                : cs.card,
-            border: Border(bottom: BorderSide(color: cs.border, width: 0.5)),
-          ),
-          child: compact
-              ? _buildCompactContent(theme)
-              : Row(
-                  children: [
-                    if (widget.isSelected)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Icon(
-                          LucideIcons.checkCircle,
-                          size: 18,
-                          color: theme.colorScheme.primary,
+      child: Semantics(
+        button: !_isRenaming,
+        selected: widget.isSelected,
+        label:
+            '${widget.file.isDirectory ? '文件夹' : '文件'} ${widget.file.name}${widget.file.isDirectory ? '' : '，${widget.file.formattedSize}'}',
+        hint: _isRenaming ? '正在重命名' : '点按选择，双击打开',
+        child: GestureDetector(
+          onTap: _isRenaming ? null : widget.onSelect,
+          onDoubleTap: _isRenaming ? null : widget.onOpen,
+          child: Container(
+            height: compact ? 74 : 62,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: widget.isSelected
+                  ? cs.primary.withValues(alpha: 0.14)
+                  : cs.card,
+              border: Border(bottom: BorderSide(color: cs.border, width: 0.5)),
+            ),
+            child: compact
+                ? _buildCompactContent(theme)
+                : Row(
+                    children: [
+                      if (widget.isSelected)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Icon(
+                            LucideIcons.checkCircle,
+                            size: 18,
+                            color: theme.colorScheme.primary,
+                          ),
                         ),
+                      SizedBox(
+                        width: 32,
+                        height: 32,
+                        child: FileIcon(file: widget.file),
                       ),
-                    SizedBox(
-                      width: 32,
-                      height: 32,
-                      child: FileIcon(file: widget.file),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _isRenaming
-                          ? Row(
-                              children: [
-                                Expanded(
-                                  child: ShadInput(
-                                    controller: _renameController,
-                                    focusNode: _renameFocusNode,
-                                    autofocus: true,
-                                    enabled: !_isSubmittingRename,
-                                    onSubmitted: (_) => _confirmRename(),
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                ShadButton.ghost(
-                                  size: ShadButtonSize.sm,
-                                  onPressed: _isSubmittingRename
-                                      ? null
-                                      : _confirmRename,
-                                  child: const Icon(
-                                    Icons.check_rounded,
-                                    size: 17,
-                                  ),
-                                ),
-                                ShadButton.ghost(
-                                  size: ShadButtonSize.sm,
-                                  onPressed: _isSubmittingRename
-                                      ? null
-                                      : _cancelRename,
-                                  child: const Icon(
-                                    Icons.close_rounded,
-                                    size: 17,
-                                  ),
-                                ),
-                              ],
-                            )
-                          : Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  widget.file.name,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
-                                    color: theme.colorScheme.foreground,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                if (widget.file.directoryContentSummary
-                                    case final String summary)
-                                  Text(
-                                    summary,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: theme.colorScheme.mutedForeground,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _isRenaming
+                            ? Row(
+                                children: [
+                                  Expanded(
+                                    child: ShadInput(
+                                      controller: _renameController,
+                                      focusNode: _renameFocusNode,
+                                      autofocus: true,
+                                      enabled: !_isSubmittingRename,
+                                      onSubmitted: (_) => _confirmRename(),
                                     ),
                                   ),
-                              ],
-                            ),
-                    ),
-                    SizedBox(
-                      width: 80,
-                      child: Text(
-                        widget.file.formattedSize,
-                        textAlign: TextAlign.right,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: theme.colorScheme.mutedForeground,
+                                  const SizedBox(width: 4),
+                                  ShadButton.ghost(
+                                    size: ShadButtonSize.sm,
+                                    onPressed: _isSubmittingRename
+                                        ? null
+                                        : _confirmRename,
+                                    child: const Icon(
+                                      Icons.check_rounded,
+                                      size: 17,
+                                    ),
+                                  ),
+                                  ShadButton.ghost(
+                                    size: ShadButtonSize.sm,
+                                    onPressed: _isSubmittingRename
+                                        ? null
+                                        : _cancelRename,
+                                    child: const Icon(
+                                      Icons.close_rounded,
+                                      size: 17,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    widget.file.name,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: theme.colorScheme.foreground,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  if (widget.file.directoryContentSummary
+                                      case final String summary)
+                                    Text(
+                                      summary,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color:
+                                            theme.colorScheme.mutedForeground,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                      ),
+                      SizedBox(
+                        width: 80,
+                        child: Text(
+                          widget.file.formattedSize,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.mutedForeground,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 120,
-                      child: Text(
-                        widget.file.modifiedAt,
-                        textAlign: TextAlign.right,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: theme.colorScheme.mutedForeground,
+                      const SizedBox(width: 12),
+                      SizedBox(
+                        width: 120,
+                        child: Text(
+                          widget.file.modifiedAt,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: theme.colorScheme.mutedForeground,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+          ),
         ),
       ),
     );

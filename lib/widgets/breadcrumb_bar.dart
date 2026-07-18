@@ -17,27 +17,12 @@ class BreadcrumbBar extends StatelessWidget {
     final cs = ShadTheme.of(context).colorScheme;
 
     final items = <Widget>[
-      // Home button
-      GestureDetector(
+      _BreadcrumbItem(
+        label: '云盘根目录',
+        text: '云盘',
+        selected: path.isEmpty,
+        enabled: true,
         onTap: () => onNavigate(-1),
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: path.isEmpty ? cs.primary.withAlpha(15) : null,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              '云盘',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: path.isEmpty ? FontWeight.w600 : FontWeight.normal,
-                color: path.isEmpty ? cs.primary : cs.mutedForeground,
-              ),
-            ),
-          ),
-        ),
       ),
     ];
 
@@ -51,28 +36,12 @@ class BreadcrumbBar extends StatelessWidget {
         ),
       );
       items.add(
-        GestureDetector(
-          onTap: isLast ? null : () => onNavigate(i),
-          child: MouseRegion(
-            cursor: isLast
-                ? SystemMouseCursors.basic
-                : SystemMouseCursors.click,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: isLast ? cs.primary.withAlpha(15) : null,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                path[i].name,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: isLast ? FontWeight.w600 : FontWeight.normal,
-                  color: isLast ? cs.primary : cs.mutedForeground,
-                ),
-              ),
-            ),
-          ),
+        _BreadcrumbItem(
+          label: path[i].name,
+          text: path[i].name,
+          selected: isLast,
+          enabled: !isLast,
+          onTap: () => onNavigate(i),
         ),
       );
     }
@@ -85,6 +54,56 @@ class BreadcrumbBar extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.start,
           children: items,
+        ),
+      ),
+    );
+  }
+}
+
+class _BreadcrumbItem extends StatelessWidget {
+  final String label;
+  final String text;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _BreadcrumbItem({
+    required this.label,
+    required this.text,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Semantics(
+      button: enabled,
+      selected: selected,
+      label: label,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: selected ? cs.primary.withAlpha(15) : null,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                color: selected ? cs.primary : cs.mutedForeground,
+              ),
+            ),
+          ),
         ),
       ),
     );

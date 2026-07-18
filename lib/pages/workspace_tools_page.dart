@@ -94,25 +94,38 @@ class _ToolHeader extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: cs.border)),
       ),
-      child: Row(
-        children: [
-          ShadButton.ghost(
-            onPressed: onClose,
-            leading: const Icon(Icons.arrow_back_rounded, size: 16),
-            child: const Text('返回'),
-          ),
-          const SizedBox(width: 12),
-          Icon(tool.icon, size: 20, color: cs.primary),
-          const SizedBox(width: 8),
-          Text(
-            tool.title,
-            style: TextStyle(
-              color: cs.foreground,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 420;
+          return Row(
+            children: [
+              ShadTooltip(
+                builder: (_) => const Text('返回'),
+                child: ShadButton.ghost(
+                  size: compact ? ShadButtonSize.sm : ShadButtonSize.regular,
+                  onPressed: onClose,
+                  leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                  child: compact ? const SizedBox.shrink() : const Text('返回'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Icon(tool.icon, size: 20, color: cs.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  tool.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: cs.foreground,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1145,54 +1158,61 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
           description: '规则按从上到下的顺序应用。',
           child: Padding(
             padding: const EdgeInsets.only(top: 12),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 for (var index = 0; index < _rules.length; index++)
-                  _BatchRenameRuleRow(
-                    key: ValueKey(_rules[index].id),
-                    rule: _rules[index],
-                    isFirst: index == 0,
-                    isLast: index == _rules.length - 1,
-                    onChanged: (rule) => _updateRule(index, rule),
-                    onMoveUp: () => _moveRule(index, -1),
-                    onMoveDown: () => _moveRule(index, 1),
-                    onRemove: () => setState(() {
-                      _rules.removeAt(index);
-                      if (_rules.isEmpty) {
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _BatchRenameRuleRow(
+                      key: ValueKey(_rules[index].id),
+                      rule: _rules[index],
+                      isFirst: index == 0,
+                      isLast: index == _rules.length - 1,
+                      onChanged: (rule) => _updateRule(index, rule),
+                      onMoveUp: () => _moveRule(index, -1),
+                      onMoveDown: () => _moveRule(index, 1),
+                      onRemove: () => setState(() {
+                        _rules.removeAt(index);
+                        if (_rules.isEmpty) {
+                          _rules = const [
+                            BatchRenameRule(
+                              id: 'rule-0',
+                              kind: BatchRenameRuleKind.replace,
+                            ),
+                          ];
+                        }
+                      }),
+                    ),
+                  ),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ShadButton.outline(
+                      onPressed: () => setState(() {
+                        _rules.add(
+                          BatchRenameRule(
+                            id: 'rule-${DateTime.now().microsecondsSinceEpoch}',
+                            kind: BatchRenameRuleKind.replace,
+                          ),
+                        );
+                      }),
+                      leading: const Icon(Icons.add_rounded, size: 16),
+                      child: const Text('添加规则'),
+                    ),
+                    ShadButton.ghost(
+                      onPressed: () => setState(() {
                         _rules = const [
                           BatchRenameRule(
                             id: 'rule-0',
                             kind: BatchRenameRuleKind.replace,
                           ),
                         ];
-                      }
-                    }),
-                  ),
-                ShadButton.outline(
-                  onPressed: () => setState(() {
-                    _rules.add(
-                      BatchRenameRule(
-                        id: 'rule-${DateTime.now().microsecondsSinceEpoch}',
-                        kind: BatchRenameRuleKind.replace,
-                      ),
-                    );
-                  }),
-                  leading: const Icon(Icons.add_rounded, size: 16),
-                  child: const Text('添加规则'),
-                ),
-                ShadButton.ghost(
-                  onPressed: () => setState(() {
-                    _rules = const [
-                      BatchRenameRule(
-                        id: 'rule-0',
-                        kind: BatchRenameRuleKind.replace,
-                      ),
-                    ];
-                  }),
-                  child: const Text('清空规则'),
+                      }),
+                      child: const Text('清空规则'),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1216,43 +1236,51 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
             padding: const EdgeInsets.only(top: 12),
             child: Column(
               children: [
-                Row(
-                  children: [
-                    ShadButton.outline(
-                      onPressed: _running
-                          ? null
-                          : () => setState(() {
-                              _selectedIDs
-                                ..clear()
-                                ..addAll(
-                                  applicable.map((item) => item.file.id),
-                                );
-                            }),
-                      child: const Text('全选可应用项'),
-                    ),
-                    const SizedBox(width: 8),
-                    ShadButton.ghost(
-                      onPressed: _running
-                          ? null
-                          : () => setState(_selectedIDs.clear),
-                      child: const Text('全不选'),
-                    ),
-                    const Spacer(),
-                    if (_status.isNotEmpty)
-                      Expanded(
-                        child: Text(
-                          _status,
-                          textAlign: TextAlign.right,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: ShadTheme.of(
-                              context,
-                            ).colorScheme.mutedForeground,
+                LayoutBuilder(
+                  builder: (context, constraints) => Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ShadButton.outline(
+                        onPressed: _running
+                            ? null
+                            : () => setState(() {
+                                _selectedIDs
+                                  ..clear()
+                                  ..addAll(
+                                    applicable.map((item) => item.file.id),
+                                  );
+                              }),
+                        child: const Text('全选可应用项'),
+                      ),
+                      ShadButton.ghost(
+                        onPressed: _running
+                            ? null
+                            : () => setState(_selectedIDs.clear),
+                        child: const Text('全不选'),
+                      ),
+                      if (_status.isNotEmpty)
+                        SizedBox(
+                          width: constraints.maxWidth < 560
+                              ? constraints.maxWidth
+                              : 260,
+                          child: Text(
+                            _status,
+                            textAlign: constraints.maxWidth < 560
+                                ? TextAlign.left
+                                : TextAlign.right,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: ShadTheme.of(
+                                context,
+                              ).colorScheme.mutedForeground,
+                            ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Container(
@@ -1274,36 +1302,58 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                             ),
                           ),
                         )
-                      : Column(
-                          children: [
-                            const _BatchRenamePreviewHeader(),
-                            const Divider(height: 1),
-                            Expanded(
-                              child: ListView.separated(
-                                itemCount: previews.length,
-                                separatorBuilder: (_, _) =>
-                                    const Divider(height: 1),
-                                itemBuilder: (context, index) {
-                                  final preview = previews[index];
-                                  final canSelect = preview.applicable;
-                                  return _BatchRenamePreviewRow(
-                                    preview: preview,
-                                    selected: _selectedIDs.contains(
-                                      preview.file.id,
-                                    ),
-                                    enabled: canSelect && !_running,
-                                    onChanged: (selected) => setState(() {
-                                      if (selected == true && canSelect) {
-                                        _selectedIDs.add(preview.file.id);
-                                      } else {
-                                        _selectedIDs.remove(preview.file.id);
-                                      }
-                                    }),
-                                  );
-                                },
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            final tableWidth = constraints.maxWidth < 920
+                                ? 920.0
+                                : constraints.maxWidth;
+                            return Scrollbar(
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: SizedBox(
+                                  width: tableWidth,
+                                  child: Column(
+                                    children: [
+                                      const _BatchRenamePreviewHeader(),
+                                      const Divider(height: 1),
+                                      Expanded(
+                                        child: ListView.separated(
+                                          itemCount: previews.length,
+                                          separatorBuilder: (_, _) =>
+                                              const Divider(height: 1),
+                                          itemBuilder: (context, index) {
+                                            final preview = previews[index];
+                                            final canSelect =
+                                                preview.applicable;
+                                            return _BatchRenamePreviewRow(
+                                              preview: preview,
+                                              selected: _selectedIDs.contains(
+                                                preview.file.id,
+                                              ),
+                                              enabled: canSelect && !_running,
+                                              onChanged: (selected) =>
+                                                  setState(() {
+                                                    if (selected == true &&
+                                                        canSelect) {
+                                                      _selectedIDs.add(
+                                                        preview.file.id,
+                                                      );
+                                                    } else {
+                                                      _selectedIDs.remove(
+                                                        preview.file.id,
+                                                      );
+                                                    }
+                                                  }),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
-                            ),
-                          ],
+                            );
+                          },
                         ),
                 ),
               ],
@@ -1448,72 +1498,82 @@ class _BatchRenameFolderPickerState
           child: const Text('使用此目录'),
         ),
       ],
-      child: SizedBox(
-        width: 540,
-        height: 360,
-        child: Column(
-          children: [
-            Row(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final narrow = constraints.maxWidth < 560;
+          return SizedBox(
+            width: narrow ? constraints.maxWidth : 540,
+            height: narrow ? 420 : 360,
+            child: Column(
               children: [
-                ShadButton.ghost(
-                  size: ShadButtonSize.sm,
-                  onPressed: _path.isEmpty
-                      ? null
-                      : () {
-                          setState(() => _path.removeLast());
-                          _load();
-                        },
-                  leading: const Icon(Icons.arrow_back_rounded, size: 16),
-                  child: const Text('返回上级'),
+                Row(
+                  children: [
+                    ShadButton.ghost(
+                      size: ShadButtonSize.sm,
+                      onPressed: _path.isEmpty
+                          ? null
+                          : () {
+                              setState(() => _path.removeLast());
+                              _load();
+                            },
+                      leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                      child: narrow
+                          ? const SizedBox.shrink()
+                          : const Text('返回上级'),
+                    ),
+                    const Spacer(),
+                    ShadTooltip(
+                      builder: (_) => const Text('刷新文件夹'),
+                      child: ShadButton.ghost(
+                        size: ShadButtonSize.sm,
+                        onPressed: _loading ? null : _load,
+                        child: const Icon(Icons.refresh_rounded, size: 16),
+                      ),
+                    ),
+                  ],
                 ),
-                const Spacer(),
-                ShadButton.ghost(
-                  size: ShadButtonSize.sm,
-                  onPressed: _loading ? null : _load,
-                  child: const Icon(Icons.refresh_rounded, size: 16),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: _loading
+                      ? const Center(child: ShadProgress())
+                      : _error != null
+                      ? Center(
+                          child: Text(
+                            _error!,
+                            style: TextStyle(color: cs.destructive),
+                          ),
+                        )
+                      : _folders.isEmpty
+                      ? Center(
+                          child: Text(
+                            '没有子文件夹',
+                            style: TextStyle(color: cs.mutedForeground),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: _folders.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final folder = _folders[index];
+                            return ListTile(
+                              leading: Icon(
+                                Icons.folder_rounded,
+                                color: cs.primary,
+                              ),
+                              title: Text(folder.name),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () {
+                                setState(() => _path.add(folder));
+                                _load();
+                              },
+                            );
+                          },
+                        ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: _loading
-                  ? const Center(child: ShadProgress())
-                  : _error != null
-                  ? Center(
-                      child: Text(
-                        _error!,
-                        style: TextStyle(color: cs.destructive),
-                      ),
-                    )
-                  : _folders.isEmpty
-                  ? Center(
-                      child: Text(
-                        '没有子文件夹',
-                        style: TextStyle(color: cs.mutedForeground),
-                      ),
-                    )
-                  : ListView.separated(
-                      itemCount: _folders.length,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final folder = _folders[index];
-                        return ListTile(
-                          leading: Icon(
-                            Icons.folder_rounded,
-                            color: cs.primary,
-                          ),
-                          title: Text(folder.name),
-                          trailing: const Icon(Icons.chevron_right_rounded),
-                          onTap: () {
-                            setState(() => _path.add(folder));
-                            _load();
-                          },
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -1547,91 +1607,84 @@ class _BatchRenameRuleRow extends StatelessWidget {
         rule.kind == BatchRenameRuleKind.regex;
     final supportsCase =
         hasReplacement || rule.kind == BatchRenameRuleKind.remove;
-    return IntrinsicWidth(
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: cs.muted.withValues(alpha: 0.46),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: cs.border.withValues(alpha: 0.65)),
-        ),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            ShadCheckbox(
-              value: rule.enabled,
-              label: const Text('启用'),
-              onChanged: (value) => onChanged(rule.copyWith(enabled: value)),
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: cs.muted.withValues(alpha: 0.46),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: cs.border.withValues(alpha: 0.65)),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          ShadCheckbox(
+            value: rule.enabled,
+            label: const Text('启用'),
+            onChanged: (value) => onChanged(rule.copyWith(enabled: value)),
+          ),
+          SizedBox(
+            width: 132,
+            child: ShadSelect<BatchRenameRuleKind>(
+              key: ValueKey('${rule.id}-${rule.kind}'),
+              initialValue: rule.kind,
+              selectedOptionBuilder: (_, value) => Text(_ruleKindLabel(value)),
+              options: [
+                for (final value in BatchRenameRuleKind.values)
+                  ShadOption(value: value, child: Text(_ruleKindLabel(value))),
+              ],
+              onChanged: (value) {
+                if (value != null) onChanged(rule.copyWith(kind: value));
+              },
             ),
-            SizedBox(
-              width: 132,
-              child: ShadSelect<BatchRenameRuleKind>(
-                key: ValueKey('${rule.id}-${rule.kind}'),
-                initialValue: rule.kind,
-                selectedOptionBuilder: (_, value) =>
-                    Text(_ruleKindLabel(value)),
-                options: [
-                  for (final value in BatchRenameRuleKind.values)
-                    ShadOption(
-                      value: value,
-                      child: Text(_ruleKindLabel(value)),
-                    ),
-                ],
-                onChanged: (value) {
-                  if (value != null) onChanged(rule.copyWith(kind: value));
-                },
-              ),
+          ),
+          SizedBox(
+            width: 190,
+            child: ShadInput(
+              initialValue: rule.pattern,
+              placeholder: Text(_rulePatternPlaceholder(rule.kind)),
+              onChanged: (value) => onChanged(rule.copyWith(pattern: value)),
             ),
+          ),
+          if (hasReplacement) ...[
+            const Icon(Icons.arrow_right_alt_rounded, size: 18),
             SizedBox(
-              width: 190,
+              width: 160,
               child: ShadInput(
-                initialValue: rule.pattern,
-                placeholder: Text(_rulePatternPlaceholder(rule.kind)),
-                onChanged: (value) => onChanged(rule.copyWith(pattern: value)),
-              ),
-            ),
-            if (hasReplacement) ...[
-              const Icon(Icons.arrow_right_alt_rounded, size: 18),
-              SizedBox(
-                width: 160,
-                child: ShadInput(
-                  initialValue: rule.replacement,
-                  placeholder: const Text('替换为'),
-                  onChanged: (value) =>
-                      onChanged(rule.copyWith(replacement: value)),
-                ),
-              ),
-            ],
-            if (supportsCase)
-              ShadCheckbox(
-                value: rule.ignoreCase,
-                label: const Text('忽略大小写'),
+                initialValue: rule.replacement,
+                placeholder: const Text('替换为'),
                 onChanged: (value) =>
-                    onChanged(rule.copyWith(ignoreCase: value)),
+                    onChanged(rule.copyWith(replacement: value)),
               ),
-            _RenameRuleIconButton(
-              icon: Icons.arrow_upward_rounded,
-              tooltip: '上移规则',
-              enabled: !isFirst,
-              onPressed: onMoveUp,
-            ),
-            _RenameRuleIconButton(
-              icon: Icons.arrow_downward_rounded,
-              tooltip: '下移规则',
-              enabled: !isLast,
-              onPressed: onMoveDown,
-            ),
-            _RenameRuleIconButton(
-              icon: Icons.delete_outline_rounded,
-              tooltip: '删除规则',
-              enabled: true,
-              destructive: true,
-              onPressed: onRemove,
             ),
           ],
-        ),
+          if (supportsCase)
+            ShadCheckbox(
+              value: rule.ignoreCase,
+              label: const Text('忽略大小写'),
+              onChanged: (value) => onChanged(rule.copyWith(ignoreCase: value)),
+            ),
+          _RenameRuleIconButton(
+            icon: Icons.arrow_upward_rounded,
+            tooltip: '上移规则',
+            enabled: !isFirst,
+            onPressed: onMoveUp,
+          ),
+          _RenameRuleIconButton(
+            icon: Icons.arrow_downward_rounded,
+            tooltip: '下移规则',
+            enabled: !isLast,
+            onPressed: onMoveDown,
+          ),
+          _RenameRuleIconButton(
+            icon: Icons.delete_outline_rounded,
+            tooltip: '删除规则',
+            enabled: true,
+            destructive: true,
+            onPressed: onRemove,
+          ),
+        ],
       ),
     );
   }

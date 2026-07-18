@@ -12,6 +12,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
+import '../core/logging/app_logger.dart';
 import '../providers/file_provider.dart';
 
 Future<void> showMediaPlayerDialog(
@@ -39,7 +40,9 @@ Future<void> showMediaPlayerDialog(
         onPlaybackFailure: openExternalPlayer,
       ),
     );
-  } catch (_) {
+  } catch (error, stackTrace) {
+    AppLogger.warning('Player', '内置播放器窗口异常，正在打开外部播放器：$error');
+    AppLogger.debug('Player', stackTrace.toString());
     await openExternalPlayer();
   }
 }
@@ -168,6 +171,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   }
 
   void _handlePlaybackFailure(Object error, String message) {
+    AppLogger.warning('Player', '$message，准备切换外部播放器：$error');
     if (!mounted) return;
     setState(() {
       _error = '$message：$error';
@@ -282,28 +286,32 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final screen = MediaQuery.sizeOf(context);
-    final sideWidth = _showEpisodes ? 250.0 : 0.0;
-    const dialogPadding = 40.0;
-    final maxDialogWidth = math.max(400.0, screen.width - 32);
-    final maxVideoWidth = math.max(
-      360.0,
-      maxDialogWidth - sideWidth - dialogPadding,
+    final compact = screen.width < 600;
+    final sideWidth = _showEpisodes && !compact ? 250.0 : 0.0;
+    final maxDialogWidth = math.max(1.0, screen.width - 24);
+    final maxVideoWidth = math.max(1.0, maxDialogWidth - sideWidth - 24);
+    final minVideoWidth = math.min(compact ? 240.0 : 360.0, maxVideoWidth);
+    final minVideoHeight = compact ? 160.0 : 240.0;
+    final maxVideoHeight = math.max(
+      minVideoHeight,
+      screen.height - (compact ? 230 : 290),
     );
-    final maxVideoHeight = math.max(260.0, screen.height - 290);
     final preferredWidth = _hasVideoDimensions
         ? math.min(900.0, _videoAspectRatio * maxVideoHeight)
         : 600.0;
-    final videoWidth = preferredWidth.clamp(360.0, maxVideoWidth).toDouble();
+    final videoWidth = preferredWidth
+        .clamp(minVideoWidth, maxVideoWidth)
+        .toDouble();
     final videoHeight = (videoWidth / _videoAspectRatio)
-        .clamp(240.0, maxVideoHeight)
+        .clamp(minVideoHeight, maxVideoHeight)
         .toDouble();
     final contentWidth = videoWidth + sideWidth;
     return ShadDialog(
       constraints: BoxConstraints(
-        maxWidth: math.min(maxDialogWidth, contentWidth + dialogPadding),
-        maxHeight: math.max(360, screen.height - 24),
+        maxWidth: math.min(maxDialogWidth, contentWidth + 24),
+        maxHeight: math.max(260, screen.height - 16),
       ),
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(compact ? 12 : 20),
       scrollable: false,
       title: Text(
         _currentFile.name,
@@ -315,6 +323,8 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
         ShadButton.outline(
           onPressed: _episodes.length < 2
               ? null
+              : compact
+              ? _showEpisodesSheet
               : () => setState(() => _showEpisodes = !_showEpisodes),
           leading: const Icon(Icons.format_list_bulleted_rounded, size: 16),
           child: const Text('同目录剧集'),
@@ -380,6 +390,19 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
       ),
     );
   }
+
+  Future<void> _showEpisodesSheet() => showShadSheet<void>(
+    context: context,
+    side: ShadSheetSide.bottom,
+    builder: (_) => ShadSheet(
+      constraints: const BoxConstraints(maxHeight: 520),
+      title: const Text('同目录剧集'),
+      child: SizedBox(
+        height: 360,
+        child: _episodeList(ShadTheme.of(context).colorScheme),
+      ),
+    ),
+  );
 
   Widget _episodeList(ShadColorScheme cs) {
     return DecoratedBox(

@@ -252,10 +252,12 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
               if (selected.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                  child: Row(
+                  child: Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text('已选择 ${selected.length} 项'),
-                      const Spacer(),
                       ShadButton.ghost(
                         size: ShadButtonSize.sm,
                         onPressed: () => notifier.copyToClipboard(selected),
@@ -432,10 +434,12 @@ class _MediaSearchResultsPageState
               if (selected.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.all(12),
-                  child: Row(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text('已选择 ${selected.length} 个资源'),
-                      const Spacer(),
                       ShadButton(
                         size: ShadButtonSize.sm,
                         onPressed: _recognizing
@@ -638,30 +642,56 @@ class _SearchPageFrame extends StatelessWidget {
     return Column(
       children: [
         Container(
-          height: 54,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          constraints: const BoxConstraints(minHeight: 54),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           decoration: BoxDecoration(
             border: Border(bottom: BorderSide(color: cs.border)),
           ),
-          child: Row(
-            children: [
-              ShadButton.ghost(
-                onPressed: onClose,
-                leading: const Icon(Icons.arrow_back_rounded, size: 16),
-                child: const Text('返回'),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: cs.foreground,
-                ),
-              ),
-              const SizedBox(width: 8),
-              ShadBadge(child: Text(query)),
-            ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 500;
+              return Row(
+                children: [
+                  ShadTooltip(
+                    builder: (_) => const Text('返回'),
+                    child: ShadButton.ghost(
+                      size: compact
+                          ? ShadButtonSize.sm
+                          : ShadButtonSize.regular,
+                      onPressed: onClose,
+                      leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                      child: compact
+                          ? const SizedBox.shrink()
+                          : const Text('返回'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: cs.foreground,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: compact ? 120 : 260),
+                    child: ShadBadge(
+                      child: Text(
+                        query,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
         Expanded(child: child),

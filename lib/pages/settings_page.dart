@@ -72,6 +72,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     final cs = ShadTheme.of(context).colorScheme;
     final themeState = ref.watch(themeProvider);
     final mediaState = ref.watch(mediaLibraryProvider);
+    final compact = MediaQuery.sizeOf(context).width < 760;
 
     return ShadDialog(
       title: Row(
@@ -97,10 +98,11 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         ),
       ],
       child: SizedBox(
-        width: 720,
+        width: compact ? MediaQuery.sizeOf(context).width - 32 : 720,
         child: ShadTabs<_SettingsTab>(
           value: _activeTab,
           onChanged: (value) => setState(() => _activeTab = value),
+          scrollable: compact,
           tabBarConstraints: const BoxConstraints(maxWidth: 720),
           contentConstraints: const BoxConstraints(maxWidth: 720),
           tabs: [
@@ -327,13 +329,16 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     );
   }
 
-  Widget _tabScroll(Widget child) => SizedBox(
-    height: 360,
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: child,
-    ),
-  );
+  Widget _tabScroll(Widget child) {
+    final availableHeight = MediaQuery.sizeOf(context).height - 270;
+    return SizedBox(
+      height: availableHeight.clamp(260.0, 420.0),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: child,
+      ),
+    );
+  }
 
   Widget _textInput(
     TextEditingController controller, {
@@ -356,46 +361,48 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   );
 
   Future<void> _saveSettings() async {
-    StorageManager.set(
-      StorageKeys.tmdbApiKey,
-      _tmdbApiKeyController.text.trim(),
-    );
-    StorageManager.set(
-      StorageKeys.tmdbImageProxy,
-      _tmdbImageProxyController.text.trim(),
-    );
-    await StorageManager.set(
-      StorageKeys.httpProxyHost,
-      _httpProxyHostController.text.trim(),
-    );
-    await StorageManager.set(
-      StorageKeys.httpProxyPort,
-      _httpProxyPortController.text.trim(),
-    );
-    await StorageManager.delete(StorageKeys.tmdbProxyHost);
-    await StorageManager.delete(StorageKeys.tmdbProxyPort);
+    await Future.wait([
+      StorageManager.set(
+        StorageKeys.tmdbApiKey,
+        _tmdbApiKeyController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.tmdbImageProxy,
+        _tmdbImageProxyController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.httpProxyHost,
+        _httpProxyHostController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.httpProxyPort,
+        _httpProxyPortController.text.trim(),
+      ),
+      StorageManager.delete(StorageKeys.tmdbProxyHost),
+      StorageManager.delete(StorageKeys.tmdbProxyPort),
+      StorageManager.set(
+        StorageKeys.mediaScanConcurrency,
+        _scanConcurrencyController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.fastTransferConcurrency,
+        _transferConcurrencyController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.fileCacheTTLMinutes,
+        _cacheTTLController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.cloudIndexRefreshMinutes,
+        _cloudIndexRefreshController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.defaultFilePageSize,
+        _pageSizeController.text.trim(),
+      ),
+    ]);
     DioClient.updateNetworkProxy();
-    StorageManager.set(
-      StorageKeys.mediaScanConcurrency,
-      _scanConcurrencyController.text.trim(),
-    );
-    StorageManager.set(
-      StorageKeys.fastTransferConcurrency,
-      _transferConcurrencyController.text.trim(),
-    );
-    StorageManager.set(
-      StorageKeys.fileCacheTTLMinutes,
-      _cacheTTLController.text.trim(),
-    );
-    await StorageManager.set(
-      StorageKeys.cloudIndexRefreshMinutes,
-      _cloudIndexRefreshController.text.trim(),
-    );
     ref.read(mediaLibraryProvider.notifier).updateCloudIndexRefreshSchedule();
-    StorageManager.set(
-      StorageKeys.defaultFilePageSize,
-      _pageSizeController.text.trim(),
-    );
   }
 
   String _themeModeToString(ThemeMode mode) {

@@ -27,23 +27,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     final auth = ref.watch(authProvider);
+    final compact = MediaQuery.sizeOf(context).width < 480;
 
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              theme.colorScheme.primary.withAlpha(30),
-              theme.colorScheme.background,
-              theme.colorScheme.primary.withAlpha(15),
-            ],
-          ),
-        ),
+      body: ColoredBox(
+        color: theme.colorScheme.background,
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(32),
+            padding: EdgeInsets.all(compact ? 16 : 32),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
               child: Column(
@@ -93,7 +84,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   // Login card
                   ShadCard(
                     child: Padding(
-                      padding: const EdgeInsets.all(24),
+                      padding: EdgeInsets.all(compact ? 18 : 24),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -297,33 +288,38 @@ class _TabButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
 
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: isActive ? theme.colorScheme.background : Colors.transparent,
+    return Semantics(
+      button: true,
+      selected: isActive,
+      label: label,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
           borderRadius: BorderRadius.circular(6),
-          boxShadow: isActive
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withAlpha(20),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ]
-              : null,
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-            color: isActive
-                ? theme.colorScheme.foreground
-                : theme.colorScheme.mutedForeground,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: isActive
+                  ? theme.colorScheme.background
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+              border: isActive
+                  ? Border.all(color: theme.colorScheme.border)
+                  : null,
+            ),
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                color: isActive
+                    ? theme.colorScheme.foreground
+                    : theme.colorScheme.mutedForeground,
+              ),
+            ),
           ),
         ),
       ),

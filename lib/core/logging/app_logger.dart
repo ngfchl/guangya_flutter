@@ -37,6 +37,7 @@ class AppLogEntry {
     'Auth' => '认证',
     'Media' => '媒体库',
     'CloudIndex' => '全盘索引',
+    'Player' => '播放器',
     'App' => '应用',
     'Flutter' => '界面',
     'Dart' => '运行时',
