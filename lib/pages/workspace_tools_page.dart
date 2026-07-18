@@ -479,6 +479,8 @@ class _FastTransferTool extends ConsumerStatefulWidget {
 class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   final _json = TextEditingController();
   bool _running = false;
+  bool _createDirectories = true;
+  bool _skipExisting = true;
   String _result = '';
 
   @override
@@ -504,6 +506,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     var nextIndex = 0;
     final api = ref.read(authProvider.notifier).api;
     final parentID = ref.read(fileProvider).folderPath.lastOrNull?.id;
+    final directoryCache = <String, String?>{};
     final concurrency =
         (int.tryParse(
                   StorageManager.get<String>(
@@ -518,18 +521,29 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         while (nextIndex < entries.length) {
           final entry = entries[nextIndex++];
           try {
+            final targetID = await _resolveTargetDirectory(
+              entry,
+              parentID,
+              api,
+              directoryCache,
+            );
+            if (_skipExisting &&
+                await _hasExistingFile(api, targetID, entry.name)) {
+              completed += 1;
+              continue;
+            }
             if (entry.md5 != null) {
               await api.flashTransferToken(
                 name: entry.name,
                 fileSize: entry.size,
-                parentID: parentID,
+                parentID: targetID,
                 md5: entry.md5!,
               );
             } else {
               await api.flashTransferGCIDToken(
                 name: entry.name,
                 fileSize: entry.size,
-                parentID: parentID,
+                parentID: targetID,
                 gcid: entry.gcid!,
               );
             }
@@ -559,6 +573,105 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     }
   }
 
+  Future<String?> _resolveTargetDirectory(
+    FastTransferEntry entry,
+    String? rootID,
+    dynamic api,
+    Map<String, String?> cache,
+  ) async {
+    var currentID = rootID;
+    for (final name
+        in entry.directoryPath.split('/').where((part) => part.isNotEmpty)) {
+      if (name == '..') throw const FormatException('目录不能包含 ..');
+      final key = '${currentID ?? 'root'}/$name';
+      if (cache.containsKey(key)) {
+        currentID = cache[key];
+        continue;
+      }
+      final children = _extractFiles(
+        await api.fsFiles(parentID: currentID, pageSize: 1000),
+      );
+      final existing = children.where((file) => file.name == name).firstOrNull;
+      if (existing != null) {
+        if (!existing.isDirectory) {
+          throw FormatException('$name 已被同名文件占用');
+        }
+        currentID = existing.id;
+      } else {
+        if (!_createDirectories) {
+          throw FormatException('${entry.path} 包含目录，请开启自动创建目录');
+        }
+        final parentBeforeCreate = currentID;
+        final response = await api.fsCreateDir(
+          name,
+          parentID: parentBeforeCreate,
+        );
+        currentID = _findString(response, const [
+          'fileId',
+          'file_id',
+          'id',
+          'resId',
+        ]);
+        if (currentID == null) {
+          final refreshed = _extractFiles(
+            await api.fsFiles(parentID: parentBeforeCreate, pageSize: 1000),
+          );
+          currentID = refreshed
+              .where((file) => file.name == name && file.isDirectory)
+              .firstOrNull
+              ?.id;
+        }
+        if (currentID == null) throw FormatException('无法创建目录 $name');
+      }
+      cache[key] = currentID;
+    }
+    return currentID;
+  }
+
+  Future<bool> _hasExistingFile(
+    dynamic api,
+    String? parentID,
+    String name,
+  ) async => _extractFiles(
+    await api.fsFiles(parentID: parentID, pageSize: 1000),
+  ).any((file) => !file.isDirectory && file.name == name);
+
+  List<CloudFile> _extractFiles(Map<String, dynamic> json) {
+    final files = <CloudFile>[];
+    void visit(dynamic value) {
+      if (value is Map) {
+        try {
+          files.add(CloudFile.fromJson(Map<String, dynamic>.from(value)));
+        } catch (_) {}
+        for (final child in value.values) {
+          visit(child);
+        }
+      } else if (value is List) {
+        for (final child in value) {
+          visit(child);
+        }
+      }
+    }
+
+    visit(json);
+    final unique = <String, CloudFile>{for (final file in files) file.id: file};
+    return unique.values.toList();
+  }
+
+  String? _findString(Map<String, dynamic> value, List<String> keys) {
+    for (final key in keys) {
+      final found = value[key];
+      if (found != null && found.toString().isNotEmpty) return found.toString();
+    }
+    for (final child in value.values) {
+      if (child is Map) {
+        final found = _findString(Map<String, dynamic>.from(child), keys);
+        if (found != null) return found;
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
@@ -580,16 +693,38 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
             ),
             child: Padding(
               padding: const EdgeInsets.only(top: 12),
-              child: SizedBox(
-                height: 260,
-                child: ShadInput(
-                  controller: _json,
-                  maxLines: null,
-                  expands: true,
-                  placeholder: const Text(
-                    '[{"name":"example.mkv","size":123,"gcid":"..."}]',
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      ShadCheckbox(
+                        value: _createDirectories,
+                        label: const Text('自动创建目录'),
+                        onChanged: (value) =>
+                            setState(() => _createDirectories = value),
+                      ),
+                      const SizedBox(width: 16),
+                      ShadCheckbox(
+                        value: _skipExisting,
+                        label: const Text('跳过同名文件'),
+                        onChanged: (value) =>
+                            setState(() => _skipExisting = value),
+                      ),
+                    ],
                   ),
-                ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 220,
+                    child: ShadInput(
+                      controller: _json,
+                      maxLines: null,
+                      expands: true,
+                      placeholder: const Text(
+                        '{"files":[{"path":"Movies/example.mkv","size":123,"gcid":"..."}]}',
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
