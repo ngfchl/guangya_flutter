@@ -552,15 +552,33 @@ class ParsedMediaName {
     }
     String? first(String pattern) =>
         RegExp(pattern, caseSensitive: false).firstMatch(normalized)?.group(0);
-    final yearMatch = RegExp(r'\b(19\d{2}|20\d{2})\b').firstMatch(normalized);
+    final yearMatches = RegExp(
+      r'\b(19\d{2}|20\d{2})\b',
+    ).allMatches(normalized).toList();
+    // Some release names carry an upload year before the real title and
+    // release year. Prefer the later year in that specific form.
+    final yearMatch = yearMatches.length > 1 && yearMatches.first.start == 0
+        ? yearMatches.last
+        : yearMatches.firstOrNull;
     final boundary = RegExp(
-      r'\b(?:19\d{2}|20\d{2}|S\d{1,2}[ ._-]*E\d{1,3}|\d{1,2}x\d{1,3}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv)\b',
+      r'\b(?:19\d{2}|20\d{2}|S\d{1,2}[ ._-]*E\d{1,3}|\d{1,2}x\d{1,3}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b',
       caseSensitive: false,
     );
-    final boundaryMatch = boundary.firstMatch(normalized);
+    final boundaryMatches = boundary.allMatches(normalized).toList();
+    final boundaryMatch =
+        boundaryMatches.length > 1 &&
+            boundaryMatches.first.start == 0 &&
+            RegExp(
+              r'^(?:19\d{2}|20\d{2})$',
+            ).hasMatch(boundaryMatches.first.group(0) ?? '')
+        ? boundaryMatches[1]
+        : boundaryMatches.firstOrNull;
     var title = boundaryMatch != null
         ? normalized.substring(0, boundaryMatch.start)
         : normalized;
+    if (yearMatches.length > 1 && yearMatches.first.start == 0) {
+      title = title.replaceFirst(RegExp(r'^\s*\d{4}[ ._-]+'), '');
+    }
     title = _cleanTitle(title);
     final genericName =
         title.isEmpty ||
@@ -614,7 +632,7 @@ class ParsedMediaName {
       season: season ?? parent?.season,
       episode: episode,
       isEpisode: (season ?? parent?.season) != null && episode != null,
-      resolution: first(r'\b(?:2160p|1080p|720p|480p|4k)\b'),
+      resolution: first(r'\b(?:2160p|1080p|720p|480p|4k|\d{3,4}x\d{3,4})\b'),
       source: first(
         r'\b(?:WEB[- ]?DL|WEBRip|BluRay|BDRip|REMUX|HDTV|DVD|UHD)\b',
       ),
@@ -628,6 +646,13 @@ class ParsedMediaName {
 
   static String _cleanTitle(String value) {
     var title = value.trim();
+
+    // Release collectors often prepend their collection date. It has no
+    // relation to the movie year and degrades a TMDB query substantially.
+    title = title.replaceFirst(
+      RegExp(r'^\s*(?:19|20)\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*[日号]?\s*'),
+      '',
+    );
 
     // Release groups frequently put all disc/menu/audio/subtitle information
     // in a bracket between the Chinese and original titles. Keep the leading
@@ -655,15 +680,23 @@ class ParsedMediaName {
     // TMDB receives a compact Chinese query first; the original title remains
     // available from TMDB after matching.
     final chineseEnglishBoundary = RegExp(
-      r'[\u4e00-\u9fff\)）]\s+(?=[A-Z][A-Za-z])',
+      r'[\u4e00-\u9fff\)）]\s*(?=[A-Z][A-Za-z])',
     ).firstMatch(title);
     if (chineseEnglishBoundary != null) {
       title = title.substring(0, chineseEnglishBoundary.start + 1);
     }
 
     title = title
+        .replaceFirst(RegExp(r'^\s*[\[【(（]\s*\d{1,3}\s*[\]】)）][ ._-]*'), '')
         .replaceFirst(RegExp(r'^\s*\d{1,3}[ ._-]+'), '')
         .replaceAll(RegExp(r'[\(（](?:港台|港版?|台版?|国配|国语|简繁?|中字?)[\)）]'), ' ')
+        .replaceAll(
+          RegExp(
+            r'(?:[ ._-]+|^)(?:国[粤英日韩][语字]?|国粤(?:双语)?(?:中字|中英(?:字幕|双字)?)?|国语|粤语|(?:中英|中日|中韩)(?:双语|字幕)?|中文字幕|中字|简繁(?:字幕)?|内封(?:特效)?中英(?:双字|字幕)?|CHINESE|CHN)(?=$|[ ._-])',
+            caseSensitive: false,
+          ),
+          ' ',
+        )
         .replaceAll(RegExp(r'[\[\]【】{}()（）]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();

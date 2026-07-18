@@ -982,6 +982,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     Map<String, dynamic> candidate,
   ) async {
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    final manualSeason = _toInt(candidate['_manualSeason']);
+    final manualEpisode = _toInt(candidate['_manualEpisode']);
     var updated = _itemFromTMDBCandidate(item, candidate);
     if (updated.tmdbID != null && apiKey.isNotEmpty) {
       try {
@@ -999,7 +1001,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         // A selected candidate is still valid if its detail request fails.
       }
     }
-    updated = await _renameMatchedMediaFile(updated);
+    updated = await _renameMatchedMediaFile(
+      updated,
+      manualSeason: manualSeason,
+      manualEpisode: manualEpisode,
+    );
     await _replaceItemsByPreviousIDs({'${item.libraryID}:${item.id}': updated});
     state = state.copyWith(
       items: state.items
@@ -1016,6 +1022,51 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       clearError: true,
     );
     return updated;
+  }
+
+  /// Refresh legacy unmatched records with the current filename parser before
+  /// showing a manual TMDB search. Matched items retain TMDB's canonical title.
+  Future<List<MediaLibraryItem>> refreshParsedTitles(
+    Iterable<MediaLibraryItem> values,
+  ) async {
+    final updates = <MediaLibraryItem>[];
+    for (final item in values) {
+      if (item.tmdbID != null) {
+        updates.add(item);
+        continue;
+      }
+      final parsed = ParsedMediaName.parse(
+        item.file.name,
+        directoryName: _parentDirectoryName(item.file.cloudPath),
+      );
+      final title = parsed.title.trim();
+      if (title.isEmpty) {
+        updates.add(item);
+        continue;
+      }
+      updates.add(
+        item.copyWith(
+          title: title,
+          originalTitle: title,
+          releaseDate: parsed.year == null
+              ? item.releaseDate
+              : '${parsed.year}-01-01',
+          updatedAt: DateTime.now(),
+        ),
+      );
+    }
+    if (updates.isEmpty) return const [];
+    final replacements = {
+      for (final item in updates) '${item.libraryID}:${item.id}': item,
+    };
+    await _replaceItemsByPreviousIDs(replacements);
+    _searchResultsCache.clear();
+    state = state.copyWith(
+      items: state.items
+          .map((item) => replacements['${item.libraryID}:${item.id}'] ?? item)
+          .toList(),
+    );
+    return updates;
   }
 
   /// Old scrape backups stored artwork as BLOBs.  The compact SQLite schema
@@ -1292,8 +1343,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<MediaLibraryItem> _renameMatchedMediaFile(
-    MediaLibraryItem item,
-  ) async {
+    MediaLibraryItem item, {
+    int? manualSeason,
+    int? manualEpisode,
+  }) async {
     if (_api == null || item.tmdbID == null || item.mediaKind == null) {
       return item;
     }
@@ -1310,9 +1363,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final parsed = ParsedMediaName(
       title: fileParsed.title,
       year: fileParsed.year ?? parentParsed?.year,
-      season: fileParsed.season ?? parentParsed?.season,
-      episode: fileParsed.episode,
-      isEpisode: fileParsed.isEpisode,
+      season: manualSeason ?? fileParsed.season ?? parentParsed?.season,
+      episode: manualEpisode ?? fileParsed.episode,
+      isEpisode:
+          (manualSeason ?? fileParsed.season ?? parentParsed?.season) != null &&
+          (manualEpisode ?? fileParsed.episode) != null,
       resolution: fileParsed.resolution ?? parentParsed?.resolution,
       source: fileParsed.source ?? parentParsed?.source,
       videoCodec: fileParsed.videoCodec ?? parentParsed?.videoCodec,

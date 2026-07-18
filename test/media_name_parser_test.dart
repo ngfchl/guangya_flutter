@@ -73,5 +73,39 @@ void main() {
       expect(value.videoCodec, 'HEVC');
       expect(value.audio, 'TrueHD');
     });
+
+    test('removes bracketed numeric prefixes from localized titles', () {
+      final value = ParsedMediaName.parse('【002】白玉老虎.mkv');
+
+      expect(value.title, '白玉老虎');
+    });
+
+    test('removes collection dates and noisy language release tags', () {
+      final dated = ParsedMediaName.parse(
+        '2022年11月11日 黑豹2.瓦坎达万岁.2022.1080p.国英双语.中英特效字幕.无水印纯净版.mkv',
+      );
+      final bilingual = ParsedMediaName.parse(
+        '倚天屠龙记之魔教教主.重新调色版.国粤双语中字Kung.Fu.Cult.Master.1993.HKG.BluRay.H265.10Bit.1080P-.mkv',
+      );
+
+      expect(dated.title, '黑豹2 瓦坎达万岁');
+      expect(dated.year, 2022);
+      expect(bilingual.title, '倚天屠龙记之魔教教主 重新调色版');
+      expect(bilingual.year, 1993);
+      expect(bilingual.resolution, '1080P');
+    });
+
+    test('prefers a later release year and detects nonstandard resolution', () {
+      final laterYear = ParsedMediaName.parse(
+        '2025.The.World.Enslaved.By.A.Virus.2021.1080p.WEBRip.x264-RARBG.mp4',
+      );
+      final legacy = ParsedMediaName.parse('野兽之瞳.1024x576.国粤双语.中文字幕.mkv');
+
+      expect(laterYear.title, 'The World Enslaved By A Virus');
+      expect(laterYear.year, 2021);
+      expect(laterYear.resolution, '1080p');
+      expect(legacy.title, '野兽之瞳');
+      expect(legacy.resolution, '1024x576');
+    });
   });
 }
