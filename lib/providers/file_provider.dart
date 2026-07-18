@@ -462,6 +462,16 @@ class FileNotifier extends StateNotifier<FileState> {
     loadFiles(parentID: parentID);
   }
 
+  Future<void> navigateToFolderPath(List<CloudFile> path) async {
+    final newPath = List<CloudFile>.unmodifiable(path);
+    state = state.copyWith(
+      folderPath: newPath,
+      currentPage: 0,
+      selectedIDs: {},
+    );
+    await loadFiles(parentID: newPath.isEmpty ? null : newPath.last.id);
+  }
+
   void toggleSelection(String id) {
     final newSelected = Set<String>.from(state.selectedIDs);
     if (newSelected.contains(id)) {

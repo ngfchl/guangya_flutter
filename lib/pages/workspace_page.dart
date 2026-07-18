@@ -17,6 +17,7 @@ import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/breadcrumb_bar.dart';
 import '../widgets/file_list_tile.dart';
+import '../widgets/media_player_dialog.dart';
 import '../widgets/file_icon.dart';
 import '../widgets/side_panel.dart';
 import '../widgets/sort_menu.dart';
@@ -29,7 +30,7 @@ enum WorkspaceMode { cloud, media }
 
 enum _PaneLayoutMode { single, dual }
 
-enum _FileViewMode { list, columns }
+enum _FileViewMode { list, columns, grid }
 
 enum _PaneIdentity { primary, secondary }
 
@@ -38,6 +39,17 @@ class _DraggedCloudFiles {
   final _PaneIdentity source;
 
   const _DraggedCloudFiles(this.files, this.source);
+}
+
+void _openCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
+  if (file.isVideo) {
+    showShadDialog<void>(
+      context: context,
+      builder: (_) => MediaPlayerDialog(file: file),
+    );
+    return;
+  }
+  ref.read(fileProvider.notifier).downloadFile(file);
 }
 
 class WorkspacePage extends ConsumerStatefulWidget {
@@ -793,7 +805,7 @@ class _CloudWorkspace extends ConsumerStatefulWidget {
 }
 
 class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
-  _PaneLayoutMode _paneMode = _PaneLayoutMode.dual;
+  _PaneLayoutMode _paneMode = _PaneLayoutMode.single;
   _FileViewMode _primaryViewMode = _FileViewMode.list;
 
   @override
@@ -812,6 +824,9 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                   state: state,
                   paneMode: _paneMode,
                   onPaneModeChanged: (mode) => setState(() => _paneMode = mode),
+                  viewMode: _primaryViewMode,
+                  onViewModeChanged: (mode) =>
+                      setState(() => _primaryViewMode = mode),
                   sidePanelOpen: widget.sidePanelOpen,
                   onToggleSidePanel: widget.onToggleSidePanel,
                 ),
@@ -875,6 +890,8 @@ class _CloudToolbar extends ConsumerWidget {
   final FileState state;
   final _PaneLayoutMode paneMode;
   final ValueChanged<_PaneLayoutMode> onPaneModeChanged;
+  final _FileViewMode viewMode;
+  final ValueChanged<_FileViewMode> onViewModeChanged;
   final bool sidePanelOpen;
   final VoidCallback onToggleSidePanel;
 
@@ -882,6 +899,8 @@ class _CloudToolbar extends ConsumerWidget {
     required this.state,
     required this.paneMode,
     required this.onPaneModeChanged,
+    required this.viewMode,
+    required this.onViewModeChanged,
     required this.sidePanelOpen,
     required this.onToggleSidePanel,
   });
@@ -899,6 +918,8 @@ class _CloudToolbar extends ConsumerWidget {
         ),
         const SizedBox(width: 8),
         _ToolbarSegment(value: paneMode, onChanged: onPaneModeChanged),
+        const SizedBox(width: 8),
+        _FileViewButtons(value: viewMode, onChanged: onViewModeChanged),
         const SizedBox(width: 8),
         _ToolbarButton(
           icon: Icons.upload_rounded,
@@ -986,6 +1007,37 @@ class _ToolbarSegment extends StatelessWidget {
   }
 }
 
+class _FileViewButtons extends StatelessWidget {
+  final _FileViewMode value;
+  final ValueChanged<_FileViewMode> onChanged;
+
+  const _FileViewButtons({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ToolbarButton(
+          icon: Icons.view_list_rounded,
+          label: '列表显示',
+          onTap: () => onChanged(_FileViewMode.list),
+        ),
+        _ToolbarButton(
+          icon: Icons.view_column_rounded,
+          label: 'Finder 分栏显示',
+          onTap: () => onChanged(_FileViewMode.columns),
+        ),
+        _ToolbarButton(
+          icon: Icons.grid_view_rounded,
+          label: '网格显示',
+          onTap: () => onChanged(_FileViewMode.grid),
+        ),
+      ],
+    );
+  }
+}
+
 class _ToolbarButton extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -1067,6 +1119,14 @@ class _PrimaryFilePane extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (viewMode == _FileViewMode.columns) {
+      return _PrimaryColumnBrowser(
+        title: title,
+        initialPath: state.folderPath,
+        initialFiles: state.files,
+        onViewModeChanged: onViewModeChanged,
+      );
+    }
     final notifier = ref.read(fileProvider.notifier);
     final files = state.files;
     return _FilePaneFrame(
@@ -1115,7 +1175,7 @@ class _PrimaryFilePane extends ConsumerWidget {
               },
               onOpen: file.isDirectory
                   ? () => notifier.navigateToFolder(file)
-                  : () => notifier.downloadFile(file),
+                  : () => _openCloudFile(context, ref, file),
               onRename: () => _showRenameDialog(context, ref, file),
               onCopy: () => notifier.copyToClipboard([file]),
               onCut: () => notifier.cutToClipboard([file]),
@@ -1150,7 +1210,7 @@ class _PrimaryFilePane extends ConsumerWidget {
                   },
                   onOpen: file.isDirectory
                       ? () => notifier.navigateToFolder(file)
-                      : () => notifier.downloadFile(file),
+                      : () => _openCloudFile(context, ref, file),
                 ),
               ),
               child: _FileGridCard(
@@ -1165,7 +1225,7 @@ class _PrimaryFilePane extends ConsumerWidget {
                 },
                 onOpen: file.isDirectory
                     ? () => notifier.navigateToFolder(file)
-                    : () => notifier.downloadFile(file),
+                    : () => _openCloudFile(context, ref, file),
               ),
             );
           },
@@ -1183,12 +1243,19 @@ class _PaneViewToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final columns = value == _FileViewMode.columns;
+    final mode = switch (value) {
+      _FileViewMode.list => _FileViewMode.columns,
+      _FileViewMode.columns => _FileViewMode.grid,
+      _FileViewMode.grid => _FileViewMode.list,
+    };
     return _PaneIconButton(
-      icon: columns ? Icons.view_list_rounded : Icons.grid_view_rounded,
-      tooltip: columns ? '切换列表模式' : '切换分栏模式',
-      onTap: () =>
-          onChanged(columns ? _FileViewMode.list : _FileViewMode.columns),
+      icon: switch (value) {
+        _FileViewMode.list => Icons.view_list_rounded,
+        _FileViewMode.columns => Icons.view_column_rounded,
+        _FileViewMode.grid => Icons.grid_view_rounded,
+      },
+      tooltip: '切换显示模式',
+      onTap: () => onChanged(mode),
     );
   }
 }
@@ -1214,6 +1281,7 @@ class _FilePaneCollection extends StatelessWidget {
         itemBuilder: itemBuilder,
       );
     }
+    assert(viewMode == _FileViewMode.grid);
     return GridView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(10),
@@ -1227,6 +1295,526 @@ class _FilePaneCollection extends StatelessWidget {
       itemBuilder: itemBuilder,
     );
   }
+}
+
+class _ColumnListing {
+  final String? parentID;
+  final String title;
+  final List<CloudFile> files;
+  final bool isLoading;
+  final String? errorMessage;
+  final String? selectedID;
+
+  const _ColumnListing({
+    required this.parentID,
+    required this.title,
+    this.files = const [],
+    this.isLoading = false,
+    this.errorMessage,
+    this.selectedID,
+  });
+
+  _ColumnListing copyWith({
+    List<CloudFile>? files,
+    bool? isLoading,
+    String? errorMessage,
+    bool clearError = false,
+    String? selectedID,
+    bool clearSelection = false,
+  }) {
+    return _ColumnListing(
+      parentID: parentID,
+      title: title,
+      files: files ?? this.files,
+      isLoading: isLoading ?? this.isLoading,
+      errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      selectedID: clearSelection ? null : (selectedID ?? this.selectedID),
+    );
+  }
+}
+
+class _PrimaryColumnBrowser extends ConsumerStatefulWidget {
+  final String title;
+  final List<CloudFile> initialPath;
+  final List<CloudFile> initialFiles;
+  final ValueChanged<_FileViewMode> onViewModeChanged;
+
+  const _PrimaryColumnBrowser({
+    required this.title,
+    required this.initialPath,
+    required this.initialFiles,
+    required this.onViewModeChanged,
+  });
+
+  @override
+  ConsumerState<_PrimaryColumnBrowser> createState() =>
+      _PrimaryColumnBrowserState();
+}
+
+class _PrimaryColumnBrowserState extends ConsumerState<_PrimaryColumnBrowser> {
+  List<_ColumnListing> _columns = const [];
+  List<CloudFile> _path = const [];
+  var _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _restorePath(widget.initialPath, initialFiles: widget.initialFiles);
+  }
+
+  @override
+  void didUpdateWidget(covariant _PrimaryColumnBrowser oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_samePath(oldWidget.initialPath, widget.initialPath)) {
+      _restorePath(widget.initialPath, initialFiles: widget.initialFiles);
+    }
+  }
+
+  bool _samePath(List<CloudFile> a, List<CloudFile> b) {
+    return a.length == b.length &&
+        Iterable.generate(
+          a.length,
+        ).every((index) => a[index].id == b[index].id);
+  }
+
+  Future<void> _restorePath(
+    List<CloudFile> path, {
+    List<CloudFile>? initialFiles,
+  }) async {
+    final generation = ++_generation;
+    final restoredPath = List<CloudFile>.unmodifiable(path);
+    setState(() {
+      _path = restoredPath;
+      _columns = [
+        const _ColumnListing(parentID: null, title: '全部文件', isLoading: true),
+      ];
+    });
+    await _loadColumn(0, generation: generation);
+    for (var index = 0; index < restoredPath.length; index++) {
+      if (!mounted || generation != _generation) return;
+      final folder = restoredPath[index];
+      setState(() {
+        final columns = _columns.toList();
+        columns[index] = columns[index].copyWith(selectedID: folder.id);
+        columns.add(
+          _ColumnListing(
+            parentID: folder.id,
+            title: folder.name,
+            isLoading: true,
+          ),
+        );
+        _columns = columns;
+      });
+      if (index == restoredPath.length - 1 && initialFiles != null) {
+        _replaceColumn(
+          index + 1,
+          _columns[index + 1].copyWith(
+            files: initialFiles,
+            isLoading: false,
+            clearError: true,
+          ),
+          generation,
+        );
+      } else {
+        await _loadColumn(index + 1, generation: generation);
+      }
+    }
+  }
+
+  Future<void> _loadColumn(int index, {int? generation}) async {
+    final requestGeneration = generation ?? _generation;
+    if (index >= _columns.length) return;
+    _replaceColumn(
+      index,
+      _columns[index].copyWith(isLoading: true, clearError: true),
+      requestGeneration,
+    );
+    try {
+      final result = await ref
+          .read(authProvider.notifier)
+          .api
+          .fsFiles(parentID: _columns[index].parentID, page: 0, pageSize: 200);
+      _replaceColumn(
+        index,
+        _columns[index].copyWith(
+          files: _cloudFilesFromResponse(result),
+          isLoading: false,
+          clearError: true,
+        ),
+        requestGeneration,
+      );
+    } catch (error) {
+      _replaceColumn(
+        index,
+        _columns[index].copyWith(
+          isLoading: false,
+          errorMessage: error.toString(),
+        ),
+        requestGeneration,
+      );
+    }
+  }
+
+  void _replaceColumn(int index, _ColumnListing column, int generation) {
+    if (!mounted || generation != _generation || index >= _columns.length) {
+      return;
+    }
+    setState(() {
+      final columns = _columns.toList();
+      columns[index] = column;
+      _columns = columns;
+    });
+  }
+
+  void _openFolder(int index, CloudFile folder) {
+    final path = [..._path.take(index), folder];
+    final generation = ++_generation;
+    setState(() {
+      _path = List<CloudFile>.unmodifiable(path);
+      final columns = _columns.take(index + 1).toList();
+      columns[index] = columns[index].copyWith(selectedID: folder.id);
+      columns.add(
+        _ColumnListing(
+          parentID: folder.id,
+          title: folder.name,
+          isLoading: true,
+        ),
+      );
+      _columns = columns;
+    });
+    unawaited(_loadColumn(index + 1, generation: generation));
+    unawaited(ref.read(fileProvider.notifier).navigateToFolderPath(path));
+  }
+
+  void _navigateBreadcrumb(int index) {
+    final path = index < 0
+        ? const <CloudFile>[]
+        : _path.take(index + 1).toList();
+    unawaited(_restorePath(path));
+    unawaited(ref.read(fileProvider.notifier).navigateToFolderPath(path));
+  }
+
+  Future<void> _moveFiles(
+    List<CloudFile> files,
+    String? parentID,
+    int index,
+  ) async {
+    await ref
+        .read(fileProvider.notifier)
+        .moveFilesTo(files, parentID: parentID);
+    if (mounted) await _loadColumn(index);
+  }
+
+  Future<void> _uploadFiles(
+    List<File> files,
+    String? parentID,
+    int index,
+  ) async {
+    await ref
+        .read(fileProvider.notifier)
+        .uploadLocalFiles(files, parentID: parentID);
+    if (mounted) await _loadColumn(index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final itemCount = _columns.isEmpty ? 0 : _columns.last.files.length;
+    return _FilePaneFrame(
+      title: widget.title,
+      itemCount: itemCount,
+      isLoading: _columns.isEmpty,
+      errorMessage: null,
+      emptyLabel: '没有文件',
+      showChildWhenEmpty: true,
+      breadcrumbPath: _path,
+      onBreadcrumbNavigate: _navigateBreadcrumb,
+      header: const _ColumnPaneHeader(),
+      currentPage: 0,
+      pageSize: 200,
+      totalPages: 1,
+      fileCount: _columns.isEmpty
+          ? 0
+          : _columns.last.files.where((file) => !file.isDirectory).length,
+      folderCount: _columns.isEmpty
+          ? 0
+          : _columns.last.files.where((file) => file.isDirectory).length,
+      trailing: _PaneViewToggle(
+        value: _FileViewMode.columns,
+        onChanged: widget.onViewModeChanged,
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            height: constraints.maxHeight,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var index = 0; index < _columns.length; index++)
+                  _FinderColumn(
+                    key: ValueKey('${_columns[index].parentID}-$index'),
+                    column: _columns[index],
+                    source: _PaneIdentity.primary,
+                    onOpenFolder: (folder) => _openFolder(index, folder),
+                    onOpenFile: (file) => _openCloudFile(context, ref, file),
+                    onMoveCloudFiles: (files, parentID) =>
+                        _moveFiles(files, parentID, index),
+                    onUploadLocalFiles: (files, parentID) =>
+                        _uploadFiles(files, parentID, index),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ColumnPaneHeader extends StatelessWidget {
+  const _ColumnPaneHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Text(
+        'Finder 分栏浏览',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: cs.mutedForeground,
+        ),
+      ),
+    );
+  }
+}
+
+class _FinderColumn extends StatefulWidget {
+  final _ColumnListing column;
+  final _PaneIdentity source;
+  final ValueChanged<CloudFile> onOpenFolder;
+  final ValueChanged<CloudFile> onOpenFile;
+  final Future<void> Function(List<CloudFile> files, String? parentID)
+  onMoveCloudFiles;
+  final Future<void> Function(List<File> files, String? parentID)
+  onUploadLocalFiles;
+
+  const _FinderColumn({
+    super.key,
+    required this.column,
+    required this.source,
+    required this.onOpenFolder,
+    required this.onOpenFile,
+    required this.onMoveCloudFiles,
+    required this.onUploadLocalFiles,
+  });
+
+  @override
+  State<_FinderColumn> createState() => _FinderColumnState();
+}
+
+class _FinderColumnState extends State<_FinderColumn> {
+  var _dragActive = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final column = widget.column;
+    return SizedBox(
+      width: 244,
+      child: DropTarget(
+        onDragEntered: (_) => setState(() => _dragActive = true),
+        onDragExited: (_) => setState(() => _dragActive = false),
+        onDragDone: (details) async {
+          setState(() => _dragActive = false);
+          final files = details.files
+              .map((file) => file.path)
+              .where((path) => path.isNotEmpty)
+              .map(File.new)
+              .where((file) => file.existsSync())
+              .toList();
+          if (files.isNotEmpty) {
+            await widget.onUploadLocalFiles(files, column.parentID);
+          }
+        },
+        child: DragTarget<_DraggedCloudFiles>(
+          onWillAcceptWithDetails: (_) => true,
+          onAcceptWithDetails: (details) async {
+            setState(() => _dragActive = false);
+            await widget.onMoveCloudFiles(details.data.files, column.parentID);
+          },
+          onLeave: (_) => setState(() => _dragActive = false),
+          builder: (context, candidates, rejected) => AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            decoration: BoxDecoration(
+              color: _dragActive || candidates.isNotEmpty
+                  ? cs.primary.withValues(alpha: 0.10)
+                  : Colors.white.withValues(alpha: 0.22),
+              border: Border(
+                right: BorderSide(color: cs.border.withValues(alpha: 0.70)),
+                left: BorderSide(
+                  color: _dragActive || candidates.isNotEmpty
+                      ? cs.primary
+                      : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  height: 34,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    column.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: cs.foreground,
+                    ),
+                  ),
+                ),
+                Divider(height: 1, color: cs.border.withValues(alpha: 0.60)),
+                Expanded(
+                  child: column.isLoading
+                      ? const _ShadLoading()
+                      : column.errorMessage != null
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Text(
+                              column.errorMessage!,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: cs.destructive,
+                              ),
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          itemCount: column.files.length,
+                          itemBuilder: (context, index) {
+                            final file = column.files[index];
+                            final selected = column.selectedID == file.id;
+                            final row = _FinderColumnItem(
+                              file: file,
+                              selected: selected,
+                              onTap: () {
+                                if (file.isDirectory) {
+                                  widget.onOpenFolder(file);
+                                }
+                              },
+                              onOpen: () {
+                                if (file.isDirectory) {
+                                  widget.onOpenFolder(file);
+                                } else {
+                                  widget.onOpenFile(file);
+                                }
+                              },
+                            );
+                            return Draggable<_DraggedCloudFiles>(
+                              data: _DraggedCloudFiles([file], widget.source),
+                              feedback: _DragFeedback(label: file.name),
+                              childWhenDragging: Opacity(
+                                opacity: 0.35,
+                                child: row,
+                              ),
+                              child: row,
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FinderColumnItem extends StatelessWidget {
+  final CloudFile file;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onOpen;
+
+  const _FinderColumnItem({
+    required this.file,
+    required this.selected,
+    required this.onTap,
+    required this.onOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      onDoubleTap: onOpen,
+      child: Container(
+        height: 34,
+        margin: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        padding: const EdgeInsets.symmetric(horizontal: 7),
+        decoration: BoxDecoration(
+          color: selected ? cs.primary.withValues(alpha: 0.16) : null,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          children: [
+            SizedBox(width: 20, height: 20, child: FileIcon(file: file)),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                file.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: cs.foreground),
+              ),
+            ),
+            if (file.isDirectory)
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 17,
+                color: cs.mutedForeground,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+List<CloudFile> _cloudFilesFromResponse(Map<String, dynamic> json) {
+  final result = <CloudFile>[];
+  final seen = <String>{};
+  void visit(dynamic value) {
+    if (value is Map) {
+      try {
+        final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+        if (seen.add(file.id)) result.add(file);
+      } catch (_) {
+        // Response envelopes and non-file map nodes are expected here.
+      }
+      for (final child in value.values) {
+        visit(child);
+      }
+    } else if (value is List) {
+      for (final child in value) {
+        visit(child);
+      }
+    }
+  }
+
+  visit(json);
+  return result;
 }
 
 class _FileGridCard extends StatelessWidget {
@@ -1577,7 +2165,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
                   });
                   _load(parentID: file.id);
                 } else {
-                  ref.read(fileProvider.notifier).downloadFile(file);
+                  _openCloudFile(context, ref, file);
                 }
               },
               onOpen: () {
@@ -1588,7 +2176,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
                   });
                   _load(parentID: file.id);
                 } else {
-                  ref.read(fileProvider.notifier).downloadFile(file);
+                  _openCloudFile(context, ref, file);
                 }
               },
               onCopy: () =>
@@ -1618,7 +2206,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
                 });
                 _load(parentID: file.id);
               } else {
-                ref.read(fileProvider.notifier).downloadFile(file);
+                _openCloudFile(context, ref, file);
               }
             }
 
@@ -1858,6 +2446,7 @@ class _FilePaneFrame extends StatelessWidget {
   final bool isLoading;
   final String? errorMessage;
   final String emptyLabel;
+  final bool showChildWhenEmpty;
   final String? dropParentID;
   final List<CloudFile> breadcrumbPath;
   final ValueChanged<int>? onBreadcrumbNavigate;
@@ -1883,6 +2472,7 @@ class _FilePaneFrame extends StatelessWidget {
     required this.isLoading,
     required this.errorMessage,
     required this.emptyLabel,
+    this.showChildWhenEmpty = false,
     this.dropParentID,
     this.breadcrumbPath = const [],
     this.onBreadcrumbNavigate,
@@ -1963,7 +2553,7 @@ class _FilePaneFrame extends StatelessWidget {
                         ),
                       ),
                     )
-                  : itemCount == 0
+                  : itemCount == 0 && !showChildWhenEmpty
                   ? Center(
                       child: Text(
                         emptyLabel,
