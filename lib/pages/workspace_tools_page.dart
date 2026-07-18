@@ -1539,85 +1539,91 @@ class _BatchRenameRuleRow extends StatelessWidget {
         rule.kind == BatchRenameRuleKind.regex;
     final supportsCase =
         hasReplacement || rule.kind == BatchRenameRuleKind.remove;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: cs.muted.withValues(alpha: 0.46),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: cs.border.withValues(alpha: 0.65)),
-      ),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          ShadCheckbox(
-            value: rule.enabled,
-            label: const Text('启用'),
-            onChanged: (value) => onChanged(rule.copyWith(enabled: value)),
-          ),
-          SizedBox(
-            width: 132,
-            child: ShadSelect<BatchRenameRuleKind>(
-              key: ValueKey('${rule.id}-${rule.kind}'),
-              initialValue: rule.kind,
-              selectedOptionBuilder: (_, value) => Text(_ruleKindLabel(value)),
-              options: [
-                for (final value in BatchRenameRuleKind.values)
-                  ShadOption(value: value, child: Text(_ruleKindLabel(value))),
-              ],
-              onChanged: (value) {
-                if (value != null) onChanged(rule.copyWith(kind: value));
-              },
+    return IntrinsicWidth(
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: cs.muted.withValues(alpha: 0.46),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: cs.border.withValues(alpha: 0.65)),
+        ),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            ShadCheckbox(
+              value: rule.enabled,
+              label: const Text('启用'),
+              onChanged: (value) => onChanged(rule.copyWith(enabled: value)),
             ),
-          ),
-          SizedBox(
-            width: 190,
-            child: ShadInput(
-              initialValue: rule.pattern,
-              placeholder: Text(_rulePatternPlaceholder(rule.kind)),
-              onChanged: (value) => onChanged(rule.copyWith(pattern: value)),
-            ),
-          ),
-          if (hasReplacement) ...[
-            const Icon(Icons.arrow_right_alt_rounded, size: 18),
             SizedBox(
-              width: 160,
-              child: ShadInput(
-                initialValue: rule.replacement,
-                placeholder: const Text('替换为'),
-                onChanged: (value) =>
-                    onChanged(rule.copyWith(replacement: value)),
+              width: 132,
+              child: ShadSelect<BatchRenameRuleKind>(
+                key: ValueKey('${rule.id}-${rule.kind}'),
+                initialValue: rule.kind,
+                selectedOptionBuilder: (_, value) =>
+                    Text(_ruleKindLabel(value)),
+                options: [
+                  for (final value in BatchRenameRuleKind.values)
+                    ShadOption(
+                      value: value,
+                      child: Text(_ruleKindLabel(value)),
+                    ),
+                ],
+                onChanged: (value) {
+                  if (value != null) onChanged(rule.copyWith(kind: value));
+                },
               ),
             ),
-          ],
-          if (supportsCase)
-            ShadCheckbox(
-              value: rule.ignoreCase,
-              label: const Text('忽略大小写'),
-              onChanged: (value) => onChanged(rule.copyWith(ignoreCase: value)),
+            SizedBox(
+              width: 190,
+              child: ShadInput(
+                initialValue: rule.pattern,
+                placeholder: Text(_rulePatternPlaceholder(rule.kind)),
+                onChanged: (value) => onChanged(rule.copyWith(pattern: value)),
+              ),
             ),
-          _RenameRuleIconButton(
-            icon: Icons.arrow_upward_rounded,
-            tooltip: '上移规则',
-            enabled: !isFirst,
-            onPressed: onMoveUp,
-          ),
-          _RenameRuleIconButton(
-            icon: Icons.arrow_downward_rounded,
-            tooltip: '下移规则',
-            enabled: !isLast,
-            onPressed: onMoveDown,
-          ),
-          _RenameRuleIconButton(
-            icon: Icons.delete_outline_rounded,
-            tooltip: '删除规则',
-            enabled: true,
-            destructive: true,
-            onPressed: onRemove,
-          ),
-        ],
+            if (hasReplacement) ...[
+              const Icon(Icons.arrow_right_alt_rounded, size: 18),
+              SizedBox(
+                width: 160,
+                child: ShadInput(
+                  initialValue: rule.replacement,
+                  placeholder: const Text('替换为'),
+                  onChanged: (value) =>
+                      onChanged(rule.copyWith(replacement: value)),
+                ),
+              ),
+            ],
+            if (supportsCase)
+              ShadCheckbox(
+                value: rule.ignoreCase,
+                label: const Text('忽略大小写'),
+                onChanged: (value) =>
+                    onChanged(rule.copyWith(ignoreCase: value)),
+              ),
+            _RenameRuleIconButton(
+              icon: Icons.arrow_upward_rounded,
+              tooltip: '上移规则',
+              enabled: !isFirst,
+              onPressed: onMoveUp,
+            ),
+            _RenameRuleIconButton(
+              icon: Icons.arrow_downward_rounded,
+              tooltip: '下移规则',
+              enabled: !isLast,
+              onPressed: onMoveDown,
+            ),
+            _RenameRuleIconButton(
+              icon: Icons.delete_outline_rounded,
+              tooltip: '删除规则',
+              enabled: true,
+              destructive: true,
+              onPressed: onRemove,
+            ),
+          ],
+        ),
       ),
     );
   }

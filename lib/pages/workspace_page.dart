@@ -404,7 +404,8 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
+    final theme = ShadTheme.of(context);
+    final cs = theme.colorScheme;
     return SizedBox(
       height: 42,
       child: Row(
@@ -522,7 +523,9 @@ class _SegmentButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
+    final theme = ShadTheme.of(context);
+    final cs = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return InkWell(
       borderRadius: BorderRadius.circular(10),
       onTap: onTap,
@@ -532,13 +535,15 @@ class _SegmentButton extends StatelessWidget {
         height: 32,
         decoration: BoxDecoration(
           color: selected
-              ? Colors.white.withValues(alpha: 0.74)
+              ? (isDark ? cs.secondary : Colors.white.withValues(alpha: 0.74))
               : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
           boxShadow: selected
               ? [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.08),
+                    color: (isDark ? Colors.black : Colors.black).withValues(
+                      alpha: isDark ? 0.28 : 0.08,
+                    ),
                     blurRadius: 10,
                     offset: const Offset(0, 3),
                   ),
@@ -1224,7 +1229,9 @@ class _ToolbarButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
+    final theme = ShadTheme.of(context);
+    final cs = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return ShadTooltip(
       builder: (_) => Text(label),
       child: Padding(
@@ -1243,7 +1250,9 @@ class _ToolbarButton extends StatelessWidget {
                   ? cs.primary.withValues(alpha: 0.14)
                   : grouped
                   ? Colors.transparent
-                  : Colors.white.withValues(alpha: 0.46),
+                  : (isDark
+                        ? cs.secondary.withValues(alpha: 0.88)
+                        : Colors.white.withValues(alpha: 0.46)),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
                 color: primary
@@ -1252,7 +1261,9 @@ class _ToolbarButton extends StatelessWidget {
                     ? cs.primary.withValues(alpha: 0.45)
                     : grouped
                     ? Colors.transparent
-                    : Colors.white.withValues(alpha: 0.54),
+                    : (isDark
+                          ? cs.border.withValues(alpha: 0.9)
+                          : Colors.white.withValues(alpha: 0.54)),
               ),
             ),
             child: Row(
@@ -1294,13 +1305,22 @@ class _ToolbarControlGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    final cs = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return Container(
       height: 36,
       padding: const EdgeInsets.symmetric(horizontal: 2),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.46),
+        color: isDark
+            ? cs.secondary.withValues(alpha: 0.88)
+            : Colors.white.withValues(alpha: 0.46),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.54)),
+        border: Border.all(
+          color: isDark
+              ? cs.border.withValues(alpha: 0.9)
+              : Colors.white.withValues(alpha: 0.54),
+        ),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: children),
     );
@@ -2200,7 +2220,9 @@ class _FinderColumnState extends State<_FinderColumn> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
+    final theme = ShadTheme.of(context);
+    final cs = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final column = widget.column;
     return FocusableActionDetector(
       focusNode: _focusNode,
@@ -2256,7 +2278,9 @@ class _FinderColumnState extends State<_FinderColumn> {
                 decoration: BoxDecoration(
                   color: _dragActive || candidates.isNotEmpty
                       ? cs.primary.withValues(alpha: 0.10)
-                      : Colors.white.withValues(alpha: 0.22),
+                      : (isDark
+                            ? cs.secondary.withValues(alpha: 0.62)
+                            : Colors.white.withValues(alpha: 0.22)),
                   border: Border(
                     right: BorderSide(color: cs.border.withValues(alpha: 0.70)),
                     left: BorderSide(
@@ -2459,7 +2483,9 @@ class _FileGridCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
+    final theme = ShadTheme.of(context);
+    final cs = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return Semantics(
       button: true,
       label:
@@ -2472,7 +2498,9 @@ class _FileGridCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: isSelected
                 ? cs.primary.withValues(alpha: 0.12)
-                : Colors.white.withValues(alpha: 0.34),
+                : (isDark
+                      ? cs.secondary.withValues(alpha: 0.78)
+                      : Colors.white.withValues(alpha: 0.34)),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: isSelected
@@ -3263,16 +3291,24 @@ class _FilePaneFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
+    final theme = ShadTheme.of(context);
+    final cs = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return _PaneDropSurface(
       parentID: dropParentID,
       onMoveCloudFiles: onMoveCloudFiles,
       onUploadLocalFiles: onUploadLocalFiles,
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.42),
+          color: isDark
+              ? cs.card.withValues(alpha: 0.92)
+              : Colors.white.withValues(alpha: 0.42),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.62)),
+          border: Border.all(
+            color: isDark
+                ? cs.border.withValues(alpha: 0.92)
+                : Colors.white.withValues(alpha: 0.62),
+          ),
         ),
         child: Column(
           children: [
