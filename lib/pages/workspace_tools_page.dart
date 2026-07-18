@@ -123,6 +123,9 @@ class _FileScanTool extends ConsumerStatefulWidget {
 
 class _FileScanToolState extends ConsumerState<_FileScanTool> {
   bool _scanning = false;
+  bool _cancelRequested = false;
+  int _foldersScanned = 0;
+  int _filesScanned = 0;
   String? _error;
   List<CloudFile> _emptyFolders = [];
   List<List<CloudFile>> _duplicates = [];
@@ -133,6 +136,9 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
     final api = ref.read(authProvider.notifier).api;
     setState(() {
       _scanning = true;
+      _cancelRequested = false;
+      _foldersScanned = 0;
+      _filesScanned = 0;
       _error = null;
       _emptyFolders = [];
       _duplicates = [];
@@ -151,9 +157,12 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
         ...state.files.where((file) => file.isDirectory),
       ];
       while (queue.isNotEmpty) {
+        if (_cancelRequested) break;
         final folder = queue.removeLast();
         final response = await api.fsFiles(parentID: folder.id, pageSize: 1000);
         final children = _extractFiles(response);
+        _foldersScanned += 1;
+        _filesScanned += children.where((child) => !child.isDirectory).length;
         if (children.isEmpty) empty.add(folder);
         for (final child in children) {
           if (child.isDirectory) {
@@ -183,6 +192,7 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
               .where((group) => group.length > 1)
               .toList();
           _similarFolders = _groupSimilarFolders(folders);
+          if (_cancelRequested) _error = '扫描已取消，已保留当前结果';
         });
       }
     } catch (error) {
@@ -190,6 +200,11 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
+  }
+
+  void _cancelScan() {
+    if (!_scanning) return;
+    setState(() => _cancelRequested = true);
   }
 
   List<List<CloudFile>> _groupSimilarFolders(List<CloudFile> folders) {
@@ -246,21 +261,24 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
       children: [
         _ToolSection(
           title: '当前目录扫描',
-          description: '检查空文件夹、相同 GCID 的重复文件和相似名称目录。',
+          description: _scanning
+              ? '已扫描 $_foldersScanned 个文件夹、$_filesScanned 个文件。'
+              : '检查空文件夹、相同 GCID 的重复文件和相似名称目录。',
           trailing: ShadButton(
-            onPressed: _scanning ? null : _scan,
+            onPressed: _scanning ? _cancelScan : _scan,
             leading: Icon(
-              _scanning
-                  ? Icons.hourglass_top_rounded
-                  : Icons.play_arrow_rounded,
+              _scanning ? Icons.stop_circle_outlined : Icons.play_arrow_rounded,
               size: 16,
             ),
-            child: Text(_scanning ? '扫描中' : '开始扫描'),
+            child: Text(_scanning ? '取消扫描' : '开始扫描'),
           ),
           child: _scanning
-              ? const Padding(
-                  padding: EdgeInsets.only(top: 12),
-                  child: ShadProgress(),
+              ? Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Semantics(
+                    label: '文件扫描进度：$_foldersScanned 个文件夹，$_filesScanned 个文件',
+                    child: const ShadProgress(),
+                  ),
                 )
               : _error != null
               ? Padding(
