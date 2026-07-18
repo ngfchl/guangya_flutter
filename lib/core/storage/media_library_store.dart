@@ -303,17 +303,29 @@ class MediaLibraryStore {
     if (ids.isEmpty) return;
     final db = await _db;
     final rows = await db.query('folder_children');
-    await db.transaction((txn) async {
-      for (final row in rows) {
-        final folderID = row['folder_id']?.toString();
-        final children = await folderChildren(
-          folderID == _rootFolderID ? null : folderID,
-        );
-        if (children == null) continue;
+    final updates = <String, List<CloudFile>>{};
+    for (final row in rows) {
+      final folderID = row['folder_id']?.toString();
+      if (folderID == null) continue;
+      try {
+        final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
+        if (raw is! List) continue;
+        final children = raw
+            .whereType<Map>()
+            .map(
+              (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
+            )
+            .toList();
         final retained = children
             .where((file) => !ids.contains(file.id))
             .toList();
-        if (retained.length == children.length) continue;
+        if (retained.length != children.length) updates[folderID] = retained;
+      } catch (_) {}
+    }
+    if (updates.isEmpty) return;
+    await db.transaction((txn) async {
+      for (final entry in updates.entries) {
+        final retained = entry.value;
         await txn.update(
           'folder_children',
           {
@@ -323,7 +335,7 @@ class MediaLibraryStore {
             ),
           },
           where: 'folder_id = ?',
-          whereArgs: [folderID],
+          whereArgs: [entry.key],
         );
       }
     });
