@@ -395,6 +395,104 @@ class _CleanupList extends ConsumerWidget {
 
   const _CleanupList({required this.files, required this.emptyText});
 
+  Future<void> _confirmDeleteEmpty(
+    BuildContext context,
+    WidgetRef ref,
+    CloudFile folder,
+  ) async {
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: Text('删除空文件夹「${folder.name}」？'),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton.destructive(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('重新校验并删除'),
+          ),
+        ],
+        child: const Padding(
+          padding: EdgeInsets.only(top: 10),
+          child: Text('删除前会重新检查目录是否为空；已发生变化的目录将被保留。'),
+        ),
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      final response = await ref
+          .read(authProvider.notifier)
+          .api
+          .fsFiles(parentID: folder.id, pageSize: 1);
+      if (_hasCloudFile(response)) {
+        if (!context.mounted) return;
+        await showShadDialog<void>(
+          context: context,
+          builder: (dialogContext) => ShadDialog(
+            title: const Text('已跳过删除'),
+            actions: [
+              ShadButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('知道了'),
+              ),
+            ],
+            child: const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Text('该文件夹在扫描后已有内容，未执行删除。'),
+            ),
+          ),
+        );
+        return;
+      }
+      await ref.read(fileProvider.notifier).deleteFiles([folder]);
+    } catch (_) {
+      if (!context.mounted) return;
+      await showShadDialog<void>(
+        context: context,
+        builder: (dialogContext) => ShadDialog(
+          title: const Text('无法校验文件夹'),
+          actions: [
+            ShadButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('关闭'),
+            ),
+          ],
+          child: const Padding(
+            padding: EdgeInsets.only(top: 10),
+            child: Text('未能重新读取目录内容，因此没有执行删除。'),
+          ),
+        ),
+      );
+    }
+  }
+
+  bool _hasCloudFile(Map<String, dynamic> value) {
+    var found = false;
+    void visit(dynamic node) {
+      if (found) return;
+      if (node is Map) {
+        try {
+          CloudFile.fromJson(Map<String, dynamic>.from(node));
+          found = true;
+          return;
+        } catch (_) {}
+        for (final child in node.values) {
+          visit(child);
+        }
+      } else if (node is List) {
+        for (final child in node) {
+          visit(child);
+        }
+      }
+    }
+
+    visit(value);
+    return found;
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = ShadTheme.of(context).colorScheme;
@@ -414,8 +512,7 @@ class _CleanupList extends ConsumerWidget {
             title: Text(file.name),
             trailing: ShadButton.destructive(
               size: ShadButtonSize.sm,
-              onPressed: () =>
-                  ref.read(fileProvider.notifier).deleteFiles([file]),
+              onPressed: () => _confirmDeleteEmpty(context, ref, file),
               child: const Text('删除'),
             ),
           ),
