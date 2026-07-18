@@ -537,7 +537,12 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
 
     try {
       final api = ref.read(authProvider.notifier).api;
-      final result = await api.tmdbSearch(text, apiKey: _tmdbApiKey);
+      final result = await api.tmdbSearch(
+        text,
+        apiKey: _tmdbApiKey,
+        proxyHost: StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+        proxyPort: StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+      );
       final results =
           (result['results'] as List?)
               ?.whereType<Map>()

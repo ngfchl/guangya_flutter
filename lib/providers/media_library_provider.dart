@@ -205,10 +205,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final unique = <String, MediaLibraryItem>{};
       final tmdbApiKey =
           StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+      final tmdbProxyHost =
+          StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
+      final tmdbProxyPort =
+          StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
       for (final file in discovered) {
         if (_cancelScan) break;
         final fallback = MediaLibraryItem.fromFile(library.id, file);
-        unique[file.id] = await _recognizeMediaItem(fallback, tmdbApiKey);
+        unique[file.id] = await _recognizeMediaItem(
+          fallback,
+          tmdbApiKey,
+          proxyHost: tmdbProxyHost,
+          proxyPort: tmdbProxyPort,
+        );
         state = state.copyWith(
           progress: MediaLibraryScanProgress(
             phase: tmdbApiKey.isEmpty ? '正在建立本地索引' : '正在识别 ${file.name}',
@@ -277,11 +286,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<MediaLibraryItem> _recognizeMediaItem(
     MediaLibraryItem fallback,
-    String apiKey,
-  ) async {
+    String apiKey, {
+    required String proxyHost,
+    required String proxyPort,
+  }) async {
     if (_api == null || apiKey.trim().isEmpty) return fallback;
     try {
-      final result = await _api!.tmdbSearch(fallback.title, apiKey: apiKey);
+      final result = await _api!.tmdbSearch(
+        fallback.title,
+        apiKey: apiKey,
+        proxyHost: proxyHost,
+        proxyPort: proxyPort,
+      );
       final values = result['results'];
       if (values is! List) return fallback;
       Map<String, dynamic>? candidate;
