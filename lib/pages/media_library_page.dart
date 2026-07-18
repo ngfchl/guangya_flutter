@@ -1809,12 +1809,63 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
 
 class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   late MediaLibraryItem _resource = widget.work.primary;
+  Map<String, dynamic>? _tmdbDetails;
+  int? _loadedTMDBID;
+  bool _loadingTMDBDetails = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_loadTMDBDetails);
+  }
 
   @override
   void didUpdateWidget(covariant _MediaDetailPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!widget.work.resources.any((item) => item.id == _resource.id)) {
       _resource = widget.work.primary;
+    }
+    if (widget.work.primary.tmdbID != _loadedTMDBID) {
+      Future.microtask(_loadTMDBDetails);
+    }
+  }
+
+  Future<void> _loadTMDBDetails() async {
+    final item = widget.work.primary;
+    final tmdbID = item.tmdbID;
+    final kind = item.mediaKind;
+    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    if (tmdbID == null ||
+        kind == null ||
+        apiKey.isEmpty ||
+        _loadedTMDBID == tmdbID ||
+        _loadingTMDBDetails) {
+      return;
+    }
+    setState(() => _loadingTMDBDetails = true);
+    try {
+      final details = await ref
+          .read(authProvider.notifier)
+          .api
+          .tmdbDetails(
+            tmdbID,
+            mediaKind: kind == TMDBMediaKind.tv ? 'tv' : 'movie',
+            apiKey: apiKey,
+            proxyHost:
+                StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+            proxyPort:
+                StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+          );
+      if (mounted) {
+        setState(() {
+          _tmdbDetails = details;
+          _loadedTMDBID = tmdbID;
+        });
+      }
+    } catch (_) {
+      // Artwork enrichments are optional and should not interrupt playback.
+    } finally {
+      if (mounted) setState(() => _loadingTMDBDetails = false);
     }
   }
 
@@ -1870,7 +1921,16 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final compact = constraints.maxWidth < 700;
-              final information = _detailInformation(context, item, isSeries);
+              final information = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _detailInformation(context, item, isSeries),
+                  if (item.isMatched) ...[
+                    const SizedBox(height: 22),
+                    _tmdbEnrichment(context),
+                  ],
+                ],
+              );
               final resources = _resourceList(context, cs);
               return SingleChildScrollView(
                 child: compact
@@ -1989,6 +2049,185 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         ),
       ],
     );
+  }
+
+  Widget _tmdbEnrichment(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    if (_loadingTMDBDetails && _tmdbDetails == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 14),
+        child: Row(children: [SizedBox(width: 100, child: ShadProgress())]),
+      );
+    }
+    final details = _tmdbDetails;
+    if (details == null) return const SizedBox.shrink();
+    final images = details['images'] is Map
+        ? Map<String, dynamic>.from(details['images'] as Map)
+        : const <String, dynamic>{};
+    final posters = _imagePaths(images['posters']);
+    final backdrops = _imagePaths(images['backdrops']);
+    final credits = details['credits'] is Map
+        ? Map<String, dynamic>.from(details['credits'] as Map)
+        : const <String, dynamic>{};
+    final cast =
+        (credits['cast'] as List?)
+            ?.whereType<Map>()
+            .map((value) => Map<String, dynamic>.from(value))
+            .take(12)
+            .toList() ??
+        const <Map<String, dynamic>>[];
+    if (posters.isEmpty && backdrops.isEmpty && cast.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (backdrops.isNotEmpty) ...[
+          Text(
+            '横幅与剧照',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: cs.foreground,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 155,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: backdrops.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) => ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Image.network(
+                  'https://image.tmdb.org/t/p/w780${backdrops[index]}',
+                  width: 260,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const SizedBox(width: 260),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+        ],
+        if (posters.isNotEmpty) ...[
+          Text(
+            '更多海报',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: cs.foreground,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 160,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: posters.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) => ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Image.network(
+                  'https://image.tmdb.org/t/p/w342${posters[index]}',
+                  width: 106,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const SizedBox(width: 106),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+        ],
+        if (cast.isNotEmpty) ...[
+          Text(
+            '演职员',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: cs.foreground,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 180,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: cast.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final person = cast[index];
+                final profile = person['profile_path']?.toString();
+                return SizedBox(
+                  width: 96,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: profile == null || profile.isEmpty
+                            ? Container(
+                                width: 96,
+                                height: 122,
+                                color: cs.muted,
+                                child: Icon(
+                                  Icons.person_rounded,
+                                  color: cs.mutedForeground,
+                                ),
+                              )
+                            : Image.network(
+                                'https://image.tmdb.org/t/p/w185$profile',
+                                width: 96,
+                                height: 122,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => Container(
+                                  width: 96,
+                                  height: 122,
+                                  color: cs.muted,
+                                ),
+                              ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        person['name']?.toString() ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: cs.foreground,
+                        ),
+                      ),
+                      Text(
+                        person['character']?.toString() ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  List<String> _imagePaths(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map((image) => image['file_path']?.toString())
+        .whereType<String>()
+        .where((path) => path.isNotEmpty)
+        .take(12)
+        .toList();
   }
 
   Widget _detailPosterFallback(ShadColorScheme cs, bool isSeries) => Container(
