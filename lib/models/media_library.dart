@@ -561,10 +561,7 @@ class ParsedMediaName {
     var title = boundaryMatch != null
         ? normalized.substring(0, boundaryMatch.start)
         : normalized;
-    title = title
-        .replaceAll(RegExp(r'[\[\]【】(){}]'), ' ')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+    title = _cleanTitle(title);
     final genericName =
         title.isEmpty ||
         RegExp(r'^\d+$').hasMatch(title) ||
@@ -627,6 +624,50 @@ class ParsedMediaName {
       ),
       dynamicRange: first(r'(?:HDR10?\+?|HDR|Dolby[ .-]?Vision|DV)'),
     );
+  }
+
+  static String _cleanTitle(String value) {
+    var title = value.trim();
+
+    // Release groups frequently put all disc/menu/audio/subtitle information
+    // in a bracket between the Chinese and original titles. Keep the leading
+    // title and discard the whole release block instead of joining both sides.
+    final bracket = RegExp(r'[\[【]([^\]】]*)[\]】]').firstMatch(title);
+    if (bracket != null &&
+        RegExp(
+          r'UHD|ULTRAHD|Blu[- ]?ray|BDJ|BDMV|原盘|DIY|菜单|音轨|国语|国配|字幕|SGNB|CHDBits',
+          caseSensitive: false,
+        ).hasMatch(bracket.group(1) ?? '')) {
+      title = title.substring(0, bracket.start);
+    }
+
+    // A few release tags are written without brackets. They are never part of
+    // a searchable title and should terminate the human-readable name.
+    final releaseBoundary = RegExp(
+      r'(?:\b(?:ULTRA[ .-]?HD|UHD|Blu[- ]?ray|BDRip|REMUX|BDJ|BDMV)\b|原盘|DIY|菜单|音轨|国语|国配|字幕|次时代|SGNB|CHDBits)',
+      caseSensitive: false,
+    ).firstMatch(title);
+    if (releaseBoundary != null) {
+      title = title.substring(0, releaseBoundary.start);
+    }
+
+    // Prefer the localized title when an English original title follows it.
+    // TMDB receives a compact Chinese query first; the original title remains
+    // available from TMDB after matching.
+    final chineseEnglishBoundary = RegExp(
+      r'[\u4e00-\u9fff\)）]\s+(?=[A-Z][A-Za-z])',
+    ).firstMatch(title);
+    if (chineseEnglishBoundary != null) {
+      title = title.substring(0, chineseEnglishBoundary.start + 1);
+    }
+
+    title = title
+        .replaceFirst(RegExp(r'^\s*\d{1,3}[ ._-]+'), '')
+        .replaceAll(RegExp(r'[\(（](?:港台|港版?|台版?|国配|国语|简繁?|中字?)[\)）]'), ' ')
+        .replaceAll(RegExp(r'[\[\]【】{}()（）]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return title;
   }
 }
 

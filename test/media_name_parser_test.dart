@@ -61,5 +61,17 @@ void main() {
       expect(compact.episode, 2);
       expect(compact.isEpisode, isTrue);
     });
+
+    test('removes Chinese disc release notes before matching a movie', () {
+      final value = ParsedMediaName.parse(
+        '003.刺客信条刺客教条(港台) [SGNB第三部UHD原盘DIY BDJ菜单修改 次时代国语音轨 国配简英繁特效四字幕]Assassins Creed 2016 ULTRAHD Blu-ray 2160p HEVC Atoms TrueHD 7.1-sGnb@CHDBits.iso',
+      );
+
+      expect(value.title, '刺客信条刺客教条');
+      expect(value.year, 2016);
+      expect(value.resolution, '2160p');
+      expect(value.videoCodec, 'HEVC');
+      expect(value.audio, 'TrueHD');
+    });
   });
 }
