@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/legacy.dart';
 
 import '../api/guangya_api.dart';
+import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
@@ -191,84 +192,86 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
 
     try {
-      final discovered = <CloudFile>[];
-      for (final source in library.sources) {
-        if (_cancelScan) break;
-        state = state.copyWith(
-          progress: MediaLibraryScanProgress(
-            phase: '扫描 ${source.path}',
-            completed: discovered.length,
-          ),
-        );
-        final files = await _scanSource(
-          source.rootID,
-          source.path,
-          recursive: library.recursive,
-          minimumSizeBytes: library.minimumSizeMB * 1024 * 1024,
-        );
-        discovered.addAll(files);
-      }
-
-      final unique = <String, MediaLibraryItem>{};
+      final initialItems = _loadAllItems()
+        ..removeWhere((item) => item.libraryID == library.id);
+      final unique = <String, MediaLibraryItem>{
+        for (final item in _loadItems(library.id)) item.file.id: item,
+      };
+      state = state.copyWith(items: unique.values.toList());
       final tmdbApiKey =
           StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
       final tmdbProxyHost =
           StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
       final tmdbProxyPort =
           StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
-      final input = <String, CloudFile>{
-        for (final file in discovered) file.id: file,
-      }.values.toList();
-      var nextIndex = 0;
       var completed = 0;
       Future<void> pendingPersistence = Future.value();
-      final initialItems = _loadAllItems()
-        ..removeWhere((item) => item.libraryID == library.id);
 
-      Future<void> worker() async {
-        while (!_cancelScan) {
-          if (nextIndex >= input.length) return;
-          final file = input[nextIndex++];
-          final fallback = MediaLibraryItem.fromFile(library.id, file);
-          final item = await _recognizeMediaItem(
-            fallback,
-            tmdbApiKey,
-            proxyHost: tmdbProxyHost,
-            proxyPort: tmdbProxyPort,
-          );
-          unique[file.id] = item;
-          completed += 1;
-          final visible = unique.values.toList()
-            ..sort(
-              (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+      Future<void> indexBatch(List<CloudFile> files) async {
+        final pending = files
+            .where((file) => !unique.containsKey(file.id))
+            .toList();
+        if (pending.isEmpty || _cancelScan) return;
+        var next = 0;
+        Future<void> worker() async {
+          while (!_cancelScan && next < pending.length) {
+            final file = pending[next++];
+            final fallback = MediaLibraryItem.fromFile(library.id, file);
+            final item = await _recognizeMediaItem(
+              fallback,
+              tmdbApiKey,
+              proxyHost: tmdbProxyHost,
+              proxyPort: tmdbProxyPort,
             );
-          // Serialize writes so an earlier, smaller snapshot cannot overwrite
-          // a later batch while recognition workers finish out of order.
-          pendingPersistence = pendingPersistence.then(
-            (_) => _saveAllItems([...initialItems, ...unique.values]),
-          );
-          await pendingPersistence;
-          state = state.copyWith(
-            items: visible,
-            progress: MediaLibraryScanProgress(
-              phase: tmdbApiKey.isEmpty ? '正在建立本地索引' : '正在识别 ${file.name}',
-              completed: completed,
-              total: input.length,
-            ),
-          );
+            unique[file.id] = item;
+            completed += 1;
+            final visible = unique.values.toList()
+              ..sort(
+                (a, b) =>
+                    a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+              );
+            pendingPersistence = pendingPersistence.then(
+              (_) => _saveAllItems([...initialItems, ...unique.values]),
+            );
+            await pendingPersistence;
+            state = state.copyWith(
+              items: visible,
+              progress: MediaLibraryScanProgress(
+                phase: tmdbApiKey.isEmpty ? '正在建立本地索引' : '正在识别 ${file.name}',
+                completed: completed,
+              ),
+            );
+          }
         }
+
+        final concurrency =
+            (int.tryParse(
+                      StorageManager.get<String>(
+                            StorageKeys.mediaScanConcurrency,
+                          ) ??
+                          '3',
+                    ) ??
+                    3)
+                .clamp(1, 20);
+        await Future.wait(List.generate(concurrency, (_) => worker()));
       }
 
-      final concurrency =
-          (int.tryParse(
-                    StorageManager.get<String>(
-                          StorageKeys.mediaScanConcurrency,
-                        ) ??
-                        '3',
-                  ) ??
-                  3)
-              .clamp(1, 20);
-      await Future.wait(List.generate(concurrency, (_) => worker()));
+      for (final source in library.sources) {
+        if (_cancelScan) break;
+        state = state.copyWith(
+          progress: MediaLibraryScanProgress(
+            phase: '扫描 ${source.path}',
+            completed: completed,
+          ),
+        );
+        await _scanSource(
+          source.rootID,
+          source.path,
+          recursive: library.recursive,
+          minimumSizeBytes: library.minimumSizeMB * 1024 * 1024,
+          onMediaFiles: indexBatch,
+        );
+      }
       await pendingPersistence;
       final items = unique.values.toList()
         ..sort(
@@ -390,15 +393,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return int.tryParse(value?.toString() ?? '');
   }
 
-  Future<List<CloudFile>> _scanSource(
+  Future<void> _scanSource(
     String? rootID,
     String rootPath, {
     required bool recursive,
     required int minimumSizeBytes,
+    required Future<void> Function(List<CloudFile> files) onMediaFiles,
   }) async {
     final folders = <_ScanFolder>[_ScanFolder(rootID, rootPath)];
     final visited = <String>{};
-    final mediaFiles = <CloudFile>[];
+    var discovered = 0;
 
     while (folders.isNotEmpty && !_cancelScan) {
       final folder = folders.removeAt(0);
@@ -406,38 +410,175 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (!visited.add(visitKey)) continue;
 
       var page = 0;
+      final cachedFolder = FileMetadataCache.folderChildren(folder.id);
+      final folderSnapshot = <CloudFile>[];
       while (!_cancelScan) {
-        final response = await _api!.fsFiles(
-          parentID: folder.id,
-          page: page,
-          pageSize: 200,
-          orderBy: 0,
-          sortType: 0,
-        );
-        final files = _extractFiles(response);
+        late List<CloudFile> files;
+        if (cachedFolder != null) {
+          files = cachedFolder;
+        } else {
+          final response = await _api!.fsFiles(
+            parentID: folder.id,
+            page: page,
+            pageSize: 200,
+            orderBy: 0,
+            sortType: 0,
+          );
+          files = _extractFiles(response);
+          files = await _enrichAndCacheFiles(files);
+          folderSnapshot.addAll(files);
+        }
+        final mediaBatch = <CloudFile>[];
         for (final file in files) {
           if (file.isDirectory) {
             if (recursive) {
               folders.add(_ScanFolder(file.id, '${folder.path}/${file.name}'));
             }
           } else if (file.isVideo && (file.size ?? 0) >= minimumSizeBytes) {
-            mediaFiles.add(_withPath(file, '${folder.path}/${file.name}'));
+            mediaBatch.add(_withPath(file, '${folder.path}/${file.name}'));
           }
         }
+        discovered += mediaBatch.length;
+        if (mediaBatch.isNotEmpty) await onMediaFiles(mediaBatch);
 
         state = state.copyWith(
           progress: MediaLibraryScanProgress(
             phase: '扫描 ${folder.path}',
-            completed: mediaFiles.length,
+            completed: discovered,
             total: folders.length + visited.length,
           ),
         );
 
-        if (files.length < 200) break;
+        if (cachedFolder != null || files.length < 200) {
+          if (cachedFolder == null) {
+            await FileMetadataCache.cacheFolderChildren(
+              folder.id,
+              folderSnapshot,
+            );
+          }
+          break;
+        }
         page += 1;
       }
     }
-    return mediaFiles;
+  }
+
+  Future<List<CloudFile>> _enrichAndCacheFiles(List<CloudFile> files) async {
+    final resolved = <CloudFile>[];
+    final pending = <CloudFile>[];
+    for (final file in files) {
+      final cached = FileMetadataCache.file(file.id);
+      if (cached != null) {
+        resolved.add(
+          file.copyWith(
+            size: cached.size,
+            gcid: cached.gcid,
+            modifiedAt: cached.modifiedAt,
+            cloudPath: file.cloudPath,
+          ),
+        );
+      } else if (!file.isDirectory &&
+          (file.gcid == null || file.gcid!.isEmpty)) {
+        pending.add(file);
+      } else {
+        resolved.add(file);
+      }
+    }
+    if (pending.isEmpty) {
+      await FileMetadataCache.cacheFiles(resolved);
+      return resolved;
+    }
+
+    final enriched = <String, CloudFile>{
+      for (final file in resolved) file.id: file,
+    };
+    var next = 0;
+    Future<void> worker() async {
+      while (next < pending.length) {
+        final file = pending[next++];
+        try {
+          final detail = await _api!.fsDetail(file.id);
+          final detailFile = _extractFiles(
+            detail,
+          ).where((candidate) => candidate.id == file.id).firstOrNull;
+          final gcid =
+              detailFile?.gcid ??
+              _findStringDeep(detail, const [
+                'gcid',
+                'gcId',
+                'gcidValue',
+                'hash',
+              ]);
+          final size =
+              detailFile?.size ??
+              _findIntDeep(detail, const [
+                'size',
+                'fileSize',
+                'resSize',
+                'totalSize',
+              ]);
+          enriched[file.id] = file.copyWith(gcid: gcid, size: size);
+        } catch (_) {
+          enriched[file.id] = file;
+        }
+      }
+    }
+
+    await Future.wait(List.generate(6, (_) => worker()));
+    final values = [for (final file in files) enriched[file.id] ?? file];
+    await FileMetadataCache.cacheFiles(values);
+    return values;
+  }
+
+  String? _findStringDeep(Map<String, dynamic> value, List<String> keys) {
+    for (final entry in value.entries) {
+      if (keys.contains(entry.key) && entry.value != null) {
+        final text = entry.value.toString().trim();
+        if (text.isNotEmpty) return text;
+      }
+      if (entry.value is Map) {
+        final found = _findStringDeep(
+          Map<String, dynamic>.from(entry.value),
+          keys,
+        );
+        if (found != null) return found;
+      } else if (entry.value is List) {
+        for (final child in entry.value as List) {
+          if (child is Map) {
+            final found = _findStringDeep(
+              Map<String, dynamic>.from(child),
+              keys,
+            );
+            if (found != null) return found;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  int? _findIntDeep(Map<String, dynamic> value, List<String> keys) {
+    for (final entry in value.entries) {
+      if (keys.contains(entry.key)) {
+        final parsed = int.tryParse(entry.value?.toString() ?? '');
+        if (parsed != null) return parsed;
+      }
+      if (entry.value is Map) {
+        final found = _findIntDeep(
+          Map<String, dynamic>.from(entry.value),
+          keys,
+        );
+        if (found != null) return found;
+      } else if (entry.value is List) {
+        for (final child in entry.value as List) {
+          if (child is Map) {
+            final found = _findIntDeep(Map<String, dynamic>.from(child), keys);
+            if (found != null) return found;
+          }
+        }
+      }
+    }
+    return null;
   }
 
   CloudFile _withPath(CloudFile file, String path) {

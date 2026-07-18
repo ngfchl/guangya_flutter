@@ -17,6 +17,9 @@ class StorageKeys {
   static const String mediaCategoryRules = 'guangya.mediaCategoryRules';
   static const String fileListCache = 'guangya.fileListCache';
   static const String fileMetadataCache = 'guangya.fileMetadataCache';
+  static const String fileGcidIndex = 'guangya.fileGcidIndex';
+  static const String gcidDetails = 'guangya.gcidDetails';
+  static const String folderChildrenIndex = 'guangya.folderChildrenIndex';
   static const String httpProxyHost = 'guangya.httpProxyHost';
   static const String httpProxyPort = 'guangya.httpProxyPort';
   static const String mediaScanConcurrency = 'guangya.mediaScanConcurrency';

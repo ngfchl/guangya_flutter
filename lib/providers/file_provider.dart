@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../api/guangya_api.dart';
+import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 
@@ -178,6 +179,7 @@ class FileNotifier extends StateNotifier<FileState> {
       final totalPages = _extractTotalPages(result, extracted.length);
       state = state.copyWith(files: extracted, totalPages: totalPages);
       await _writeCachedFiles(cacheKey, extracted);
+      await FileMetadataCache.cacheFolderChildren(resolvedParentID, extracted);
       unawaited(_enrichFolderSizes(extracted, generation));
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
@@ -519,6 +521,7 @@ class FileNotifier extends StateNotifier<FileState> {
     try {
       await _api!.fsCreateDir(name, parentID: _currentParentID);
       state = state.copyWith(statusMessage: '文件夹已创建');
+      await _invalidateFolderCaches(_currentParentID);
       await loadFiles(parentID: _currentParentID);
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString(), clearStatus: true);
@@ -530,6 +533,11 @@ class FileNotifier extends StateNotifier<FileState> {
     try {
       await _api!.fsRename(file.id, newName);
       state = state.copyWith(statusMessage: '重命名成功');
+      await FileMetadataCache.updateFolderChildren(
+        _currentParentID,
+        addOrReplace: [file.copyWith(name: newName)],
+      );
+      await _invalidateListCache(_currentParentID);
       await loadFiles(parentID: _currentParentID);
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
@@ -541,6 +549,11 @@ class FileNotifier extends StateNotifier<FileState> {
     state = state.copyWith(statusMessage: '正在删除…');
     try {
       await _api!.fsDelete(files.map((f) => f.id).toList());
+      await FileMetadataCache.updateFolderChildren(
+        _currentParentID,
+        removeIDs: files.map((file) => file.id),
+      );
+      await _invalidateListCache(_currentParentID);
       state = state.copyWith(
         statusMessage: '已删除 ${files.length} 个项目',
         selectedIDs: {},
@@ -555,6 +568,11 @@ class FileNotifier extends StateNotifier<FileState> {
     if (_api == null) return;
     try {
       await _api!.fsRecycle(files.map((f) => f.id).toList());
+      await FileMetadataCache.updateFolderChildren(
+        _currentParentID,
+        removeIDs: files.map((file) => file.id),
+      );
+      await _invalidateListCache(_currentParentID);
       state = state.copyWith(statusMessage: '已移入回收站', selectedIDs: {});
       await loadFiles(parentID: _currentParentID);
     } catch (e) {
@@ -566,6 +584,7 @@ class FileNotifier extends StateNotifier<FileState> {
     if (_api == null) return;
     try {
       await _api!.fsClearRecycleBin();
+      await _invalidateFolderCaches(_currentParentID);
       state = state.copyWith(statusMessage: '回收站已清空');
       await loadFiles();
     } catch (e) {
@@ -590,9 +609,18 @@ class FileNotifier extends StateNotifier<FileState> {
       final ids = state.clipboard!.map((f) => f.id).toList();
       if (state.clipboardIsMove) {
         await _api!.fsMove(ids, parentID: _currentParentID);
+        await FileMetadataCache.updateFolderChildren(
+          _currentParentID,
+          addOrReplace: state.clipboard!,
+        );
       } else {
         await _api!.fsCopy(ids, parentID: _currentParentID);
+        await FileMetadataCache.updateFolderChildren(
+          _currentParentID,
+          invalidate: true,
+        );
       }
+      await _invalidateListCache(_currentParentID);
       state = state.copyWith(statusMessage: '操作完成');
       await loadFiles(parentID: _currentParentID);
     } catch (e) {
@@ -646,6 +674,7 @@ class FileNotifier extends StateNotifier<FileState> {
       state = state.copyWith(statusMessage: '正在恢复 ${files.length} 个项目…');
       await _api!.fsRecycle(files.map((file) => file.id).toList());
       state = state.copyWith(statusMessage: '已恢复 ${files.length} 个项目');
+      await _invalidateFolderCaches(_currentParentID);
       await loadFiles(parentID: _currentParentID);
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
@@ -699,6 +728,7 @@ class FileNotifier extends StateNotifier<FileState> {
         completed += 1;
       }
       state = state.copyWith(statusMessage: '已上传 $completed 个文件');
+      await _invalidateFolderCaches(targetParentID);
       await loadFiles(parentID: _currentParentID);
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
@@ -713,6 +743,16 @@ class FileNotifier extends StateNotifier<FileState> {
         files.map((file) => file.id).toList(),
         parentID: parentID,
       );
+      await FileMetadataCache.updateFolderChildren(
+        _currentParentID,
+        removeIDs: files.map((file) => file.id),
+      );
+      await FileMetadataCache.updateFolderChildren(
+        parentID,
+        addOrReplace: files,
+      );
+      await _invalidateListCache(_currentParentID);
+      if (parentID != _currentParentID) await _invalidateListCache(parentID);
       state = state.copyWith(statusMessage: '移动完成', selectedIDs: {});
       await loadFiles(parentID: _currentParentID);
     } catch (e) {
@@ -726,6 +766,20 @@ class FileNotifier extends StateNotifier<FileState> {
 
   void clearStatus() {
     state = state.copyWith(clearStatus: true);
+  }
+
+  Future<void> _invalidateFolderCaches(String? parentID) async {
+    await FileMetadataCache.updateFolderChildren(parentID, invalidate: true);
+    await _invalidateListCache(parentID);
+  }
+
+  Future<void> _invalidateListCache(String? parentID) async {
+    final raw = StorageManager.get<dynamic>(StorageKeys.fileListCache);
+    if (raw is! Map) return;
+    final cache = Map<dynamic, dynamic>.from(raw);
+    final prefix = '${state.section.name}:${parentID ?? 'root'}:';
+    cache.removeWhere((key, _) => key.toString().startsWith(prefix));
+    await StorageManager.set(StorageKeys.fileListCache, cache);
   }
 
   // ── Helpers ─────────────────────────────────────────────────────
