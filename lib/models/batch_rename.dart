@@ -123,7 +123,7 @@ List<BatchRenamePreview> buildRenamePreviews(
   }
   final existing = <String, Set<String>>{};
   for (final file in files) {
-    final key = _destinationKey(file.cloudPath, file.name);
+    final key = _destinationKey(file, file.name);
     (existing[key] ??= <String>{}).add(file.id);
   }
   final reserved = <String, Set<String>>{
@@ -131,7 +131,7 @@ List<BatchRenamePreview> buildRenamePreviews(
   };
   final proposedCounts = <String, int>{};
   for (final item in values.where((item) => item.applicable)) {
-    final key = _destinationKey(item.file.cloudPath, item.newName);
+    final key = _destinationKey(item.file, item.newName);
     proposedCounts[key] = (proposedCounts[key] ?? 0) + 1;
   }
   final result = <BatchRenamePreview>[];
@@ -141,7 +141,7 @@ List<BatchRenamePreview> buildRenamePreviews(
       continue;
     }
     var targetName = item.newName;
-    var targetKey = _destinationKey(item.file.cloudPath, targetName);
+    var targetKey = _destinationKey(item.file, targetName);
     if (conflictStrategy == BatchRenameConflictStrategy.reject &&
         proposedCounts[targetKey]! > 1) {
       result.add(
@@ -160,7 +160,7 @@ List<BatchRenamePreview> buildRenamePreviews(
       var index = 2;
       do {
         targetName = _appendIndex(item.newName, index++);
-        targetKey = _destinationKey(item.file.cloudPath, targetName);
+        targetKey = _destinationKey(item.file, targetName);
       } while (conflicts());
     }
     if (conflicts()) {
@@ -188,7 +188,12 @@ String _appendIndex(String name, int index) {
 }
 
 /// Collision scope is a single cloud directory, never the whole drive.
-String _destinationKey(String path, String name) {
+String _destinationKey(CloudFile file, String name) {
+  final parentID = file.parentID?.trim();
+  if (parentID != null && parentID.isNotEmpty) {
+    return 'id:$parentID/${name.toLowerCase()}';
+  }
+  final path = file.cloudPath;
   final separator = path.lastIndexOf('/');
   final parent = separator < 0 ? '' : path.substring(0, separator);
   return '${parent.toLowerCase()}/${name.toLowerCase()}';

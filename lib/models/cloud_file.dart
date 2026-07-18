@@ -35,6 +35,11 @@ class CloudFile {
   final int? subFileCount;
   final String modifiedAt;
   final String cloudPath;
+
+  /// Stable parent directory ID from the cloud API, used for directory-scoped
+  /// operations even when the API omits a full display path.
+  final String? parentID;
+  final String? fullParentIDs;
   final int fileType;
 
   const CloudFile({
@@ -47,6 +52,8 @@ class CloudFile {
     this.subFileCount,
     this.modifiedAt = '',
     this.cloudPath = '',
+    this.parentID,
+    this.fullParentIDs,
     this.fileType = 0,
   });
 
@@ -104,6 +111,8 @@ class CloudFile {
     int? subFileCount,
     String? modifiedAt,
     String? cloudPath,
+    String? parentID,
+    String? fullParentIDs,
     int? fileType,
   }) {
     return CloudFile(
@@ -116,6 +125,8 @@ class CloudFile {
       subFileCount: subFileCount ?? this.subFileCount,
       modifiedAt: modifiedAt ?? this.modifiedAt,
       cloudPath: cloudPath ?? this.cloudPath,
+      parentID: parentID ?? this.parentID,
+      fullParentIDs: fullParentIDs ?? this.fullParentIDs,
       fileType: fileType ?? this.fileType,
     );
   }
@@ -191,6 +202,12 @@ class CloudFile {
       cloudPath:
           _extractString(json, ['location', 'path', 'fullPath']) ??
           name.toString(),
+      parentID: _extractString(json, ['parentId', 'parent_id', 'parentID']),
+      fullParentIDs: _extractString(json, [
+        'fullParentIds',
+        'fullParentIDs',
+        'full_parent_ids',
+      ]),
       fileType: type,
     );
   }
@@ -205,6 +222,8 @@ class CloudFile {
     'subFileCount': subFileCount,
     'updateTime': modifiedAt,
     'path': cloudPath,
+    'parentId': parentID,
+    'fullParentIds': fullParentIDs,
     'fileType': fileType,
   };
 

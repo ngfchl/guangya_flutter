@@ -770,6 +770,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
       const BatchRenameRule(id: 'rule-0', kind: BatchRenameRuleKind.replace),
     ];
     _selectedIDs.addAll(_candidates.map((file) => file.id));
+    Future.microtask(_enrichCandidatePaths);
   }
 
   @override
@@ -803,6 +804,61 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
     if (source.isEmpty) return '/$value';
     if (value == source || value.startsWith('$source/')) return '/$value';
     return '/$source/$value';
+  }
+
+  Future<void> _enrichCandidatePaths() async {
+    final api = ref.read(authProvider.notifier).api;
+    final detailCache = <String, Future<CloudFile?>>{};
+
+    Future<CloudFile?> loadFolder(String id) =>
+        detailCache.putIfAbsent(id, () async {
+          try {
+            final detail = await api.fsDetail(id);
+            final values = _extractCandidates(detail);
+            return values.cast<CloudFile?>().firstWhere(
+              (file) => file?.id == id,
+              orElse: () => null,
+            );
+          } catch (_) {
+            return null;
+          }
+        });
+
+    Future<String?> resolvePath(CloudFile file) async {
+      final names = <String>[file.name];
+      var parentID = file.parentID?.trim();
+      final visited = <String>{file.id};
+      while (parentID != null && parentID.isNotEmpty && visited.add(parentID)) {
+        if (parentID == _sourceID && _sourceLabel != '云盘根目录') {
+          names.insertAll(0, _sourceLabel.split(' / '));
+          break;
+        }
+        final folder = await loadFolder(parentID);
+        if (folder == null) return null;
+        names.insert(0, folder.name);
+        parentID = folder.parentID?.trim();
+      }
+      return '/${names.join('/')}';
+    }
+
+    final paths = await Future.wait(
+      _candidates.map((file) async => (file, await resolvePath(file))),
+    );
+    if (!mounted) return;
+    setState(() {
+      final resolved = <String, String>{
+        for (final entry in paths)
+          if (entry.$2 != null) entry.$1.id: entry.$2!,
+      };
+      if (resolved.isEmpty) return;
+      _candidates = _candidates
+          .map(
+            (file) => resolved.containsKey(file.id)
+                ? file.copyWith(cloudPath: resolved[file.id])
+                : file,
+          )
+          .toList();
+    });
   }
 
   Future<void> _pickSource() async {

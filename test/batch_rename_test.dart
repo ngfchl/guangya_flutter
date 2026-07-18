@@ -58,4 +58,20 @@ void main() {
     ]);
     expect(previews.every((item) => item.applicable), isTrue);
   });
+
+  test(
+    'uses parent IDs for collision scope when display paths are incomplete',
+    () {
+      final previews = buildRenamePreviews(
+        [
+          _file('1', 'Episode 01.mkv').copyWith(parentID: 'folder-a'),
+          _file('2', 'Episode 02.mkv').copyWith(parentID: 'folder-b'),
+        ],
+        [collapseNames],
+        preserveExtension: true,
+      );
+
+      expect(previews.every((item) => item.applicable), isTrue);
+    },
+  );
 }
