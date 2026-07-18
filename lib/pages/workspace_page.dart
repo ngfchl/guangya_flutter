@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
@@ -1354,6 +1355,9 @@ class _PrimaryFilePane extends ConsumerWidget {
         child: _FilePaneCollection(
           viewMode: viewMode,
           itemCount: files.length,
+          itemIDs: files.map((file) => file.id).toList(growable: false),
+          selectedIDs: state.selectedIDs,
+          onMarqueeSelectionChanged: notifier.setSelection,
           itemBuilder: (context, index) {
             final file = files[index];
             final selected = state.selectedIDs.contains(file.id);
@@ -1465,41 +1469,169 @@ class _PaneViewToggle extends StatelessWidget {
   }
 }
 
-class _FilePaneCollection extends StatelessWidget {
+class _FilePaneCollection extends StatefulWidget {
   final _FileViewMode viewMode;
   final int itemCount;
   final IndexedWidgetBuilder itemBuilder;
+  final List<String>? itemIDs;
+  final Set<String>? selectedIDs;
+  final ValueChanged<Set<String>>? onMarqueeSelectionChanged;
 
   const _FilePaneCollection({
     required this.viewMode,
     required this.itemCount,
     required this.itemBuilder,
+    this.itemIDs,
+    this.selectedIDs,
+    this.onMarqueeSelectionChanged,
   });
 
   @override
-  Widget build(BuildContext context) {
-    if (viewMode == _FileViewMode.list) {
-      return ListView.builder(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.zero,
-        itemCount: itemCount,
-        itemBuilder: itemBuilder,
-      );
+  State<_FilePaneCollection> createState() => _FilePaneCollectionState();
+}
+
+/// The desktop marquee used by Finder: dragging in a file pane selects every
+/// visible item intersected by the rectangle. Command/Ctrl preserves selection.
+class _FilePaneCollectionState extends State<_FilePaneCollection> {
+  final _itemKeys = <int, GlobalKey>{};
+  Offset? _start;
+  Offset? _current;
+  Set<String> _selectionBefore = const {};
+  bool _additive = false;
+
+  bool get _canMarquee =>
+      widget.itemIDs != null &&
+      widget.selectedIDs != null &&
+      widget.onMarqueeSelectionChanged != null;
+
+  GlobalKey _itemKey(int index) => _itemKeys.putIfAbsent(
+    index,
+    () => GlobalKey(debugLabel: 'file-item-$index'),
+  );
+
+  void _pointerDown(PointerDownEvent event) {
+    if (!_canMarquee || event.kind != PointerDeviceKind.mouse) return;
+    _start = event.localPosition;
+    _current = event.localPosition;
+    _selectionBefore = Set<String>.from(widget.selectedIDs!);
+    _additive =
+        _hasPressedKey(LogicalKeyboardKey.metaLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.metaRight) ||
+        _hasPressedKey(LogicalKeyboardKey.controlLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.controlRight);
+  }
+
+  void _pointerMove(PointerMoveEvent event) {
+    final start = _start;
+    if (start == null ||
+        !_canMarquee ||
+        (event.localPosition - start).distance < 4) {
+      return;
     }
-    assert(viewMode == _FileViewMode.grid);
-    return GridView.builder(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(10),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 168,
-        mainAxisExtent: 132,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-      ),
-      itemCount: itemCount,
-      itemBuilder: itemBuilder,
+    setState(() => _current = event.localPosition);
+    final pane = context.findRenderObject() as RenderBox?;
+    if (pane == null) return;
+    final selection = Rect.fromPoints(start, event.localPosition);
+    final hitIDs = <String>{};
+    for (var index = 0; index < widget.itemCount; index++) {
+      final itemBox =
+          _itemKeys[index]?.currentContext?.findRenderObject() as RenderBox?;
+      if (itemBox == null) continue;
+      final origin = pane.globalToLocal(itemBox.localToGlobal(Offset.zero));
+      if (selection.overlaps(origin & itemBox.size)) {
+        hitIDs.add(widget.itemIDs![index]);
+      }
+    }
+    widget.onMarqueeSelectionChanged!(
+      _additive ? {..._selectionBefore, ...hitIDs} : hitIDs,
     );
   }
+
+  void _pointerEnd(PointerEvent event) {
+    if (_start == null) return;
+    setState(() {
+      _start = null;
+      _current = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final content = widget.viewMode == _FileViewMode.list
+        ? ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            itemCount: widget.itemCount,
+            itemBuilder: (context, index) => KeyedSubtree(
+              key: _itemKey(index),
+              child: widget.itemBuilder(context, index),
+            ),
+          )
+        : GridView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(10),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 168,
+              mainAxisExtent: 132,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+            ),
+            itemCount: widget.itemCount,
+            itemBuilder: (context, index) => KeyedSubtree(
+              key: _itemKey(index),
+              child: widget.itemBuilder(context, index),
+            ),
+          );
+    final start = _start;
+    final current = _current;
+    final showMarquee =
+        start != null && current != null && (current - start).distance >= 4;
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _pointerDown,
+      onPointerMove: _pointerMove,
+      onPointerUp: _pointerEnd,
+      onPointerCancel: _pointerEnd,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          content,
+          if (showMarquee)
+            IgnorePointer(
+              child: CustomPaint(
+                painter: _MarqueeSelectionPainter(
+                  Rect.fromPoints(start, current),
+                  ShadTheme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MarqueeSelectionPainter extends CustomPainter {
+  final Rect rect;
+  final Color color;
+
+  const _MarqueeSelectionPainter(this.rect, this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(rect, Paint()..color = color.withValues(alpha: 0.12));
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..color = color.withValues(alpha: 0.9)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _MarqueeSelectionPainter oldDelegate) =>
+      oldDelegate.rect != rect || oldDelegate.color != color;
 }
 
 class _ColumnListing {
@@ -1508,7 +1640,8 @@ class _ColumnListing {
   final List<CloudFile> files;
   final bool isLoading;
   final String? errorMessage;
-  final String? selectedID;
+  final Set<String> selectedIDs;
+  final String? selectionAnchorID;
 
   const _ColumnListing({
     required this.parentID,
@@ -1516,7 +1649,8 @@ class _ColumnListing {
     this.files = const [],
     this.isLoading = false,
     this.errorMessage,
-    this.selectedID,
+    this.selectedIDs = const {},
+    this.selectionAnchorID,
   });
 
   _ColumnListing copyWith({
@@ -1524,7 +1658,8 @@ class _ColumnListing {
     bool? isLoading,
     String? errorMessage,
     bool clearError = false,
-    String? selectedID,
+    Set<String>? selectedIDs,
+    String? selectionAnchorID,
     bool clearSelection = false,
   }) {
     return _ColumnListing(
@@ -1533,7 +1668,12 @@ class _ColumnListing {
       files: files ?? this.files,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
-      selectedID: clearSelection ? null : (selectedID ?? this.selectedID),
+      selectedIDs: clearSelection
+          ? const {}
+          : (selectedIDs ?? this.selectedIDs),
+      selectionAnchorID: clearSelection
+          ? null
+          : (selectionAnchorID ?? this.selectionAnchorID),
     );
   }
 }
@@ -1617,7 +1757,10 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
       final folder = restoredPath[index];
       setState(() {
         final columns = _columns.toList();
-        columns[index] = columns[index].copyWith(selectedID: folder.id);
+        columns[index] = columns[index].copyWith(
+          selectedIDs: {folder.id},
+          selectionAnchorID: folder.id,
+        );
         columns.add(
           _ColumnListing(
             parentID: folder.id,
@@ -1694,7 +1837,10 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     setState(() {
       _path = List<CloudFile>.unmodifiable(path);
       final columns = _columns.take(index + 1).toList();
-      columns[index] = columns[index].copyWith(selectedID: folder.id);
+      columns[index] = columns[index].copyWith(
+        selectedIDs: {folder.id},
+        selectionAnchorID: folder.id,
+      );
       columns.add(
         _ColumnListing(
           parentID: folder.id,
@@ -1707,6 +1853,56 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     unawaited(_loadColumn(index + 1, generation: generation));
     _scrollToLatestColumn();
     _notifyPathChanged(path);
+  }
+
+  void _selectColumnFile(int columnIndex, CloudFile file) {
+    if (columnIndex >= _columns.length) return;
+    final column = _columns[columnIndex];
+    final index = column.files.indexWhere((item) => item.id == file.id);
+    if (index < 0) return;
+    final command =
+        _hasPressedKey(LogicalKeyboardKey.metaLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.metaRight) ||
+        _hasPressedKey(LogicalKeyboardKey.controlLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.controlRight);
+    final shift =
+        _hasPressedKey(LogicalKeyboardKey.shiftLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.shiftRight);
+    final selected = Set<String>.from(column.selectedIDs);
+    if (shift && column.selectionAnchorID != null) {
+      final anchor = column.files.indexWhere(
+        (item) => item.id == column.selectionAnchorID,
+      );
+      if (anchor >= 0) {
+        if (!command) selected.clear();
+        selected.addAll(
+          column.files
+              .sublist(
+                anchor < index ? anchor : index,
+                anchor > index ? anchor + 1 : index + 1,
+              )
+              .map((item) => item.id),
+        );
+      }
+    } else if (command) {
+      selected.contains(file.id)
+          ? selected.remove(file.id)
+          : selected.add(file.id);
+    } else {
+      selected
+        ..clear()
+        ..add(file.id);
+    }
+    setState(() {
+      final columns = _columns.toList();
+      columns[columnIndex] = column.copyWith(
+        selectedIDs: selected,
+        selectionAnchorID: file.id,
+      );
+      _columns = columns;
+    });
+    // A plain folder click in Finder column view reveals its children.
+    if (file.isDirectory && !command && !shift) _openFolder(columnIndex, file);
   }
 
   void _scrollToStart() {
@@ -1821,6 +2017,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
                       key: ValueKey('${_columns[index].parentID}-$index'),
                       column: _columns[index],
                       source: widget.source,
+                      onSelect: (file) => _selectColumnFile(index, file),
                       onOpenFolder: (folder) => _openFolder(index, folder),
                       onOpenFile: (file) => _openCloudFile(context, ref, file),
                       onMoveCloudFiles: (files, parentID) =>
@@ -1864,6 +2061,7 @@ class _ColumnPaneHeader extends StatelessWidget {
 class _FinderColumn extends StatefulWidget {
   final _ColumnListing column;
   final _PaneIdentity source;
+  final ValueChanged<CloudFile> onSelect;
   final ValueChanged<CloudFile> onOpenFolder;
   final ValueChanged<CloudFile> onOpenFile;
   final ValueChanged<CloudFile> onCopyFastTransfer;
@@ -1876,6 +2074,7 @@ class _FinderColumn extends StatefulWidget {
     super.key,
     required this.column,
     required this.source,
+    required this.onSelect,
     required this.onOpenFolder,
     required this.onOpenFile,
     required this.onCopyFastTransfer,
@@ -1974,7 +2173,9 @@ class _FinderColumnState extends State<_FinderColumn> {
                           itemCount: column.files.length,
                           itemBuilder: (context, index) {
                             final file = column.files[index];
-                            final selected = column.selectedID == file.id;
+                            final selected = column.selectedIDs.contains(
+                              file.id,
+                            );
                             final row = _FastTransferContextMenu(
                               file: file,
                               onCopyFastTransfer: () =>
@@ -1982,11 +2183,7 @@ class _FinderColumnState extends State<_FinderColumn> {
                               child: _FinderColumnItem(
                                 file: file,
                                 selected: selected,
-                                onTap: () {
-                                  if (file.isDirectory) {
-                                    widget.onOpenFolder(file);
-                                  }
-                                },
+                                onTap: () => widget.onSelect(file),
                                 onOpen: () {
                                   if (file.isDirectory) {
                                     widget.onOpenFolder(file);
@@ -1997,13 +2194,27 @@ class _FinderColumnState extends State<_FinderColumn> {
                               ),
                             );
                             return Draggable<_DraggedCloudFiles>(
-                              data: _DraggedCloudFiles([file], widget.source),
+                              data: _DraggedCloudFiles(
+                                selected
+                                    ? column.files
+                                          .where(
+                                            (item) => column.selectedIDs
+                                                .contains(item.id),
+                                          )
+                                          .toList()
+                                    : [file],
+                                widget.source,
+                              ),
                               feedback: _DragFeedback(label: file.name),
                               childWhenDragging: Opacity(
                                 opacity: 0.35,
                                 child: row,
                               ),
-                              child: row,
+                              child: _FolderMoveTarget(
+                                file: file,
+                                onMove: widget.onMoveCloudFiles,
+                                child: row,
+                              ),
                             );
                           },
                         ),
@@ -2205,6 +2416,8 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
   var _totalPages = 1;
   var _viewMode = _FileViewMode.list;
   var _detailGeneration = 0;
+  final _selectedIDs = <String>{};
+  String? _selectionAnchorID;
 
   @override
   void initState() {
@@ -2351,6 +2564,62 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
 
   String? get _currentParentID => _path.isEmpty ? null : _path.last.id;
 
+  void _selectWithModifiers(CloudFile file) {
+    final index = _files.indexWhere((item) => item.id == file.id);
+    if (index < 0) return;
+    final command =
+        _hasPressedKey(LogicalKeyboardKey.metaLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.metaRight) ||
+        _hasPressedKey(LogicalKeyboardKey.controlLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.controlRight);
+    final shift =
+        _hasPressedKey(LogicalKeyboardKey.shiftLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.shiftRight);
+    final selected = Set<String>.from(_selectedIDs);
+    if (shift && _selectionAnchorID != null) {
+      final anchor = _files.indexWhere((item) => item.id == _selectionAnchorID);
+      if (anchor >= 0) {
+        final range = _files
+            .sublist(
+              anchor < index ? anchor : index,
+              anchor > index ? anchor + 1 : index + 1,
+            )
+            .map((item) => item.id);
+        if (!command) selected.clear();
+        selected.addAll(range);
+      }
+    } else if (command) {
+      selected.contains(file.id)
+          ? selected.remove(file.id)
+          : selected.add(file.id);
+      _selectionAnchorID = file.id;
+    } else {
+      selected
+        ..clear()
+        ..add(file.id);
+      _selectionAnchorID = file.id;
+    }
+    setState(() {
+      _selectedIDs
+        ..clear()
+        ..addAll(selected);
+    });
+  }
+
+  void _open(CloudFile file) {
+    if (file.isDirectory) {
+      setState(() {
+        _path.add(file);
+        _page = 0;
+        _selectedIDs.clear();
+        _selectionAnchorID = null;
+      });
+      unawaited(_load(parentID: file.id));
+    } else {
+      _openCloudFile(context, ref, file);
+    }
+  }
+
   Future<void> _moveCloudFiles(List<CloudFile> files, String? parentID) async {
     if (files.isEmpty) return;
     setState(() {
@@ -2480,32 +2749,21 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
         child: _FilePaneCollection(
           viewMode: _viewMode,
           itemCount: _files.length,
+          itemIDs: _files.map((file) => file.id).toList(growable: false),
+          selectedIDs: _selectedIDs,
+          onMarqueeSelectionChanged: (ids) => setState(() {
+            _selectedIDs
+              ..clear()
+              ..addAll(ids);
+          }),
           itemBuilder: (context, index) {
             final file = _files[index];
+            final selected = _selectedIDs.contains(file.id);
             final row = FileListTile(
               file: file,
-              onSelect: () {
-                if (file.isDirectory) {
-                  setState(() {
-                    _path.add(file);
-                    _page = 0;
-                  });
-                  _load(parentID: file.id);
-                } else {
-                  _openCloudFile(context, ref, file);
-                }
-              },
-              onOpen: () {
-                if (file.isDirectory) {
-                  setState(() {
-                    _path.add(file);
-                    _page = 0;
-                  });
-                  _load(parentID: file.id);
-                } else {
-                  _openCloudFile(context, ref, file);
-                }
-              },
+              isSelected: selected,
+              onSelect: () => _selectWithModifiers(file),
+              onOpen: () => _open(file),
               onCopy: () =>
                   ref.read(fileProvider.notifier).copyToClipboard([file]),
               onCut: () =>
@@ -2521,35 +2779,51 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
             );
             if (_viewMode == _FileViewMode.list) {
               return Draggable<_DraggedCloudFiles>(
-                data: _DraggedCloudFiles([file], _PaneIdentity.secondary),
+                data: _DraggedCloudFiles(
+                  selected
+                      ? _files
+                            .where((item) => _selectedIDs.contains(item.id))
+                            .toList()
+                      : [file],
+                  _PaneIdentity.secondary,
+                ),
                 feedback: _DragFeedback(label: file.name),
                 childWhenDragging: Opacity(opacity: 0.35, child: row),
-                child: row,
+                child: _FolderMoveTarget(
+                  file: file,
+                  onMove: _moveCloudFiles,
+                  child: row,
+                ),
               );
-            }
-            void open() {
-              if (file.isDirectory) {
-                setState(() {
-                  _path.add(file);
-                  _page = 0;
-                });
-                _load(parentID: file.id);
-              } else {
-                _openCloudFile(context, ref, file);
-              }
             }
 
             final card = _FastTransferContextMenu(
               file: file,
               onCopyFastTransfer: () =>
                   ref.read(fileProvider.notifier).copyFastTransferJSON(file),
-              child: _FileGridCard(file: file, onSelect: open, onOpen: open),
+              child: _FileGridCard(
+                file: file,
+                isSelected: selected,
+                onSelect: () => _selectWithModifiers(file),
+                onOpen: () => _open(file),
+              ),
             );
             return Draggable<_DraggedCloudFiles>(
-              data: _DraggedCloudFiles([file], _PaneIdentity.secondary),
+              data: _DraggedCloudFiles(
+                selected
+                    ? _files
+                          .where((item) => _selectedIDs.contains(item.id))
+                          .toList()
+                    : [file],
+                _PaneIdentity.secondary,
+              ),
               feedback: _DragFeedback(label: file.name),
               childWhenDragging: Opacity(opacity: 0.35, child: card),
-              child: card,
+              child: _FolderMoveTarget(
+                file: file,
+                onMove: _moveCloudFiles,
+                child: card,
+              ),
             );
           },
         ),

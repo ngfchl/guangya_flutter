@@ -542,6 +542,11 @@ class FileNotifier extends StateNotifier<FileState> {
     state = state.copyWith(selectedIDs: {});
   }
 
+  /// Replaces the active desktop selection, used by Finder-style marquee drag.
+  void setSelection(Set<String> ids) {
+    state = state.copyWith(selectedIDs: Set<String>.from(ids));
+  }
+
   void setSort(FileSort sort) {
     SortDirection direction;
     if (state.serverSort == sort) {

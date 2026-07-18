@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -30,6 +31,64 @@ class FileSearchResultsPage extends ConsumerStatefulWidget {
 class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
   late Future<List<CloudFile>> _results = _search();
   final _selectedIDs = <String>{};
+  String? _selectionAnchorID;
+
+  bool get _commandPressed =>
+      HardwareKeyboard.instance.logicalKeysPressed.contains(
+        LogicalKeyboardKey.metaLeft,
+      ) ||
+      HardwareKeyboard.instance.logicalKeysPressed.contains(
+        LogicalKeyboardKey.metaRight,
+      ) ||
+      HardwareKeyboard.instance.logicalKeysPressed.contains(
+        LogicalKeyboardKey.controlLeft,
+      ) ||
+      HardwareKeyboard.instance.logicalKeysPressed.contains(
+        LogicalKeyboardKey.controlRight,
+      );
+
+  bool get _shiftPressed =>
+      HardwareKeyboard.instance.logicalKeysPressed.contains(
+        LogicalKeyboardKey.shiftLeft,
+      ) ||
+      HardwareKeyboard.instance.logicalKeysPressed.contains(
+        LogicalKeyboardKey.shiftRight,
+      );
+
+  void _selectFile(List<CloudFile> files, CloudFile file) {
+    final index = files.indexWhere((item) => item.id == file.id);
+    if (index < 0) return;
+    final selected = Set<String>.from(_selectedIDs);
+    if (_shiftPressed && _selectionAnchorID != null) {
+      final anchor = files.indexWhere((item) => item.id == _selectionAnchorID);
+      if (anchor >= 0) {
+        if (!_commandPressed) selected.clear();
+        selected.addAll(
+          files
+              .sublist(
+                anchor < index ? anchor : index,
+                anchor > index ? anchor + 1 : index + 1,
+              )
+              .map((item) => item.id),
+        );
+      }
+    } else if (_commandPressed) {
+      selected.contains(file.id)
+          ? selected.remove(file.id)
+          : selected.add(file.id);
+      _selectionAnchorID = file.id;
+    } else {
+      selected
+        ..clear()
+        ..add(file.id);
+      _selectionAnchorID = file.id;
+    }
+    setState(() {
+      _selectedIDs
+        ..clear()
+        ..addAll(selected);
+    });
+  }
 
   @override
   void didUpdateWidget(covariant FileSearchResultsPage oldWidget) {
@@ -178,11 +237,7 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                     return FileListTile(
                       file: file,
                       isSelected: _selectedIDs.contains(file.id),
-                      onSelect: () => setState(() {
-                        _selectedIDs.contains(file.id)
-                            ? _selectedIDs.remove(file.id)
-                            : _selectedIDs.add(file.id);
-                      }),
+                      onSelect: () => _selectFile(files, file),
                       onOpen: () => notifier.downloadFile(file),
                       onCopy: () => notifier.copyToClipboard([file]),
                       onCut: () => notifier.cutToClipboard([file]),
