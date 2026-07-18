@@ -249,6 +249,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     state = state.copyWith(searchQuery: query);
   }
 
+  Future<List<MediaLibraryItem>> searchAllItems(String query) async {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) return const [];
+    return _loadAllItems().where((item) {
+        return item.title.toLowerCase().contains(normalized) ||
+            item.file.name.toLowerCase().contains(normalized) ||
+            item.file.cloudPath.toLowerCase().contains(normalized);
+      }).toList()
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+  }
+
   void clearError() {
     state = state.copyWith(clearError: true);
   }

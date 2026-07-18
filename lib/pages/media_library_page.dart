@@ -545,61 +545,54 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               child: const Text('创建'),
             ),
           ],
-          child: Material(
-            type: MaterialType.transparency,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ShadInput(
-                  controller: nameController,
-                  placeholder: const Text('媒体库名称'),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<MediaLibraryKind>(
-                        initialValue: kind,
-                        decoration: const InputDecoration(
-                          labelText: '类型',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: MediaLibraryKind.values
-                            .map(
-                              (value) => DropdownMenuItem(
-                                value: value,
-                                child: Text(value.title),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          if (value != null) {
-                            setDialogState(() => kind = value);
-                          }
-                        },
-                      ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ShadInput(
+                controller: nameController,
+                placeholder: const Text('媒体库名称'),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: ShadSelect<MediaLibraryKind>(
+                      initialValue: kind,
+                      placeholder: const Text('媒体类型'),
+                      selectedOptionBuilder: (context, value) =>
+                          Text(value.title),
+                      options: [
+                        for (final value in MediaLibraryKind.values)
+                          ShadOption(value: value, child: Text(value.title)),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() => kind = value);
+                        }
+                      },
                     ),
-                    const SizedBox(width: 10),
-                    SizedBox(
-                      width: 120,
-                      child: ShadInput(
-                        controller: minSizeController,
-                        placeholder: const Text('最小 MB'),
-                      ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 120,
+                    child: ShadInput(
+                      controller: minSizeController,
+                      keyboardType: TextInputType.number,
+                      placeholder: const Text('最小 MB'),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: ShadCheckbox(
                   value: recursive,
-                  onChanged: (value) =>
-                      setDialogState(() => recursive = value ?? true),
-                  title: const Text('递归扫描子目录'),
-                  controlAffinity: ListTileControlAffinity.leading,
+                  label: const Text('递归扫描子目录'),
+                  onChanged: (value) => setDialogState(() => recursive = value),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -676,44 +669,56 @@ class _LibraryRow extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: selected ? cs.primary : cs.border),
       ),
-      child: ListTile(
-        dense: true,
-        leading: Icon(
-          Icons.video_library_rounded,
-          size: 20,
-          color: selected ? cs.primary : cs.mutedForeground,
-        ),
-        title: Text(
-          library.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            color: cs.foreground,
-          ),
-        ),
-        subtitle: Text(
-          '${library.kind.title} · ${library.rootPath}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-        ),
-        trailing: PopupMenuButton<String>(
-          tooltip: '更多',
-          icon: Icon(
-            Icons.more_horiz_rounded,
-            size: 18,
-            color: cs.mutedForeground,
-          ),
-          onSelected: (value) {
-            if (value == 'delete') onDelete();
-          },
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'delete', child: Text('删除')),
-          ],
-        ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
         onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+          child: Row(
+            children: [
+              Icon(
+                Icons.video_library_rounded,
+                size: 20,
+                color: selected ? cs.primary : cs.mutedForeground,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      library.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                        color: cs.foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${library.kind.title} · ${library.rootPath}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                    ),
+                  ],
+                ),
+              ),
+              ShadTooltip(
+                builder: (_) => const Text('删除媒体库'),
+                child: ShadButton.destructive(
+                  size: ShadButtonSize.sm,
+                  onPressed: onDelete,
+                  child: const Icon(Icons.delete_outline_rounded, size: 15),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

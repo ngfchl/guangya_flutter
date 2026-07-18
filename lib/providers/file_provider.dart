@@ -256,6 +256,16 @@ class FileNotifier extends StateNotifier<FileState> {
   }
 
   void navigateToPathIndex(int index) {
+    if (index < 0) {
+      state = state.copyWith(
+        folderPath: const [],
+        currentPage: 0,
+        selectedIDs: {},
+      );
+      loadFiles(parentID: null);
+      return;
+    }
+    if (index >= state.folderPath.length) return;
     final newPath = state.folderPath.sublist(0, index + 1);
     state = state.copyWith(
       folderPath: newPath,
@@ -443,7 +453,8 @@ class FileNotifier extends StateNotifier<FileState> {
       for (final file in files) {
         if (!await file.exists()) continue;
         state = state.copyWith(
-          statusMessage: '正在上传 ${completed + 1}/${files.length}：${file.uri.pathSegments.last}',
+          statusMessage:
+              '正在上传 ${completed + 1}/${files.length}：${file.uri.pathSegments.last}',
         );
         await _api!.fileUpload(file, parentID: targetParentID);
         completed += 1;
@@ -459,7 +470,10 @@ class FileNotifier extends StateNotifier<FileState> {
     if (_api == null || files.isEmpty) return;
     state = state.copyWith(statusMessage: '正在移动 ${files.length} 个项目…');
     try {
-      await _api!.fsMove(files.map((file) => file.id).toList(), parentID: parentID);
+      await _api!.fsMove(
+        files.map((file) => file.id).toList(),
+        parentID: parentID,
+      );
       state = state.copyWith(statusMessage: '移动完成', selectedIDs: {});
       await loadFiles(parentID: _currentParentID);
     } catch (e) {

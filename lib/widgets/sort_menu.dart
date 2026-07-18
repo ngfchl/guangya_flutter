@@ -17,73 +17,43 @@ class SortMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-
-    return ShadButton.ghost(
-      onPressed: () => _showSortMenu(context),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.sort_rounded, size: 16, color: cs.mutedForeground),
-          const SizedBox(width: 4),
-          Text('排序', style: TextStyle(fontSize: 13, color: cs.mutedForeground)),
-        ],
-      ),
-    );
-  }
-
-  void _showSortMenu(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Column(
+    return SizedBox(
+      width: 124,
+      child: ShadSelect<FileSort>(
+        initialValue: currentSort,
+        selectedOptionBuilder: (context, value) => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            Icon(Icons.sort_rounded, size: 15, color: cs.mutedForeground),
+            const SizedBox(width: 5),
+            Text(
+              value.title,
+              style: TextStyle(fontSize: 12, color: cs.foreground),
+            ),
+          ],
+        ),
+        options: [
+          for (final sort in FileSort.values)
+            ShadOption(
+              value: sort,
               child: Row(
                 children: [
-                  Text('排序方式',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.foreground)),
-                  const Spacer(),
-                  Text('当前: ${currentSort.title}',
-                      style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
+                  Expanded(child: Text(sort.title)),
+                  if (currentSort == sort)
+                    Icon(
+                      currentDirection == SortDirection.ascending
+                          ? Icons.arrow_upward_rounded
+                          : Icons.arrow_downward_rounded,
+                      size: 14,
+                      color: cs.primary,
+                    ),
                 ],
               ),
             ),
-            const ShadSeparator.horizontal(),
-            for (final sort in FileSort.values)
-              ListTile(
-                dense: true,
-                leading: currentSort == sort
-                    ? Icon(Icons.check_rounded, size: 16, color: cs.primary)
-                    : const SizedBox(width: 16),
-                title: Text(
-                  sort.title,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: currentSort == sort ? FontWeight.w600 : FontWeight.normal,
-                    color: currentSort == sort ? cs.primary : cs.foreground,
-                  ),
-                ),
-                trailing: currentSort == sort
-                    ? Icon(
-                        currentDirection == SortDirection.ascending
-                            ? Icons.arrow_upward_rounded
-                            : Icons.arrow_downward_rounded,
-                        size: 14,
-                        color: cs.primary,
-                      )
-                    : null,
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                  onSortChanged(sort);
-                },
-              ),
-          ],
-        ),
+        ],
+        onChanged: (value) {
+          if (value != null) onSortChanged(value);
+        },
       ),
     );
   }

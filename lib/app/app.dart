@@ -39,7 +39,9 @@ class GuangyaApp extends ConsumerWidget {
       darkTheme: darkTheme,
       themeMode: themeState.themeMode,
       home: auth.isLoading
-          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+          ? const Scaffold(
+              body: Center(child: SizedBox(width: 220, child: ShadProgress())),
+            )
           : auth.isSignedIn
           ? const WorkspacePage()
           : const LoginPage(),

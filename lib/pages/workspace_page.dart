@@ -14,12 +14,13 @@ import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/breadcrumb_bar.dart';
-import '../widgets/file_icon.dart';
 import '../widgets/file_list_tile.dart';
 import '../widgets/side_panel.dart';
 import '../widgets/sort_menu.dart';
 import 'media_library_page.dart';
+import 'search_results_page.dart';
 import 'settings_page.dart';
+import 'workspace_tools_page.dart';
 
 enum WorkspaceMode { cloud, media }
 
@@ -47,8 +48,9 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   WorkspaceMode _mode = WorkspaceMode.cloud;
   bool _isSidePanelOpen = false;
   bool _searchOpen = false;
-  String _cloudSearchQuery = '';
-  String _mediaSearchQuery = '';
+  String? _fileSearchQuery;
+  String? _mediaSearchQuery;
+  WorkspaceTool? _activeTool;
 
   @override
   void dispose() {
@@ -77,10 +79,12 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                         onSettings: () => _showSettings(context),
                         onSignOut: () =>
                             ref.read(authProvider.notifier).signOut(),
+                        onTool: (tool) => setState(() => _activeTool = tool),
                       )
                     : _MediaSidebar(
                         onCreate: () =>
                             MediaLibraryPage.showCreateDialog(context, ref),
+                        onTool: (tool) => setState(() => _activeTool = tool),
                       ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -102,24 +106,20 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                         searchOpen: _searchOpen,
                         onSearch: (value) {
                           final query = value.trim();
+                          if (query.isEmpty) return;
                           if (_mode == WorkspaceMode.media) {
                             setState(() => _mediaSearchQuery = query);
                             ref
                                 .read(mediaLibraryProvider.notifier)
                                 .setSearchQuery(query);
                           } else {
-                            setState(() => _cloudSearchQuery = query);
+                            setState(() => _fileSearchQuery = query);
                           }
                         },
                         onToggleSearch: () {
                           setState(() => _searchOpen = !_searchOpen);
                           if (!_searchOpen) {
                             _searchController.clear();
-                            _cloudSearchQuery = '';
-                            _mediaSearchQuery = '';
-                            ref
-                                .read(mediaLibraryProvider.notifier)
-                                .setSearchQuery('');
                           } else {
                             WidgetsBinding.instance.addPostFrameCallback((_) {
                               _searchFocusNode.requestFocus();
@@ -129,10 +129,49 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       ),
                       const SizedBox(height: 14),
                       Expanded(
-                        child: _mode == WorkspaceMode.cloud
+                        child: _activeTool != null
+                            ? OS26Glass(
+                                radius: 18,
+                                opacity: 0.42,
+                                padding: EdgeInsets.zero,
+                                child: WorkspaceToolsPage(
+                                  tool: _activeTool!,
+                                  onClose: () =>
+                                      setState(() => _activeTool = null),
+                                ),
+                              )
+                            : _fileSearchQuery != null
+                            ? OS26Glass(
+                                radius: 18,
+                                opacity: 0.42,
+                                padding: EdgeInsets.zero,
+                                child: FileSearchResultsPage(
+                                  query: _fileSearchQuery!,
+                                  onClose: () => setState(() {
+                                    _fileSearchQuery = null;
+                                    _searchController.clear();
+                                  }),
+                                ),
+                              )
+                            : _mediaSearchQuery != null
+                            ? OS26Glass(
+                                radius: 18,
+                                opacity: 0.42,
+                                padding: EdgeInsets.zero,
+                                child: MediaSearchResultsPage(
+                                  query: _mediaSearchQuery!,
+                                  onClose: () => setState(() {
+                                    _mediaSearchQuery = null;
+                                    _searchController.clear();
+                                    ref
+                                        .read(mediaLibraryProvider.notifier)
+                                        .setSearchQuery('');
+                                  }),
+                                ),
+                              )
+                            : _mode == WorkspaceMode.cloud
                             ? _CloudWorkspace(
                                 state: fp,
-                                searchQuery: _cloudSearchQuery,
                                 sidePanelOpen: _isSidePanelOpen,
                                 onToggleSidePanel: () => setState(
                                   () => _isSidePanelOpen = !_isSidePanelOpen,
@@ -144,9 +183,6 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                                 padding: EdgeInsets.zero,
                                 child: MediaLibraryPage(
                                   showLibrarySidebar: false,
-                                  searchTitle: _mediaSearchQuery.isEmpty
-                                      ? null
-                                      : '影视资源搜索：$_mediaSearchQuery',
                                 ),
                               ),
                       ),
@@ -230,7 +266,11 @@ class _TopBar extends StatelessWidget {
               child: searchOpen
                   ? Row(
                       children: [
-                        Icon(Icons.search_rounded, size: 18, color: cs.foreground),
+                        Icon(
+                          Icons.search_rounded,
+                          size: 18,
+                          color: cs.foreground,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: TextField(
@@ -338,12 +378,14 @@ class _CloudSidebar extends StatelessWidget {
   final ValueChanged<WorkspaceSection> onSection;
   final VoidCallback onSettings;
   final VoidCallback onSignOut;
+  final ValueChanged<WorkspaceTool> onTool;
 
   const _CloudSidebar({
     required this.state,
     required this.onSection,
     required this.onSettings,
     required this.onSignOut,
+    required this.onTool,
   });
 
   @override
@@ -381,19 +423,19 @@ class _CloudSidebar extends StatelessWidget {
                     icon: Icons.manage_search_rounded,
                     label: '文件扫描与清理',
                     selected: false,
-                    onTap: () {},
+                    onTap: () => onTool(WorkspaceTool.scan),
                   ),
                   _SidebarTile(
                     icon: Icons.text_fields_rounded,
                     label: '批量重命名',
                     selected: false,
-                    onTap: () {},
+                    onTap: () => onTool(WorkspaceTool.rename),
                   ),
                   _SidebarTile(
                     icon: Icons.bolt_rounded,
                     label: '秒传工具',
                     selected: false,
-                    onTap: () {},
+                    onTap: () => onTool(WorkspaceTool.fastTransfer),
                   ),
                 ],
               ),
@@ -446,8 +488,9 @@ class _CloudSidebar extends StatelessWidget {
 
 class _MediaSidebar extends ConsumerWidget {
   final VoidCallback onCreate;
+  final ValueChanged<WorkspaceTool> onTool;
 
-  const _MediaSidebar({required this.onCreate});
+  const _MediaSidebar({required this.onCreate, required this.onTool});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -472,14 +515,14 @@ class _MediaSidebar extends ConsumerWidget {
               icon: Icons.home_rounded,
               label: '首页',
               selected: true,
-              onTap: () {},
+              onTap: () => onTool(WorkspaceTool.tmdb),
             ),
             _SidebarTile(
               icon: Icons.movie_creation_rounded,
               label: '电影',
               count: state.statistics.movies,
               selected: false,
-              onTap: () {},
+              onTap: () => onTool(WorkspaceTool.tmdb),
             ),
             _SidebarTile(
               icon: Icons.live_tv_rounded,
@@ -527,13 +570,13 @@ class _MediaSidebar extends ConsumerWidget {
               icon: Icons.auto_fix_high_rounded,
               label: 'TMDB 整理',
               selected: false,
-              onTap: () {},
+              onTap: () => onTool(WorkspaceTool.tmdb),
             ),
             _SidebarTile(
               icon: Icons.category_rounded,
               label: '分类管理',
               selected: false,
-              onTap: () {},
+              onTap: () => onTool(WorkspaceTool.tmdb),
             ),
           ],
         ),
@@ -682,13 +725,11 @@ class _SidebarTile extends StatelessWidget {
 
 class _CloudWorkspace extends ConsumerStatefulWidget {
   final FileState state;
-  final String searchQuery;
   final bool sidePanelOpen;
   final VoidCallback onToggleSidePanel;
 
   const _CloudWorkspace({
     required this.state,
-    required this.searchQuery,
     required this.sidePanelOpen,
     required this.onToggleSidePanel,
   });
@@ -703,14 +744,6 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
-    final query = widget.searchQuery.trim().toLowerCase();
-    final searchFiles = query.isEmpty
-        ? state.files
-        : state.files
-            .where((file) =>
-                file.name.toLowerCase().contains(query) ||
-                file.cloudPath.toLowerCase().contains(query))
-            .toList();
     return Row(
       children: [
         Expanded(
@@ -729,27 +762,21 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                 ),
                 const SizedBox(height: 12),
                 Expanded(
-                  child: query.isNotEmpty
-                      ? _PrimaryFilePane(
-                          title: '文件搜索：${widget.searchQuery}',
-                          state: state,
-                          overrideFiles: searchFiles,
-                        )
-                      : state.section == WorkspaceSection.files
+                  child: state.section == WorkspaceSection.files
                       ? _paneMode == _PaneLayoutMode.dual
-                          ? Row(
-                              children: [
-                                Expanded(
-                                  child: _PrimaryFilePane(
-                                    title: '左侧面板',
-                                    state: state,
+                            ? Row(
+                                children: [
+                                  Expanded(
+                                    child: _PrimaryFilePane(
+                                      title: '左侧面板',
+                                      state: state,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 10),
-                                const Expanded(child: _SecondaryFilePane()),
-                              ],
-                            )
-                          : _PrimaryFilePane(title: '文件列表', state: state)
+                                  const SizedBox(width: 10),
+                                  const Expanded(child: _SecondaryFilePane()),
+                                ],
+                              )
+                            : _PrimaryFilePane(title: '文件列表', state: state)
                       : _PrimaryFilePane(
                           title: state.section.label,
                           state: state,
@@ -838,7 +865,7 @@ class _CloudToolbar extends ConsumerWidget {
   }
 
   Future<void> _pickAndUpload(WidgetRef ref) async {
-    final result = await FilePicker.pickFiles(allowMultiple: true);
+    final result = await FilePicker.pickFiles();
     if (result == null) return;
     final files = result.paths.whereType<String>().map(File.new).toList();
     await ref.read(fileProvider.notifier).uploadLocalFiles(files);
@@ -980,10 +1007,14 @@ class _ToolbarButton extends StatelessWidget {
             height: 32,
             padding: EdgeInsets.symmetric(horizontal: primary ? 10 : 0),
             decoration: BoxDecoration(
-              color: primary ? cs.primary : Colors.white.withValues(alpha: 0.46),
+              color: primary
+                  ? cs.primary
+                  : Colors.white.withValues(alpha: 0.46),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                color: primary ? cs.primary : Colors.white.withValues(alpha: 0.54),
+                color: primary
+                    ? cs.primary
+                    : Colors.white.withValues(alpha: 0.54),
               ),
             ),
             child: Row(
@@ -1017,18 +1048,13 @@ class _ToolbarButton extends StatelessWidget {
 class _PrimaryFilePane extends ConsumerWidget {
   final String title;
   final FileState state;
-  final List<CloudFile>? overrideFiles;
 
-  const _PrimaryFilePane({
-    required this.title,
-    required this.state,
-    this.overrideFiles,
-  });
+  const _PrimaryFilePane({required this.title, required this.state});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(fileProvider.notifier);
-    final files = overrideFiles ?? state.files;
+    final files = state.files;
     return _FilePaneFrame(
       title: title,
       itemCount: files.length,
@@ -1044,6 +1070,14 @@ class _PrimaryFilePane extends ConsumerWidget {
           notifier.moveFilesTo(files, parentID: parentID),
       onUploadLocalFiles: (files, parentID) =>
           notifier.uploadLocalFiles(files, parentID: parentID),
+      currentPage: state.currentPage,
+      pageSize: state.pageSize,
+      totalPages: state.totalPages,
+      onPreviousPage: state.currentPage == 0 ? null : notifier.prevPage,
+      onNextPage: state.currentPage >= state.totalPages - 1
+          ? null
+          : notifier.nextPage,
+      onPageSizeChanged: notifier.setPageSize,
       child: RefreshIndicator(
         onRefresh: () => notifier.loadFiles(),
         child: ListView.builder(
@@ -1098,6 +1132,9 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
   var _files = <CloudFile>[];
   var _loading = false;
   String? _error;
+  var _page = 0;
+  var _pageSize = 50;
+  var _totalPages = 1;
 
   @override
   void initState() {
@@ -1112,8 +1149,16 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
     });
     try {
       final api = ref.read(authProvider.notifier).api;
-      final result = await api.fsFiles(parentID: parentID, pageSize: 50);
-      setState(() => _files = _extractFiles(result));
+      final result = await api.fsFiles(
+        parentID: parentID,
+        page: _page,
+        pageSize: _pageSize,
+      );
+      final files = _extractFiles(result);
+      setState(() {
+        _files = files;
+        _totalPages = _extractTotalPages(result, files.length);
+      });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -1131,7 +1176,10 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
     });
     try {
       final api = ref.read(authProvider.notifier).api;
-      await api.fsMove(files.map((file) => file.id).toList(), parentID: parentID);
+      await api.fsMove(
+        files.map((file) => file.id).toList(),
+        parentID: parentID,
+      );
       await _load(parentID: _currentParentID);
       await ref.read(fileProvider.notifier).loadFiles();
     } catch (e) {
@@ -1182,13 +1230,38 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               icon: Icons.arrow_back_rounded,
               label: '返回',
               onTap: () {
-                setState(() => _path.removeLast());
+                setState(() {
+                  _path.removeLast();
+                  _page = 0;
+                });
                 _load(parentID: _path.isEmpty ? null : _path.last.id);
               },
             ),
           const Expanded(child: _FilePaneHeader()),
         ],
       ),
+      currentPage: _page,
+      pageSize: _pageSize,
+      totalPages: _totalPages,
+      onPreviousPage: _page == 0
+          ? null
+          : () {
+              setState(() => _page -= 1);
+              _load(parentID: _currentParentID);
+            },
+      onNextPage: _page >= _totalPages - 1
+          ? null
+          : () {
+              setState(() => _page += 1);
+              _load(parentID: _currentParentID);
+            },
+      onPageSizeChanged: (size) {
+        setState(() {
+          _pageSize = size;
+          _page = 0;
+        });
+        _load(parentID: _currentParentID);
+      },
       child: RefreshIndicator(
         onRefresh: () => _load(parentID: _currentParentID),
         child: ListView.builder(
@@ -1201,7 +1274,10 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               file: file,
               onSelect: () {
                 if (file.isDirectory) {
-                  setState(() => _path.add(file));
+                  setState(() {
+                    _path.add(file);
+                    _page = 0;
+                  });
                   _load(parentID: file.id);
                 } else {
                   ref.read(fileProvider.notifier).downloadFile(file);
@@ -1209,16 +1285,23 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               },
               onOpen: () {
                 if (file.isDirectory) {
-                  setState(() => _path.add(file));
+                  setState(() {
+                    _path.add(file);
+                    _page = 0;
+                  });
                   _load(parentID: file.id);
                 } else {
                   ref.read(fileProvider.notifier).downloadFile(file);
                 }
               },
-              onCopy: () => ref.read(fileProvider.notifier).copyToClipboard([file]),
-              onCut: () => ref.read(fileProvider.notifier).cutToClipboard([file]),
-              onDownload: () => ref.read(fileProvider.notifier).downloadFile(file),
-              onDelete: () => ref.read(fileProvider.notifier).deleteFiles([file]),
+              onCopy: () =>
+                  ref.read(fileProvider.notifier).copyToClipboard([file]),
+              onCut: () =>
+                  ref.read(fileProvider.notifier).cutToClipboard([file]),
+              onDownload: () =>
+                  ref.read(fileProvider.notifier).downloadFile(file),
+              onDelete: () =>
+                  ref.read(fileProvider.notifier).deleteFiles([file]),
             );
             return Draggable<_DraggedCloudFiles>(
               data: _DraggedCloudFiles([file], _PaneIdentity.secondary),
@@ -1257,13 +1340,168 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
 
   void _navigateBreadcrumb(int index) {
     if (index < 0) {
-      setState(() => _path.clear());
+      setState(() {
+        _path.clear();
+        _page = 0;
+      });
       _load();
       return;
     }
     if (!_path.asMap().containsKey(index)) return;
-    setState(() => _path.removeRange(index + 1, _path.length));
+    setState(() {
+      _path.removeRange(index + 1, _path.length);
+      _page = 0;
+    });
     _load(parentID: _path.isEmpty ? null : _path.last.id);
+  }
+
+  int _extractTotalPages(Map<String, dynamic> json, int itemCount) {
+    int? find(Map<String, dynamic> value) {
+      for (final key in const [
+        'totalPages',
+        'pages',
+        'pageCount',
+        'total',
+        'totalCount',
+        'count',
+      ]) {
+        final raw = value[key];
+        final parsed = raw is int ? raw : int.tryParse(raw?.toString() ?? '');
+        if (parsed != null && parsed >= 0) return parsed;
+      }
+      for (final child in value.values) {
+        if (child is Map) {
+          final result = find(Map<String, dynamic>.from(child));
+          if (result != null) return result;
+        }
+      }
+      return null;
+    }
+
+    final result = find(json);
+    if (result == null) return itemCount < _pageSize ? 1 : _page + 2;
+    if (result <= 0) return 1;
+    final hasExplicitPageCount =
+        json.containsKey('totalPages') ||
+        json.containsKey('pages') ||
+        json.containsKey('pageCount');
+    return hasExplicitPageCount
+        ? result
+        : (result / _pageSize).ceil().clamp(1, 1 << 31).toInt();
+  }
+}
+
+class _PanePagination extends StatelessWidget {
+  static const _pageSizes = [
+    10,
+    20,
+    50,
+    100,
+    200,
+    500,
+    1000,
+    2000,
+    5000,
+    10000,
+  ];
+
+  final int currentPage;
+  final int pageSize;
+  final int totalPages;
+  final VoidCallback? onPreviousPage;
+  final VoidCallback? onNextPage;
+  final ValueChanged<int>? onPageSizeChanged;
+
+  const _PanePagination({
+    required this.currentPage,
+    required this.pageSize,
+    required this.totalPages,
+    this.onPreviousPage,
+    this.onNextPage,
+    this.onPageSizeChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: cs.border.withValues(alpha: 0.62)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Text(
+            '第 ${currentPage + 1} / ${totalPages.clamp(1, 1 << 31)} 页',
+            style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+          ),
+          const Spacer(),
+          ShadSelect<int>(
+            initialValue: pageSize,
+            enabled: onPageSizeChanged != null,
+            minWidth: 80,
+            selectedOptionBuilder: (context, value) => Text('$value / 页'),
+            options: [
+              for (final size in _pageSizes)
+                ShadOption(value: size, child: Text('$size / 页')),
+            ],
+            onChanged: (value) {
+              if (value != null) onPageSizeChanged?.call(value);
+            },
+          ),
+          const SizedBox(width: 6),
+          _PaneIconButton(
+            icon: Icons.chevron_left_rounded,
+            tooltip: '上一页',
+            onTap: onPreviousPage,
+          ),
+          const SizedBox(width: 3),
+          _PaneIconButton(
+            icon: Icons.chevron_right_rounded,
+            tooltip: '下一页',
+            onTap: onNextPage,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PaneIconButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+
+  const _PaneIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadTooltip(
+      builder: (_) => Text(tooltip),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: SizedBox(
+          width: 26,
+          height: 26,
+          child: Icon(
+            icon,
+            size: 16,
+            color: onTap == null
+                ? cs.mutedForeground.withValues(alpha: 0.45)
+                : cs.foreground,
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -1282,6 +1520,12 @@ class _FilePaneFrame extends StatelessWidget {
   onUploadLocalFiles;
   final Widget header;
   final Widget child;
+  final int currentPage;
+  final int pageSize;
+  final int totalPages;
+  final VoidCallback? onPreviousPage;
+  final VoidCallback? onNextPage;
+  final ValueChanged<int>? onPageSizeChanged;
 
   const _FilePaneFrame({
     required this.title,
@@ -1296,6 +1540,12 @@ class _FilePaneFrame extends StatelessWidget {
     this.onUploadLocalFiles,
     required this.header,
     required this.child,
+    this.currentPage = 0,
+    this.pageSize = 50,
+    this.totalPages = 1,
+    this.onPreviousPage,
+    this.onNextPage,
+    this.onPageSizeChanged,
   });
 
   @override
@@ -1306,70 +1556,78 @@ class _FilePaneFrame extends StatelessWidget {
       onMoveCloudFiles: onMoveCloudFiles,
       onUploadLocalFiles: onUploadLocalFiles,
       child: Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.42),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.62)),
-      ),
-      child: Column(
-        children: [
-          Container(
-            height: 42,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: cs.foreground,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.42),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.62)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              height: 42,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: cs.foreground,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '$itemCount 项',
-                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  Text(
+                    '$itemCount 项',
+                    style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                  ),
+                ],
+              ),
             ),
-          ),
-          Divider(height: 1, color: cs.border.withValues(alpha: 0.62)),
-          SizedBox(
-            height: 36,
-            child: BreadcrumbBar(
-              path: breadcrumbPath,
-              onNavigate: onBreadcrumbNavigate ?? (_) {},
+            Divider(height: 1, color: cs.border.withValues(alpha: 0.62)),
+            SizedBox(
+              height: 36,
+              child: BreadcrumbBar(
+                path: breadcrumbPath,
+                onNavigate: onBreadcrumbNavigate ?? (_) {},
+              ),
             ),
-          ),
-          Divider(height: 1, color: cs.border.withValues(alpha: 0.62)),
-          SizedBox(height: 34, child: header),
-          Divider(height: 1, color: cs.border.withValues(alpha: 0.62)),
-          Expanded(
-            child: isLoading
-                ? const _ShadLoading()
-                : errorMessage != null
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                        errorMessage!,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: cs.destructive),
+            Divider(height: 1, color: cs.border.withValues(alpha: 0.62)),
+            SizedBox(height: 34, child: header),
+            Divider(height: 1, color: cs.border.withValues(alpha: 0.62)),
+            Expanded(
+              child: isLoading
+                  ? const _ShadLoading()
+                  : errorMessage != null
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          errorMessage!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: cs.destructive),
+                        ),
                       ),
-                    ),
-                  )
-                : itemCount == 0
-                ? Center(
-                    child: Text(
-                      emptyLabel,
-                      style: TextStyle(color: cs.mutedForeground),
-                    ),
-                  )
-                : child,
-          ),
-        ],
-      ),
+                    )
+                  : itemCount == 0
+                  ? Center(
+                      child: Text(
+                        emptyLabel,
+                        style: TextStyle(color: cs.mutedForeground),
+                      ),
+                    )
+                  : child,
+            ),
+            _PanePagination(
+              currentPage: currentPage,
+              pageSize: pageSize,
+              totalPages: totalPages,
+              onPreviousPage: onPreviousPage,
+              onNextPage: onNextPage,
+              onPageSizeChanged: onPageSizeChanged,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1450,7 +1708,10 @@ class _PaneDropSurfaceState extends State<_PaneDropSurface> {
         onWillAcceptWithDetails: (_) => widget.onMoveCloudFiles != null,
         onAcceptWithDetails: (details) async {
           setState(() => _active = false);
-          await widget.onMoveCloudFiles?.call(details.data.files, widget.parentID);
+          await widget.onMoveCloudFiles?.call(
+            details.data.files,
+            widget.parentID,
+          );
         },
         onMove: (_) {
           if (!_active) setState(() => _active = true);
@@ -1526,7 +1787,10 @@ class _DragFeedback extends StatelessWidget {
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ],
