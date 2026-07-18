@@ -1065,6 +1065,10 @@ class _MediaItemTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final posterURL = item.posterPath == null || item.posterPath!.isEmpty
+        ? null
+        : 'https://image.tmdb.org/t/p/w342${item.posterPath}';
+    final isSeries = item.mediaKind == TMDBMediaKind.tv;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -1081,11 +1085,22 @@ class _MediaItemTile extends StatelessWidget {
               color: cs.muted,
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Icon(
-              Icons.movie_rounded,
-              size: 24,
-              color: cs.mutedForeground,
-            ),
+            clipBehavior: Clip.antiAlias,
+            child: posterURL == null
+                ? Icon(
+                    isSeries ? Icons.tv_rounded : Icons.movie_rounded,
+                    size: 24,
+                    color: cs.mutedForeground,
+                  )
+                : Image.network(
+                    posterURL,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Icon(
+                      isSeries ? Icons.tv_rounded : Icons.movie_rounded,
+                      size: 24,
+                      color: cs.mutedForeground,
+                    ),
+                  ),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -1093,29 +1108,41 @@ class _MediaItemTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        item.year.isEmpty
+                            ? item.title
+                            : '${item.title} (${item.year})',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: cs.foreground,
+                        ),
+                      ),
+                    ),
+                    if (item.isMatched)
+                      ShadBadge(child: Text(isSeries ? '剧集' : '电影')),
+                  ],
+                ),
+                const SizedBox(height: 4),
                 Text(
-                  item.year.isEmpty
-                      ? item.title
-                      : '${item.title} (${item.year})',
+                  item.isMatched
+                      ? (item.overview.isEmpty ? 'TMDB 已识别' : item.overview)
+                      : '未识别，可在 TMDB 工具中重新匹配',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: cs.foreground,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  item.file.formattedSize,
                   style: TextStyle(fontSize: 11, color: cs.mutedForeground),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 4),
                 Text(
                   item.file.cloudPath,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                  style: TextStyle(fontSize: 10, color: cs.mutedForeground),
                 ),
               ],
             ),
