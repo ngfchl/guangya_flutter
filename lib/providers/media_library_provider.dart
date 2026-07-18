@@ -540,22 +540,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     for (final original in originals) {
       try {
         final detail = await _api!.fsDetail(original.file.id);
-        final fromCloud = _extractFiles(
+        final fromCloud = _fileFromDetail(
           detail,
-        ).where((file) => file.id == original.file.id).firstOrNull;
-        final latestName =
-            fromCloud?.name ??
-            _findStringDeep(detail, const ['fileName', 'name', 'resName']) ??
-            original.file.name;
-        final latestGCID =
-            fromCloud?.gcid ??
-            _findStringDeep(detail, const [
-              'gcid',
-              'gcId',
-              'gcidValue',
-              'hash',
-            ]) ??
-            original.file.gcid;
+          original.file.id,
+          original.file,
+        );
+        final latestName = fromCloud?.name ?? original.file.name;
+        final latestGCID = fromCloud?.gcid ?? original.file.gcid;
         final parentPath = _parentPath(original.file.cloudPath);
         final latestFile = original.file.copyWith(
           name: latestName,
@@ -1252,6 +1243,68 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
   }
 
+  CloudFile? _fileFromDetail(
+    Map<String, dynamic> detail,
+    String fileID,
+    CloudFile fallback,
+  ) {
+    final extracted = _extractFiles(
+      detail,
+    ).where((file) => file.id == fileID).firstOrNull;
+    if (extracted != null && extracted.name.isNotEmpty) return extracted;
+
+    Map<String, dynamic>? findExactMap(dynamic value) {
+      if (value is Map) {
+        final map = Map<String, dynamic>.from(value);
+        for (final key in const [
+          'fileId',
+          'file_id',
+          'resId',
+          'res_id',
+          'id',
+        ]) {
+          if (map[key]?.toString() == fileID) return map;
+        }
+        for (final child in map.values) {
+          final found = findExactMap(child);
+          if (found != null) return found;
+        }
+      } else if (value is List) {
+        for (final child in value) {
+          final found = findExactMap(child);
+          if (found != null) return found;
+        }
+      }
+      return null;
+    }
+
+    final exact = findExactMap(detail);
+    if (exact == null) return null;
+    try {
+      final parsed = CloudFile.fromJson(exact);
+      if (parsed.name.isNotEmpty) return parsed;
+    } catch (_) {
+      // Fall back to extracting fields directly from the exact File ID object.
+    }
+    return fallback.copyWith(
+      name:
+          _findStringDeep(exact, const ['fileName', 'name', 'resName']) ??
+          fallback.name,
+      gcid: _findStringDeep(exact, const ['gcid', 'gcId', 'gcidValue', 'hash']),
+      size: _findIntDeep(exact, const [
+        'size',
+        'fileSize',
+        'resSize',
+        'totalSize',
+      ]),
+      parentID: _findStringDeep(exact, const [
+        'parentId',
+        'parent_id',
+        'parentFileId',
+      ]),
+    );
+  }
+
   List<CloudFile> _extractFiles(Map<String, dynamic> json) {
     final result = <CloudFile>[];
     final seen = <String>{};
@@ -1279,7 +1332,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     ]);
     if (preferred != null) {
       appendList(preferred);
-      return result;
     }
 
     void visit(dynamic value) {
