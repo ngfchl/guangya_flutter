@@ -12,7 +12,7 @@ import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 
-enum _MediaWallFilter { all, movies, series, unmatched }
+enum _MediaWallFilter { all, movies, series, collections, unmatched }
 
 class MediaLibraryPage extends ConsumerStatefulWidget {
   final bool showLibrarySidebar;
@@ -41,6 +41,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   bool _backupBusy = false;
   _MediaWork? _detailWork;
   _MediaWallFilter _wallFilter = _MediaWallFilter.all;
+  String? _activeCollectionKey;
   final _apiKeyController = TextEditingController();
   final _searchController = TextEditingController();
 
@@ -128,31 +129,46 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           '全部',
           stats.total.toString(),
           selected: _wallFilter == _MediaWallFilter.all,
-          onTap: () => setState(() => _wallFilter = _MediaWallFilter.all),
+          onTap: () => _selectWallFilter(_MediaWallFilter.all),
         ),
         _statPill(
           context,
           '电影',
           stats.movies.toString(),
           selected: _wallFilter == _MediaWallFilter.movies,
-          onTap: () => setState(() => _wallFilter = _MediaWallFilter.movies),
+          onTap: () => _selectWallFilter(_MediaWallFilter.movies),
         ),
         _statPill(
           context,
           '剧集',
           stats.series.toString(),
           selected: _wallFilter == _MediaWallFilter.series,
-          onTap: () => setState(() => _wallFilter = _MediaWallFilter.series),
+          onTap: () => _selectWallFilter(_MediaWallFilter.series),
+        ),
+        _statPill(
+          context,
+          '合集',
+          stats.collections.toString(),
+          selected: _wallFilter == _MediaWallFilter.collections,
+          onTap: () => _selectWallFilter(_MediaWallFilter.collections),
         ),
         _statPill(
           context,
           '待匹配',
           stats.unmatched.toString(),
           selected: _wallFilter == _MediaWallFilter.unmatched,
-          onTap: () => setState(() => _wallFilter = _MediaWallFilter.unmatched),
+          onTap: () => _selectWallFilter(_MediaWallFilter.unmatched),
         ),
       ],
     );
+  }
+
+  void _selectWallFilter(_MediaWallFilter filter) {
+    setState(() {
+      _wallFilter = filter;
+      _activeCollectionKey = null;
+      _detailWork = null;
+    });
   }
 
   Widget _statPill(
@@ -398,6 +414,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       return _tmdbResultPanel(context);
     }
     final visibleItems = state.visibleItems;
+    final collections = _MediaCollection.fromItems(visibleItems);
+    final activeCollection = collections
+        .where((collection) => collection.key == _activeCollectionKey)
+        .firstOrNull;
     final filteredItems = switch (_wallFilter) {
       _MediaWallFilter.all => visibleItems,
       _MediaWallFilter.movies =>
@@ -408,6 +428,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         visibleItems
             .where((item) => item.mediaKind == TMDBMediaKind.tv)
             .toList(),
+      _MediaWallFilter.collections => activeCollection?.resources ?? const [],
       _MediaWallFilter.unmatched =>
         visibleItems.where((item) => !item.isMatched).toList(),
     };
@@ -434,7 +455,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                   ref.read(mediaLibraryProvider.notifier).scanSelectedLibrary(),
       );
     }
-    final content = works.isEmpty
+    final showingCollectionOverview =
+        _wallFilter == _MediaWallFilter.collections && activeCollection == null;
+    final wallContent = showingCollectionOverview
+        ? _collectionOverview(context, collections)
+        : works.isEmpty
         ? _mainEmpty(
             context,
             state.isScanning
@@ -469,6 +494,21 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               );
             },
           );
+    final content = activeCollection == null
+        ? wallContent
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ShadButton.ghost(
+                size: ShadButtonSize.sm,
+                onPressed: () => setState(() => _activeCollectionKey = null),
+                leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                child: Text('返回合集：${activeCollection.name}'),
+              ),
+              const SizedBox(height: 8),
+              Expanded(child: wallContent),
+            ],
+          );
     if (!state.isScanning) return content;
     return Column(
       children: [
@@ -476,6 +516,37 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         const SizedBox(height: 10),
         Expanded(child: content),
       ],
+    );
+  }
+
+  Widget _collectionOverview(
+    BuildContext context,
+    List<_MediaCollection> collections,
+  ) {
+    if (collections.isEmpty) {
+      return _mainEmpty(context, '没有自动合集', '已匹配合集信息的电影会显示在这里');
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = (constraints.maxWidth / 154).floor().clamp(2, 7);
+        return GridView.builder(
+          padding: const EdgeInsets.only(bottom: 10),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: 18,
+            crossAxisSpacing: 14,
+            childAspectRatio: 0.52,
+          ),
+          itemCount: collections.length,
+          itemBuilder: (context, index) => _MediaCollectionTile(
+            collection: collections[index],
+            onOpen: () => setState(() {
+              _activeCollectionKey = collections[index].key;
+              _detailWork = null;
+            }),
+          ),
+        );
+      },
     );
   }
 
@@ -1379,6 +1450,181 @@ class _MediaWork {
     }).toList()..sort(
       (a, b) => a.primary.title.toLowerCase().compareTo(
         b.primary.title.toLowerCase(),
+      ),
+    );
+  }
+}
+
+class _MediaCollection {
+  final String key;
+  final String name;
+  final MediaLibraryItem primary;
+  final List<MediaLibraryItem> resources;
+  final int workCount;
+
+  const _MediaCollection({
+    required this.key,
+    required this.name,
+    required this.primary,
+    required this.resources,
+    required this.workCount,
+  });
+
+  static List<_MediaCollection> fromItems(Iterable<MediaLibraryItem> items) {
+    final grouped = <String, List<MediaLibraryItem>>{};
+    final names = <String, String>{};
+    for (final item in items) {
+      final name = item.collectionName?.trim();
+      if (name == null || name.isEmpty) continue;
+      final key = item.collectionID == null
+          ? 'name:${name.toLowerCase()}'
+          : 'tmdb:${item.collectionID}';
+      grouped.putIfAbsent(key, () => []).add(item);
+      names[key] = name;
+    }
+    return grouped.entries
+        .map((entry) {
+          final resources = entry.value;
+          final works = _MediaWork.fromItems(resources);
+          final primary = works.map((work) => work.primary).reduce((
+            best,
+            candidate,
+          ) {
+            final bestScore =
+                (best.posterPath?.isNotEmpty == true ? 1 : 0) +
+                (best.hasChineseAudio ? 1 : 0);
+            final candidateScore =
+                (candidate.posterPath?.isNotEmpty == true ? 1 : 0) +
+                (candidate.hasChineseAudio ? 1 : 0);
+            return candidateScore > bestScore ? candidate : best;
+          });
+          return _MediaCollection(
+            key: entry.key,
+            name: names[entry.key] ?? '未命名合集',
+            primary: primary,
+            resources: resources,
+            workCount: works.length,
+          );
+        })
+        .where((collection) => collection.workCount >= 2)
+        .toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
+}
+
+class _MediaCollectionTile extends ConsumerWidget {
+  final _MediaCollection collection;
+  final VoidCallback onOpen;
+
+  const _MediaCollectionTile({required this.collection, required this.onOpen});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final item = collection.primary;
+    final posterURL = item.posterPath?.isNotEmpty == true
+        ? 'https://image.tmdb.org/t/p/w342${item.posterPath}'
+        : null;
+    return Semantics(
+      button: true,
+      label: '${collection.name}，${collection.workCount} 部作品',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onOpen,
+          borderRadius: BorderRadius.circular(6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        color: cs.muted,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: cs.border),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: FutureBuilder<Uint8List?>(
+                        future: ref
+                            .read(mediaLibraryProvider.notifier)
+                            .posterBytes(item),
+                        builder: (context, snapshot) {
+                          if (snapshot.data != null) {
+                            return Image.memory(
+                              snapshot.data!,
+                              fit: BoxFit.cover,
+                            );
+                          }
+                          if (posterURL != null) {
+                            return Image.network(
+                              posterURL,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) => Center(
+                                child: Icon(
+                                  Icons.collections_bookmark_rounded,
+                                  color: cs.mutedForeground,
+                                  size: 34,
+                                ),
+                              ),
+                            );
+                          }
+                          return Center(
+                            child: Icon(
+                              Icons.collections_bookmark_rounded,
+                              color: cs.mutedForeground,
+                              size: 34,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    Positioned(
+                      right: 7,
+                      bottom: 7,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.72),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '${collection.workCount} 部',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                collection.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: cs.foreground,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                '${collection.workCount} 部作品 · 自动合集',
+                style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
