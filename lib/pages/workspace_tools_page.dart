@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -7,6 +5,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 import '../models/batch_rename.dart';
+import '../models/fast_transfer.dart';
 import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
@@ -489,9 +488,11 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   }
 
   Future<void> _submit() async {
-    final entries = _parseEntries(_json.text);
-    if (entries.isEmpty) {
-      setState(() => _result = '未找到包含 name、size、gcid 的秒传条目。');
+    late final List<FastTransferEntry> entries;
+    try {
+      entries = parseFastTransferJSON(_json.text);
+    } catch (error) {
+      setState(() => _result = error.toString());
       return;
     }
     setState(() {
@@ -499,21 +500,55 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       _result = '';
     });
     var completed = 0;
+    var failed = 0;
+    var nextIndex = 0;
     final api = ref.read(authProvider.notifier).api;
     final parentID = ref.read(fileProvider).folderPath.lastOrNull?.id;
+    final concurrency =
+        (int.tryParse(
+                  StorageManager.get<String>(
+                        StorageKeys.fastTransferConcurrency,
+                      ) ??
+                      '3',
+                ) ??
+                3)
+            .clamp(1, 20);
     try {
-      for (final entry in entries) {
-        await api.flashTransferGCIDToken(
-          name: entry.name,
-          fileSize: entry.size,
-          parentID: parentID,
-          gcid: entry.gcid,
-        );
-        completed += 1;
+      Future<void> worker() async {
+        while (nextIndex < entries.length) {
+          final entry = entries[nextIndex++];
+          try {
+            if (entry.md5 != null) {
+              await api.flashTransferToken(
+                name: entry.name,
+                fileSize: entry.size,
+                parentID: parentID,
+                md5: entry.md5!,
+              );
+            } else {
+              await api.flashTransferGCIDToken(
+                name: entry.name,
+                fileSize: entry.size,
+                parentID: parentID,
+                gcid: entry.gcid!,
+              );
+            }
+            completed += 1;
+          } catch (_) {
+            failed += 1;
+          }
+          if (mounted) {
+            setState(
+              () => _result = '已处理 ${completed + failed}/${entries.length} 项',
+            );
+          }
+        }
       }
+
+      await Future.wait(List.generate(concurrency, (_) => worker()));
       await ref.read(fileProvider.notifier).loadFiles();
       if (mounted) {
-        setState(() => _result = '已提交 $completed / ${entries.length} 个秒传任务。');
+        setState(() => _result = '秒传完成：成功 $completed，失败 $failed');
       }
     } catch (error) {
       if (mounted) {
@@ -521,43 +556,6 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       }
     } finally {
       if (mounted) setState(() => _running = false);
-    }
-  }
-
-  List<_TransferEntry> _parseEntries(String text) {
-    try {
-      final value = jsonDecode(text);
-      final output = <_TransferEntry>[];
-      void visit(dynamic node) {
-        if (node is Map) {
-          final name = node['name']?.toString() ?? node['fileName']?.toString();
-          final gcid = node['gcid']?.toString() ?? node['gcId']?.toString();
-          final rawSize = node['size'] ?? node['fileSize'];
-          final size = rawSize is int
-              ? rawSize
-              : int.tryParse(rawSize?.toString() ?? '');
-          if (name != null &&
-              name.isNotEmpty &&
-              gcid != null &&
-              gcid.isNotEmpty &&
-              size != null &&
-              size >= 0) {
-            output.add(_TransferEntry(name, gcid, size));
-          }
-          for (final child in node.values) {
-            visit(child);
-          }
-        } else if (node is List) {
-          for (final child in node) {
-            visit(child);
-          }
-        }
-      }
-
-      visit(value);
-      return output;
-    } catch (_) {
-      return const [];
     }
   }
 
@@ -604,14 +602,6 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       ),
     );
   }
-}
-
-class _TransferEntry {
-  final String name;
-  final String gcid;
-  final int size;
-
-  const _TransferEntry(this.name, this.gcid, this.size);
 }
 
 class _ToolSection extends StatelessWidget {
