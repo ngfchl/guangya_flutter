@@ -110,7 +110,15 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       _TopBar(
                         mode: _mode,
                         onModeChanged: (mode) {
-                          setState(() => _mode = mode);
+                          if (_mode == mode) return;
+                          setState(() {
+                            _mode = mode;
+                            _activeTool = null;
+                            _fileSearchQuery = null;
+                            _mediaSearchQuery = null;
+                            _searchOpen = false;
+                            _searchController.clear();
+                          });
                           if (mode == WorkspaceMode.media) {
                             ref.read(mediaLibraryProvider.notifier).api = ref
                                 .read(authProvider.notifier)
