@@ -554,7 +554,16 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               Expanded(child: wallContent),
             ],
           );
-    if (!state.isScanning) return content;
+    if (!state.isScanning) {
+      if (state.scanLogs.isEmpty) return content;
+      return Column(
+        children: [
+          _recentScanLogs(context, state),
+          const SizedBox(height: 10),
+          Expanded(child: content),
+        ],
+      );
+    }
     return Column(
       children: [
         _scanProgress(context, state),
@@ -607,28 +616,126 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: cs.border),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(width: 120, child: ShadProgress()),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    state.progress.phase,
-                    style: TextStyle(color: cs.foreground),
+            Row(
+              children: [
+                const SizedBox(width: 120, child: ShadProgress()),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        state.progress.phase,
+                        style: TextStyle(color: cs.foreground),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '已发现 ${state.progress.completed} 个视频文件，已入库资源会实时显示。',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '已发现 ${state.progress.completed} 个视频文件，已入库资源会实时显示。',
-                    style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
+            if (state.scanLogs.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Divider(height: 1, color: cs.border),
+              const SizedBox(height: 8),
+              Text(
+                '任务日志',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: cs.mutedForeground,
+                ),
+              ),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 84,
+                child: ListView.builder(
+                  reverse: true,
+                  itemCount: state.scanLogs.length,
+                  itemBuilder: (context, index) {
+                    final log = state.scanLogs.reversed.elementAt(index);
+                    final time = TimeOfDay.fromDateTime(
+                      log.createdAt,
+                    ).format(context);
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text(
+                        '$time  ${log.message}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: log.isError
+                              ? cs.destructive
+                              : cs.mutedForeground,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _recentScanLogs(BuildContext context, MediaLibraryState state) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: cs.muted.withValues(alpha: 0.68),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: cs.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '最近扫描日志',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: cs.mutedForeground,
+            ),
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 54,
+            child: ListView.builder(
+              reverse: true,
+              itemCount: state.scanLogs.length,
+              itemBuilder: (context, index) {
+                final log = state.scanLogs.reversed.elementAt(index);
+                final time = TimeOfDay.fromDateTime(
+                  log.createdAt,
+                ).format(context);
+                return Text(
+                  '$time  ${log.message}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: log.isError ? cs.destructive : cs.mutedForeground,
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

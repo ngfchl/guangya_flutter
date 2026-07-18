@@ -455,6 +455,32 @@ class MediaLibraryScanProgress {
   });
 }
 
+class MediaLibraryScanLog {
+  final DateTime createdAt;
+  final String message;
+  final bool isError;
+
+  const MediaLibraryScanLog({
+    required this.createdAt,
+    required this.message,
+    this.isError = false,
+  });
+
+  factory MediaLibraryScanLog.fromJson(Map<String, dynamic> json) {
+    return MediaLibraryScanLog(
+      createdAt: _parseDate(json['createdAt']) ?? DateTime.now(),
+      message: json['message']?.toString() ?? '',
+      isError: json['isError'] == true,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'createdAt': createdAt.toIso8601String(),
+    'message': message,
+    'isError': isError,
+  };
+}
+
 class ParsedMediaName {
   final String title;
   final int? year;

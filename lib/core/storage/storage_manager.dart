@@ -28,6 +28,7 @@ class StorageKeys {
   static const String fileCacheTTLMinutes = 'guangya.fileCacheTTLMinutes';
   static const String defaultFilePageSize = 'guangya.defaultFilePageSize';
   static const String fastTransferSession = 'guangya.fastTransferSession';
+  static const String mediaScanHistory = 'guangya.mediaScanHistory';
 }
 
 class StorageManager {

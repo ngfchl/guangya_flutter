@@ -16,6 +16,7 @@ class MediaLibraryState {
   final bool isLoading;
   final bool isScanning;
   final MediaLibraryScanProgress progress;
+  final List<MediaLibraryScanLog> scanLogs;
   final String searchQuery;
   final String? errorMessage;
   final String? statusMessage;
@@ -27,6 +28,7 @@ class MediaLibraryState {
     this.isLoading = false,
     this.isScanning = false,
     this.progress = const MediaLibraryScanProgress(),
+    this.scanLogs = const [],
     this.searchQuery = '',
     this.errorMessage,
     this.statusMessage,
@@ -60,6 +62,7 @@ class MediaLibraryState {
     bool? isLoading,
     bool? isScanning,
     MediaLibraryScanProgress? progress,
+    List<MediaLibraryScanLog>? scanLogs,
     String? searchQuery,
     String? errorMessage,
     bool clearError = false,
@@ -75,6 +78,7 @@ class MediaLibraryState {
       isLoading: isLoading ?? this.isLoading,
       isScanning: isScanning ?? this.isScanning,
       progress: progress ?? this.progress,
+      scanLogs: scanLogs ?? this.scanLogs,
       searchQuery: searchQuery ?? this.searchQuery,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       statusMessage: clearStatus ? null : (statusMessage ?? this.statusMessage),
@@ -104,10 +108,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final items = selectedID == null
           ? <MediaLibraryItem>[]
           : await _loadItems(selectedID);
+      final logs = _loadScanHistory();
       state = state.copyWith(
         libraries: libraries,
         selectedLibraryID: selectedID,
         items: items,
+        scanLogs: logs,
       );
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
@@ -268,6 +274,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     state = state.copyWith(
       isScanning: true,
       progress: const MediaLibraryScanProgress(phase: '准备扫描'),
+      scanLogs: [
+        MediaLibraryScanLog(
+          createdAt: DateTime.now(),
+          message: '任务已创建，开始扫描「${library.name}」',
+        ),
+      ],
       clearError: true,
       clearStatus: true,
     );
@@ -322,6 +334,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 completed: completed,
               ),
             );
+            _appendScanLog(
+              item.tmdbID == null
+                  ? '已入库：${file.name}（未匹配 TMDB）'
+                  : '已识别并入库：${file.name} → ${item.title}',
+            );
           }
         }
 
@@ -339,6 +356,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
       for (final source in library.sources) {
         if (_cancelScan) break;
+        _appendScanLog('扫描目录：${source.path}');
         state = state.copyWith(
           progress: MediaLibraryScanProgress(
             phase: '扫描 ${source.path}',
@@ -374,13 +392,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             ? '扫描已停止，已保留 ${items.length} 个项目'
             : '扫描完成：${items.length} 个视频文件',
       );
+      _appendScanLog(
+        _cancelScan
+            ? '扫描已停止，已保留 ${items.length} 个条目'
+            : '扫描完成，共入库 ${items.length} 个条目',
+      );
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
+      _appendScanLog('扫描失败：$e', isError: true);
     } finally {
       state = state.copyWith(
         isScanning: false,
         progress: const MediaLibraryScanProgress(),
       );
+      unawaited(_persistScanHistory());
     }
   }
 
@@ -389,7 +414,40 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     state = state.copyWith(
       progress: const MediaLibraryScanProgress(phase: '正在停止扫描'),
     );
+    _appendScanLog('正在请求停止扫描…');
   }
+
+  void _appendScanLog(String message, {bool isError = false}) {
+    final logs = [
+      ...state.scanLogs,
+      MediaLibraryScanLog(
+        createdAt: DateTime.now(),
+        message: message,
+        isError: isError,
+      ),
+    ];
+    if (logs.length > 120) logs.removeRange(0, logs.length - 120);
+    state = state.copyWith(scanLogs: logs);
+  }
+
+  List<MediaLibraryScanLog> _loadScanHistory() {
+    final raw = StorageManager.get<dynamic>(StorageKeys.mediaScanHistory);
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map(
+          (entry) =>
+              MediaLibraryScanLog.fromJson(Map<String, dynamic>.from(entry)),
+        )
+        .where((entry) => entry.message.isNotEmpty)
+        .take(120)
+        .toList();
+  }
+
+  Future<void> _persistScanHistory() => StorageManager.set(
+    StorageKeys.mediaScanHistory,
+    state.scanLogs.map((entry) => entry.toJson()).toList(),
+  );
 
   void setSearchQuery(String query) {
     state = state.copyWith(searchQuery: query);
