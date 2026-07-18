@@ -507,37 +507,6 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-void _showRenameDialog(BuildContext context, WidgetRef ref, CloudFile file) {
-  final controller = TextEditingController(text: file.name);
-  showShadDialog(
-    context: context,
-    builder: (dialogContext) => ShadDialog(
-      title: const Text('重命名'),
-      description: Text(file.name),
-      actions: [
-        ShadButton.outline(
-          onPressed: () => Navigator.of(dialogContext).pop(),
-          child: const Text('取消'),
-        ),
-        ShadButton(
-          onPressed: () {
-            final name = controller.text.trim();
-            if (name.isEmpty || name == file.name) return;
-            ref.read(fileProvider.notifier).renameFile(file, name);
-            Navigator.of(dialogContext).pop();
-          },
-          child: const Text('保存'),
-        ),
-      ],
-      child: ShadInput(
-        controller: controller,
-        autofocus: true,
-        placeholder: const Text('文件名称'),
-      ),
-    ),
-  );
-}
-
 class _SegmentButton extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -1438,7 +1407,7 @@ class _PrimaryFilePane extends ConsumerWidget {
               onOpen: file.isDirectory
                   ? () => notifier.navigateToFolder(file)
                   : () => _openCloudFile(context, ref, file),
-              onRename: () => _showRenameDialog(context, ref, file),
+              onRenameConfirm: (name) => notifier.renameFile(file, name),
               onCopy: () => notifier.copyToClipboard([file]),
               onCut: () => notifier.cutToClipboard([file]),
               onDownload: () => notifier.downloadFile(file),
@@ -2954,7 +2923,19 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
                   ref.read(fileProvider.notifier).copyToClipboard([file]),
               onCut: () =>
                   ref.read(fileProvider.notifier).cutToClipboard([file]),
-              onRename: () => _showRenameDialog(context, ref, file),
+              onRenameConfirm: (name) async {
+                await ref.read(fileProvider.notifier).renameFile(file, name);
+                if (!mounted) return;
+                setState(() {
+                  _files = _files
+                      .map(
+                        (item) => item.id == file.id
+                            ? item.copyWith(name: name)
+                            : item,
+                      )
+                      .toList();
+                });
+              },
               onDownload: () =>
                   ref.read(fileProvider.notifier).downloadFile(file),
               onShare: () => ref.read(fileProvider.notifier).createShare(file),

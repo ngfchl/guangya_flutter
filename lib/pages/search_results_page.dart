@@ -279,6 +279,10 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                           isSelected: _selectedIDs.contains(file.id),
                           onSelect: () => _selectFile(files, file),
                           onOpen: () => notifier.downloadFile(file),
+                          onRenameConfirm: (name) async {
+                            await notifier.renameFile(file, name);
+                            if (mounted) setState(() => _results = _search());
+                          },
                           onCopy: () => notifier.copyToClipboard([file]),
                           onCut: () => notifier.cutToClipboard([file]),
                           onCopyFastTransfer: () =>

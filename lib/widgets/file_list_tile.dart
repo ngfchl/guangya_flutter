@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
+
 import '../models/cloud_file.dart';
 import 'file_icon.dart';
 
-/// A single file row in the file list with context menu support.
-class FileListTile extends StatelessWidget {
+/// A file row with Finder-style inline rename support and a context menu.
+class FileListTile extends StatefulWidget {
   final CloudFile file;
   final bool isSelected;
   final VoidCallback? onSelect;
   final VoidCallback? onOpen;
   final VoidCallback? onRename;
+  final Future<void> Function(String newName)? onRenameConfirm;
   final VoidCallback? onCopy;
   final VoidCallback? onCut;
   final VoidCallback? onDownload;
@@ -25,6 +27,7 @@ class FileListTile extends StatelessWidget {
     this.onSelect,
     this.onOpen,
     this.onRename,
+    this.onRenameConfirm,
     this.onCopy,
     this.onCut,
     this.onDownload,
@@ -35,73 +38,164 @@ class FileListTile extends StatelessWidget {
   });
 
   @override
+  State<FileListTile> createState() => _FileListTileState();
+}
+
+class _FileListTileState extends State<FileListTile> {
+  late final TextEditingController _renameController;
+  late final FocusNode _renameFocusNode;
+  var _isRenaming = false;
+  var _isSubmittingRename = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _renameController = TextEditingController(text: widget.file.name);
+    _renameFocusNode = FocusNode(debugLabel: 'rename-${widget.file.id}');
+  }
+
+  @override
+  void didUpdateWidget(covariant FileListTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.file.id != widget.file.id ||
+        (!_isRenaming && oldWidget.file.name != widget.file.name)) {
+      _renameController.text = widget.file.name;
+    }
+  }
+
+  @override
+  void dispose() {
+    _renameController.dispose();
+    _renameFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _beginRename() {
+    if (widget.onRenameConfirm == null) {
+      widget.onRename?.call();
+      return;
+    }
+    setState(() {
+      _renameController.text = widget.file.name;
+      _renameController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _renameController.text.length,
+      );
+      _isRenaming = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _renameFocusNode.requestFocus();
+    });
+  }
+
+  void _cancelRename() {
+    setState(() {
+      _renameController.text = widget.file.name;
+      _isRenaming = false;
+    });
+  }
+
+  Future<void> _confirmRename() async {
+    final newName = _renameController.text.trim();
+    if (_isSubmittingRename || newName.isEmpty) return;
+    if (newName == widget.file.name) {
+      _cancelRename();
+      return;
+    }
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('确认重命名？'),
+        description: Text('“${widget.file.name}” 将重命名为 “$newName”'),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('确认重命名'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _isSubmittingRename = true);
+    try {
+      await widget.onRenameConfirm!(newName);
+      if (mounted) setState(() => _isRenaming = false);
+    } finally {
+      if (mounted) setState(() => _isSubmittingRename = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-
     return ShadContextMenuRegion(
       items: [
         ShadContextMenuItem.inset(
           leading: const Icon(LucideIcons.folderOpen, size: 16),
           trailing: const Icon(LucideIcons.chevronRight),
-          onPressed: onOpen,
+          onPressed: widget.onOpen,
           child: const Text('打开'),
         ),
         ShadContextMenuItem.inset(
           leading: const Icon(LucideIcons.pencil, size: 16),
-          onPressed: onRename,
-          child: Text('重命名'),
+          onPressed: _beginRename,
+          child: const Text('重命名'),
         ),
         ShadContextMenuItem.inset(
           leading: const Icon(LucideIcons.copy, size: 16),
           trailing: const Icon(LucideIcons.chevronRight),
-          onPressed: onCopy,
+          onPressed: widget.onCopy,
           child: const Text('复制'),
         ),
         ShadContextMenuItem.inset(
           leading: const Icon(LucideIcons.scissors, size: 16),
           trailing: const Icon(LucideIcons.chevronRight),
-          onPressed: onCut,
+          onPressed: widget.onCut,
           child: const Text('剪切'),
         ),
         const Divider(height: 8),
         ShadContextMenuItem.inset(
           leading: const Icon(LucideIcons.download, size: 16),
           trailing: const Icon(LucideIcons.chevronRight),
-          onPressed: onDownload,
+          onPressed: widget.onDownload,
           child: const Text('下载'),
         ),
         ShadContextMenuItem.inset(
           leading: const Icon(LucideIcons.share2, size: 16),
           trailing: const Icon(LucideIcons.chevronRight),
-          onPressed: onShare,
+          onPressed: widget.onShare,
           child: const Text('分享'),
         ),
         ShadContextMenuItem.inset(
           leading: const Icon(LucideIcons.zap, size: 16),
-          onPressed: onCopyFastTransfer,
+          onPressed: widget.onCopyFastTransfer,
           child: const Text('复制秒传'),
         ),
         const Divider(height: 8),
         ShadContextMenuItem.inset(
           leading: Icon(
-            isRecycleItem ? LucideIcons.rotateCcw : LucideIcons.trash2,
+            widget.isRecycleItem ? LucideIcons.rotateCcw : LucideIcons.trash2,
             size: 16,
-            color: isRecycleItem
+            color: widget.isRecycleItem
                 ? theme.colorScheme.primary
                 : theme.colorScheme.destructive,
           ),
           trailing: Icon(
             LucideIcons.chevronRight,
-            color: isRecycleItem
+            color: widget.isRecycleItem
                 ? theme.colorScheme.primary
                 : theme.colorScheme.destructive,
           ),
-          onPressed: onDelete,
+          onPressed: widget.onDelete,
           child: Text(
-            isRecycleItem ? '恢复' : '删除',
+            widget.isRecycleItem ? '恢复' : '删除',
             style: TextStyle(
-              color: isRecycleItem
+              color: widget.isRecycleItem
                   ? theme.colorScheme.primary
                   : theme.colorScheme.destructive,
             ),
@@ -109,13 +203,13 @@ class FileListTile extends StatelessWidget {
         ),
       ],
       child: GestureDetector(
-        onTap: () => onSelect?.call(),
-        onDoubleTap: onOpen,
+        onTap: _isRenaming ? null : widget.onSelect,
+        onDoubleTap: _isRenaming ? null : widget.onOpen,
         child: Container(
           height: 48,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: isSelected
+            color: widget.isSelected
                 ? (isDark
                       ? theme.colorScheme.primary.withAlpha(30)
                       : theme.colorScheme.primary.withAlpha(15))
@@ -133,8 +227,7 @@ class FileListTile extends StatelessWidget {
           ),
           child: Row(
             children: [
-              // Selection indicator
-              if (isSelected)
+              if (widget.isSelected)
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: Icon(
@@ -143,43 +236,71 @@ class FileListTile extends StatelessWidget {
                     color: theme.colorScheme.primary,
                   ),
                 ),
-
-              // File icon
-              SizedBox(width: 32, height: 32, child: FileIcon(file: file)),
-              const SizedBox(width: 12),
-
-              // File name
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      file.name,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: theme.colorScheme.foreground,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (file.isDirectory && file.subFileCount != null)
-                      Text(
-                        '${file.subFileCount} 个项目',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: theme.colorScheme.mutedForeground,
-                        ),
-                      ),
-                  ],
-                ),
+              SizedBox(
+                width: 32,
+                height: 32,
+                child: FileIcon(file: widget.file),
               ),
-
-              // Folder sizes are enriched in the background just like files.
+              const SizedBox(width: 12),
+              Expanded(
+                child: _isRenaming
+                    ? Row(
+                        children: [
+                          Expanded(
+                            child: ShadInput(
+                              controller: _renameController,
+                              focusNode: _renameFocusNode,
+                              autofocus: true,
+                              enabled: !_isSubmittingRename,
+                              onSubmitted: (_) => _confirmRename(),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          ShadButton.ghost(
+                            size: ShadButtonSize.sm,
+                            onPressed: _isSubmittingRename
+                                ? null
+                                : _confirmRename,
+                            child: const Icon(Icons.check_rounded, size: 17),
+                          ),
+                          ShadButton.ghost(
+                            size: ShadButtonSize.sm,
+                            onPressed: _isSubmittingRename
+                                ? null
+                                : _cancelRename,
+                            child: const Icon(Icons.close_rounded, size: 17),
+                          ),
+                        ],
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.file.name,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: theme.colorScheme.foreground,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (widget.file.isDirectory &&
+                              widget.file.subFileCount != null)
+                            Text(
+                              '${widget.file.subFileCount} 个项目',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: theme.colorScheme.mutedForeground,
+                              ),
+                            ),
+                        ],
+                      ),
+              ),
               SizedBox(
                 width: 80,
                 child: Text(
-                  file.formattedSize,
+                  widget.file.formattedSize,
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     fontSize: 12,
@@ -187,14 +308,11 @@ class FileListTile extends StatelessWidget {
                   ),
                 ),
               ),
-
               const SizedBox(width: 12),
-
-              // Modified date
               SizedBox(
                 width: 120,
                 child: Text(
-                  file.modifiedAt,
+                  widget.file.modifiedAt,
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     fontSize: 11,
