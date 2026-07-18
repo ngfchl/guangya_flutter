@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
@@ -22,7 +21,7 @@ class MediaLibraryStore {
     );
     _database = await openDatabase(
       databasePath,
-      version: 3,
+      version: 4,
       onCreate: (db, _) async {
         await _createSchema(db);
       },
@@ -102,18 +101,6 @@ class MediaLibraryStore {
       orderBy: 'title COLLATE NOCASE',
     );
     return rows.map(_itemFromRow).toList();
-  }
-
-  Future<Uint8List?> posterBytes(String libraryID, String fileID) async {
-    final rows = await (await _db).query(
-      'media_items',
-      columns: const ['poster'],
-      where: 'library_id = ? AND file_id = ?',
-      whereArgs: [libraryID, fileID],
-      limit: 1,
-    );
-    final value = rows.isEmpty ? null : rows.first['poster'];
-    return value is Uint8List ? value : null;
   }
 
   Future<void> saveLibraries(List<MediaLibraryDefinition> libraries) async {
@@ -209,9 +196,33 @@ class MediaLibraryStore {
         await txn.execute(
           'INSERT OR REPLACE INTO media_library_sources SELECT * FROM imported_backup.media_library_sources',
         );
-        await txn.execute(
-          'INSERT OR REPLACE INTO media_items SELECT * FROM imported_backup.media_items',
+        final importedColumns = await _tableColumns(
+          txn,
+          'imported_backup',
+          'media_items',
         );
+        final importedPosterPath = importedColumns.contains('poster_path')
+            ? 'poster_path'
+            : 'NULL';
+        final importedBackdropPath = importedColumns.contains('backdrop_path')
+            ? 'backdrop_path'
+            : 'NULL';
+        await txn.execute('''
+          INSERT OR REPLACE INTO media_items (
+            library_id, file_id, resource_path, cloud_name, file_size, gcid,
+            file_type, tmdb_id, media_kind, title, original_title,
+            release_date, overview, poster_path, backdrop_path, poster, backdrop,
+            has_chinese_audio, has_chinese_subtitle, collection_id,
+            collection_name, updated_at
+          )
+          SELECT
+            library_id, file_id, resource_path, cloud_name, file_size, gcid,
+            file_type, tmdb_id, media_kind, title, original_title,
+            release_date, overview, $importedPosterPath, $importedBackdropPath,
+            NULL, NULL, has_chinese_audio, has_chinese_subtitle, collection_id,
+            collection_name, updated_at
+          FROM imported_backup.media_items
+        ''');
       });
     } finally {
       await db.execute('DETACH DATABASE imported_backup');
@@ -219,14 +230,14 @@ class MediaLibraryStore {
     return optimizeStorage();
   }
 
-  /// Reclaims space used by imported backdrop BLOBs. Posters remain available
-  /// for offline poster walls; backdrops can always be fetched from TMDB again.
+  /// TMDB artwork is stored by address.  This removes legacy binary artwork
+  /// from imported databases, while retaining every media and scrape record.
   Future<MediaLibraryStorageStats> optimizeStorage() async {
     final db = await _db;
     final before = await _databaseBytes(db.path);
-    final removedBackdrops = await db.rawUpdate(
-      'UPDATE media_items SET backdrop = NULL WHERE backdrop IS NOT NULL',
-    );
+    final removedArtwork = await db.rawUpdate('''UPDATE media_items
+         SET poster = NULL, backdrop = NULL
+         WHERE poster IS NOT NULL OR backdrop IS NOT NULL''');
     await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
     await db.execute('PRAGMA optimize');
     await db.execute('VACUUM');
@@ -234,7 +245,7 @@ class MediaLibraryStore {
     return MediaLibraryStorageStats(
       beforeBytes: before,
       afterBytes: after,
-      removedBackdropCount: removedBackdrops,
+      removedArtworkCount: removedArtwork,
     );
   }
 
@@ -468,6 +479,8 @@ class MediaLibraryStore {
         original_title TEXT NOT NULL,
         release_date TEXT NOT NULL,
         overview TEXT NOT NULL,
+        poster_path TEXT,
+        backdrop_path TEXT,
         poster BLOB,
         backdrop BLOB,
         has_chinese_audio INTEGER NOT NULL DEFAULT 0,
@@ -508,6 +521,8 @@ class MediaLibraryStore {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_file_index_gcid ON file_index(gcid)',
     );
+    await _ensureColumn(db, 'media_items', 'poster_path', 'TEXT');
+    await _ensureColumn(db, 'media_items', 'backdrop_path', 'TEXT');
   }
 
   MediaLibraryItem _itemFromRow(Map<String, Object?> row) {
@@ -525,6 +540,8 @@ class MediaLibraryStore {
       'originalTitle': row['original_title'],
       'releaseDate': row['release_date'],
       'overview': row['overview'],
+      'posterPath': row['poster_path'],
+      'backdropPath': row['backdrop_path'],
       'hasChineseAudio': row['has_chinese_audio'] == 1,
       'hasChineseSubtitle': row['has_chinese_subtitle'] == 1,
       'collectionID': row['collection_id'],
@@ -547,6 +564,8 @@ class MediaLibraryStore {
     'original_title': item.originalTitle,
     'release_date': item.releaseDate,
     'overview': item.overview,
+    'poster_path': item.posterPath,
+    'backdrop_path': item.backdropPath,
     'has_chinese_audio': item.hasChineseAudio ? 1 : 0,
     'has_chinese_subtitle': item.hasChineseSubtitle ? 1 : 0,
     'collection_id': item.collectionID,
@@ -595,6 +614,8 @@ class MediaLibraryStore {
     'original_title',
     'release_date',
     'overview',
+    'poster_path',
+    'backdrop_path',
     'has_chinese_audio',
     'has_chinese_subtitle',
     'collection_id',
@@ -611,17 +632,41 @@ class MediaLibraryStore {
     }
     return bytes;
   }
+
+  Future<Set<String>> _tableColumns(
+    DatabaseExecutor db,
+    String schema,
+    String table,
+  ) async {
+    final rows = await db.rawQuery('PRAGMA $schema.table_info($table)');
+    return rows
+        .map((row) => row['name']?.toString())
+        .whereType<String>()
+        .toSet();
+  }
+
+  Future<void> _ensureColumn(
+    DatabaseExecutor db,
+    String table,
+    String column,
+    String definition,
+  ) async {
+    final columns = await _tableColumns(db, 'main', table);
+    if (!columns.contains(column)) {
+      await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
+    }
+  }
 }
 
 class MediaLibraryStorageStats {
   final int beforeBytes;
   final int afterBytes;
-  final int removedBackdropCount;
+  final int removedArtworkCount;
 
   const MediaLibraryStorageStats({
     required this.beforeBytes,
     required this.afterBytes,
-    required this.removedBackdropCount,
+    required this.removedArtworkCount,
   });
 
   int get reclaimedBytes => (beforeBytes - afterBytes).clamp(0, beforeBytes);

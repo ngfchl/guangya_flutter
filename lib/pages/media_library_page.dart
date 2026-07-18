@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -1570,19 +1568,15 @@ class _MediaCollectionTile extends ConsumerWidget {
                         border: Border.all(color: cs.border),
                       ),
                       clipBehavior: Clip.antiAlias,
-                      child: FutureBuilder<Uint8List?>(
-                        future: ref
-                            .read(mediaLibraryProvider.notifier)
-                            .posterBytes(item),
-                        builder: (context, snapshot) {
-                          if (snapshot.data != null) {
-                            return Image.memory(
-                              snapshot.data!,
-                              fit: BoxFit.cover,
-                            );
-                          }
-                          if (posterURL != null) {
-                            return Image.network(
+                      child: posterURL == null
+                          ? Center(
+                              child: Icon(
+                                Icons.collections_bookmark_rounded,
+                                color: cs.mutedForeground,
+                                size: 34,
+                              ),
+                            )
+                          : Image.network(
                               posterURL,
                               fit: BoxFit.cover,
                               errorBuilder: (_, _, _) => Center(
@@ -1592,17 +1586,7 @@ class _MediaCollectionTile extends ConsumerWidget {
                                   size: 34,
                                 ),
                               ),
-                            );
-                          }
-                          return Center(
-                            child: Icon(
-                              Icons.collections_bookmark_rounded,
-                              color: cs.mutedForeground,
-                              size: 34,
                             ),
-                          );
-                        },
-                      ),
                     ),
                     Positioned(
                       right: 7,
@@ -1715,28 +1699,14 @@ class _MediaPosterTile extends ConsumerWidget {
                           border: Border.all(color: cs.border),
                         ),
                         clipBehavior: Clip.antiAlias,
-                        child: FutureBuilder<Uint8List?>(
-                          future: ref
-                              .read(mediaLibraryProvider.notifier)
-                              .posterBytes(item),
-                          builder: (context, snapshot) {
-                            if (snapshot.data != null) {
-                              return Image.memory(
-                                snapshot.data!,
-                                fit: BoxFit.cover,
-                              );
-                            }
-                            if (posterURL != null) {
-                              return Image.network(
+                        child: posterURL == null
+                            ? _posterFallback(cs, isSeries)
+                            : Image.network(
                                 posterURL,
                                 fit: BoxFit.cover,
                                 errorBuilder: (_, _, _) =>
                                     _posterFallback(cs, isSeries),
-                              );
-                            }
-                            return _posterFallback(cs, isSeries);
-                          },
-                        ),
+                              ),
                       ),
                       if (work.resources.length > 1)
                         Positioned(
@@ -1992,23 +1962,14 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           height: 270,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(6),
-            child: FutureBuilder<Uint8List?>(
-              future: ref.read(mediaLibraryProvider.notifier).posterBytes(item),
-              builder: (context, snapshot) {
-                if (snapshot.data != null) {
-                  return Image.memory(snapshot.data!, fit: BoxFit.cover);
-                }
-                if (posterURL != null) {
-                  return Image.network(
+            child: posterURL == null
+                ? _detailPosterFallback(cs, isSeries)
+                : Image.network(
                     posterURL,
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) =>
                         _detailPosterFallback(cs, isSeries),
-                  );
-                }
-                return _detailPosterFallback(cs, isSeries);
-              },
-            ),
+                  ),
           ),
         ),
         const SizedBox(width: 18),
