@@ -2081,7 +2081,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
+              SelectableText(
                 item.title,
                 style: TextStyle(
                   fontSize: 22,
@@ -2092,7 +2092,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               if (item.originalTitle.isNotEmpty &&
                   item.originalTitle != item.title) ...[
                 const SizedBox(height: 3),
-                Text(
+                SelectableText(
                   item.originalTitle,
                   style: TextStyle(fontSize: 13, color: cs.mutedForeground),
                 ),
@@ -2112,7 +2112,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                 ],
               ),
               const SizedBox(height: 16),
-              Text(
+              SelectableText(
                 item.overview.isEmpty ? '暂无影视简介。' : item.overview,
                 style: TextStyle(
                   fontSize: 13,
@@ -2348,17 +2348,16 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         children: [
           SizedBox(
             width: 64,
-            child: Text(
+            child: SelectableText(
               label,
               style: TextStyle(fontSize: 12, color: cs.mutedForeground),
             ),
           ),
           Expanded(
-            child: Text(
+            child: SelectableText(
               value,
               style: TextStyle(fontSize: 12, color: cs.foreground),
               maxLines: 2,
-              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -2486,10 +2485,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
+                        SelectableText(
                           resource.file.name,
                           maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -2497,10 +2495,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
+                        SelectableText(
                           '${resource.file.formattedSize} · ${resource.file.modifiedAt}',
                           maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 11,
                             color: cs.mutedForeground,
