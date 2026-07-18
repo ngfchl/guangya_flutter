@@ -2030,11 +2030,30 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   }
 
   Widget _resourceList(BuildContext context, ShadColorScheme cs) {
+    final isSeries = widget.work.primary.mediaKind == TMDBMediaKind.tv;
+    final episodesBySeason = <int, List<MediaLibraryItem>>{};
+    if (isSeries) {
+      for (final resource in widget.work.resources) {
+        final parsed = ParsedMediaName.parse(resource.file.name);
+        (episodesBySeason[parsed.season ?? 1] ??= []).add(resource);
+      }
+      for (final values in episodesBySeason.values) {
+        values.sort((a, b) {
+          final aEpisode = ParsedMediaName.parse(a.file.name).episode ?? 9999;
+          final bEpisode = ParsedMediaName.parse(b.file.name).episode ?? 9999;
+          return aEpisode == bEpisode
+              ? a.file.name.compareTo(b.file.name)
+              : aEpisode.compareTo(bEpisode);
+        });
+      }
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          widget.work.resources.length > 1
+          isSeries
+              ? '剧集 (${widget.work.resources.length} 集)'
+              : widget.work.resources.length > 1
               ? '资源版本 (${widget.work.resources.length})'
               : '媒体资源',
           style: TextStyle(
@@ -2044,69 +2063,101 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           ),
         ),
         const SizedBox(height: 8),
-        ...widget.work.resources.map((resource) {
-          final selected = resource.id == _resource.id;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: ShadContextMenuRegion(
-              items: [
-                ShadContextMenuItem.inset(
-                  leading: const Icon(LucideIcons.play, size: 16),
-                  onPressed: () => widget.onPlay(resource),
-                  child: const Text('播放'),
+        if (isSeries && episodesBySeason.isNotEmpty)
+          for (final entry in episodesBySeason.entries) ...[
+            Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 6),
+              child: Text(
+                '第 ${entry.key} 季',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: cs.foreground,
                 ),
-                ShadContextMenuItem.inset(
-                  leading: const Icon(LucideIcons.monitorPlay, size: 16),
-                  onPressed: () => widget.onExternalPlay(resource),
-                  child: const Text('外部播放器'),
-                ),
-                ShadContextMenuItem.inset(
-                  leading: const Icon(LucideIcons.download, size: 16),
-                  onPressed: () => widget.onDownload(resource),
-                  child: const Text('下载'),
-                ),
-              ],
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () => setState(() => _resource = resource),
-                  borderRadius: BorderRadius.circular(6),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: selected
-                          ? cs.primary.withValues(alpha: 0.10)
-                          : cs.card,
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: selected ? cs.primary : cs.border,
+              ),
+            ),
+            ...entry.value.map(
+              (resource) => _resourceTile(
+                resource,
+                cs,
+                episode: ParsedMediaName.parse(resource.file.name).episode,
+              ),
+            ),
+          ]
+        else
+          ...widget.work.resources.map(
+            (resource) => _resourceTile(resource, cs),
+          ),
+      ],
+    );
+  }
+
+  Widget _resourceTile(
+    MediaLibraryItem resource,
+    ShadColorScheme cs, {
+    int? episode,
+  }) {
+    final selected = resource.id == _resource.id;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: ShadContextMenuRegion(
+        items: [
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.play, size: 16),
+            onPressed: () => widget.onPlay(resource),
+            child: const Text('播放'),
+          ),
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.monitorPlay, size: 16),
+            onPressed: () => widget.onExternalPlay(resource),
+            child: const Text('外部播放器'),
+          ),
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.download, size: 16),
+            onPressed: () => widget.onDownload(resource),
+            child: const Text('下载'),
+          ),
+        ],
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => setState(() => _resource = resource),
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: selected ? cs.primary.withValues(alpha: 0.10) : cs.card,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: selected ? cs.primary : cs.border),
+              ),
+              child: Row(
+                children: [
+                  if (episode != null)
+                    SizedBox(
+                      width: 38,
+                      child: Text(
+                        'E${episode.toString().padLeft(2, '0')}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: cs.primary,
+                        ),
                       ),
                     ),
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                resource.file.name,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: cs.foreground,
-                                ),
-                              ),
-                            ),
-                            if (selected)
-                              Icon(
-                                Icons.check_circle_rounded,
-                                size: 16,
-                                color: cs.primary,
-                              ),
-                          ],
+                        Text(
+                          resource.file.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: cs.foreground,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -2121,12 +2172,18 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                       ],
                     ),
                   ),
-                ),
+                  if (selected)
+                    Icon(
+                      Icons.check_circle_rounded,
+                      size: 16,
+                      color: cs.primary,
+                    ),
+                ],
               ),
             ),
-          );
-        }),
-      ],
+          ),
+        ),
+      ),
     );
   }
 }
