@@ -919,37 +919,41 @@ class _CreateMediaLibraryDialogState
                         Divider(height: 1, color: cs.border),
                     itemBuilder: (context, index) {
                       final folder = _folders[index];
-                      return InkWell(
-                        onTap: () {
-                          setState(() => _browserPath.add(folder));
-                          _loadFolders();
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 11,
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.folder_rounded,
-                                size: 19,
-                                color: cs.primary,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  folder.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                      return MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            setState(() => _browserPath.add(folder));
+                            _loadFolders();
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 11,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.folder_rounded,
+                                  size: 19,
+                                  color: cs.primary,
                                 ),
-                              ),
-                              Icon(
-                                Icons.chevron_right_rounded,
-                                size: 18,
-                                color: cs.mutedForeground,
-                              ),
-                            ],
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    folder.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.chevron_right_rounded,
+                                  size: 18,
+                                  color: cs.mutedForeground,
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       );
@@ -987,54 +991,60 @@ class _LibraryRow extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: selected ? cs.primary : cs.border),
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-          child: Row(
-            children: [
-              Icon(
-                Icons.video_library_rounded,
-                size: 20,
-                color: selected ? cs.primary : cs.mutedForeground,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      library.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: selected
-                            ? FontWeight.w700
-                            : FontWeight.w500,
-                        color: cs.foreground,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.video_library_rounded,
+                  size: 20,
+                  color: selected ? cs.primary : cs.mutedForeground,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        library.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: selected
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                          color: cs.foreground,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${library.kind.title} · ${library.rootPath}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-                    ),
-                  ],
+                      const SizedBox(height: 2),
+                      Text(
+                        '${library.kind.title} · ${library.rootPath}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              ShadTooltip(
-                builder: (_) => const Text('删除媒体库'),
-                child: ShadButton.destructive(
-                  size: ShadButtonSize.sm,
-                  onPressed: onDelete,
-                  child: const Icon(Icons.delete_outline_rounded, size: 15),
+                ShadTooltip(
+                  builder: (_) => const Text('删除媒体库'),
+                  child: ShadButton.destructive(
+                    size: ShadButtonSize.sm,
+                    onPressed: onDelete,
+                    child: const Icon(Icons.delete_outline_rounded, size: 15),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
