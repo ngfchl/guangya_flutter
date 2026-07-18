@@ -1946,7 +1946,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                 widget.onRefreshAndRecognize();
               },
               leading: const Icon(Icons.sync_rounded, size: 16),
-              child: const Text('同步并自动识别'),
+              child: const Text('同步云盘命名并识别'),
             ),
             const SizedBox(height: 6),
             ShadButton.ghost(

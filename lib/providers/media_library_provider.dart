@@ -525,7 +525,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     if (_api == null || apiKey.trim().isEmpty) return;
     final groups = <String, List<MediaLibraryItem>>{};
     for (final item in values) {
-      final parsed = ParsedMediaName.parse(item.file.name);
+      final parsed = ParsedMediaName.parse(
+        item.file.name,
+        directoryName: _parentDirectoryName(item.file.cloudPath),
+      );
       final key =
           '${item.mediaKind?.name ?? 'automatic'}:${parsed.title.toLowerCase()}';
       groups.putIfAbsent(key, () => []).add(item);
@@ -533,13 +536,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final updates = <MediaLibraryItem>[];
     for (final group in groups.values) {
       final prototype = group.first;
+      final fallback = MediaLibraryItem.fromFile(
+        prototype.libraryID,
+        prototype.file,
+        directoryName: _parentDirectoryName(prototype.file.cloudPath),
+      );
       final recognized = await _recognizeMediaItem(
-        prototype.copyWith(file: prototype.file),
+        fallback,
         apiKey,
         proxyHost: StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
         proxyPort: StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
       );
-      updates.addAll(group.map((item) => recognized.copyWith(file: item.file)));
+      final resolved = recognized.tmdbID == null && prototype.tmdbID != null
+          ? prototype
+          : recognized;
+      updates.addAll(group.map((item) => resolved.copyWith(file: item.file)));
     }
     if (updates.isEmpty) return;
     await _store.upsertItems(updates);
@@ -562,6 +573,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
     state = state.copyWith(statusMessage: '正在同步云盘文件信息…', clearError: true);
     final updates = <MediaLibraryItem>[];
+    final failures = <String>[];
+    var recognizedCount = 0;
     for (final original in originals) {
       try {
         final detail = await _api!.fsDetail(original.file.id);
@@ -600,20 +613,38 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 proxyPort:
                     StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
               );
+        if (updated.tmdbID != null) recognizedCount++;
+        // A temporary TMDB or network failure must not erase a previously
+        // scraped item just because its refreshed file metadata was available.
+        if (updated.tmdbID == null && original.tmdbID != null) {
+          updated = original.copyWith(
+            file: latestFile,
+            updatedAt: DateTime.now(),
+          );
+        }
         updated = await _renameMatchedMediaFile(updated);
         updates.add(updated);
-      } catch (_) {
-        // Keep indexing the remaining resources when one cloud detail fails.
+      } catch (error) {
+        failures.add('${original.file.name}: $error');
       }
     }
-    if (updates.isEmpty) return;
-    await _store.upsertItems(updates);
-    _searchResultsCache.clear();
-    final byID = {for (final item in updates) item.id: item};
-    state = state.copyWith(
-      items: state.items.map((item) => byID[item.id] ?? item).toList(),
-      statusMessage: '已同步并重新识别 ${updates.length} 个资源',
-    );
+    if (updates.isNotEmpty) {
+      await _store.upsertItems(updates);
+      _searchResultsCache.clear();
+      final byID = {for (final item in updates) item.id: item};
+      state = state.copyWith(
+        items: state.items.map((item) => byID[item.id] ?? item).toList(),
+        statusMessage: failures.isEmpty
+            ? '已同步 ${updates.length} 个资源，自动识别 $recognizedCount 个'
+            : '已同步 ${updates.length} 个资源，识别 $recognizedCount 个，${failures.length} 个同步失败',
+        errorMessage: failures.isEmpty ? null : failures.first,
+      );
+    } else if (failures.isNotEmpty) {
+      state = state.copyWith(
+        errorMessage: '同步失败：${failures.first}',
+        statusMessage: '未能同步云盘文件信息',
+      );
+    }
   }
 
   Future<MediaLibraryItem> applyTMDBMatch(
@@ -748,22 +779,66 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }) async {
     if (_api == null || apiKey.trim().isEmpty) return fallback;
     try {
+      final parsed = ParsedMediaName.parse(
+        fallback.file.name,
+        directoryName: _parentDirectoryName(fallback.file.cloudPath),
+      );
+      final requestedKind = fallback.mediaKind == TMDBMediaKind.tv
+          ? 'tv'
+          : fallback.mediaKind == TMDBMediaKind.movie
+          ? 'movie'
+          : 'auto';
       final result = await _api!.tmdbSearch(
         fallback.title,
         apiKey: apiKey,
+        mediaKind: requestedKind,
         proxyHost: proxyHost,
         proxyPort: proxyPort,
+        year: parsed.year,
       );
       final values = result['results'];
       if (values is! List) return fallback;
+      final expectedType = requestedKind == 'auto' ? null : requestedKind;
+      final normalizedTitle = _normalizeMediaTitle(fallback.title);
+      if (normalizedTitle.isEmpty) return fallback;
       Map<String, dynamic>? candidate;
+      var bestScore = -1;
       for (final value in values) {
         if (value is! Map) continue;
         final map = Map<String, dynamic>.from(value);
-        final type = map['media_type']?.toString();
-        if (type == 'movie' || type == 'tv') {
+        final type = map['media_type']?.toString() ?? expectedType;
+        if (type != 'movie' && type != 'tv') continue;
+        final releaseDate =
+            (map['release_date'] ?? map['first_air_date'])?.toString() ?? '';
+        // An explicit year in the file name is authoritative. Do not silently
+        // attach a remake or same-title work from a different year.
+        if (parsed.year != null && !releaseDate.startsWith('${parsed.year}')) {
+          continue;
+        }
+        final candidateTitle = _normalizeMediaTitle(
+          (map['title'] ?? map['name'] ?? '').toString(),
+        );
+        final originalTitle = _normalizeMediaTitle(
+          (map['original_title'] ?? map['original_name'] ?? '').toString(),
+        );
+        var score = 0;
+        if (candidateTitle == normalizedTitle ||
+            originalTitle == normalizedTitle) {
+          score += 100;
+        } else if (candidateTitle.contains(normalizedTitle) ||
+            normalizedTitle.contains(candidateTitle) ||
+            originalTitle.contains(normalizedTitle) ||
+            normalizedTitle.contains(originalTitle)) {
+          score += 40;
+        }
+        if (score == 0) continue;
+        if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
+          score += 30;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          map['media_type'] = type;
           candidate = map;
-          break;
         }
       }
       if (candidate == null) return fallback;
@@ -921,6 +996,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   String _parentPath(String cloudPath) {
     final index = cloudPath.lastIndexOf(RegExp(r'[\\/]'));
     return index <= 0 ? '' : cloudPath.substring(0, index);
+  }
+
+  String _normalizeMediaTitle(String value) {
+    return value.toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9\u4e00-\u9fff]+'),
+      '',
+    );
   }
 
   String _safeCloudName(String value) {
