@@ -472,6 +472,7 @@ class _CloudSidebar extends StatelessWidget {
               icon: Icons.cloud_sync_rounded,
               title: '光鸭云盘',
               subtitle: 'Cloud Workspace',
+              imageAsset: 'assets/branding/guangya_icon.png',
             ),
             const SizedBox(height: 18),
             Expanded(
@@ -655,11 +656,13 @@ class _SidebarBrand extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
+  final String? imageAsset;
 
   const _SidebarBrand({
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.imageAsset,
   });
 
   @override
@@ -671,7 +674,6 @@ class _SidebarBrand extends StatelessWidget {
           width: 46,
           height: 46,
           decoration: BoxDecoration(
-            color: cs.primary,
             borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
@@ -681,7 +683,21 @@ class _SidebarBrand extends StatelessWidget {
               ),
             ],
           ),
-          child: Icon(icon, color: Colors.white, size: 26),
+          child: imageAsset == null
+              ? DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: cs.primary,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, color: Colors.white, size: 26),
+                )
+              : ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.asset(
+                    imageAsset!,
+                    filterQuality: FilterQuality.high,
+                  ),
+                ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -2641,7 +2657,14 @@ class _ShadLoading extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(width: 40, height: 40, child: ShadProgress()),
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: CircularProgressIndicator(
+              strokeWidth: 3,
+              color: cs.mutedForeground,
+            ),
+          ),
           const SizedBox(height: 16),
           Text(
             '正在加载文件夹内容...',

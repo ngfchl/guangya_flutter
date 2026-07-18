@@ -54,7 +54,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     width: 80,
                     height: 80,
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.primary,
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: [
                         BoxShadow(
@@ -64,10 +63,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                         ),
                       ],
                     ),
-                    child: Icon(
-                      LucideIcons.cloud,
-                      size: 48,
-                      color: theme.colorScheme.primaryForeground,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: Image.asset(
+                        'assets/branding/guangya_icon.png',
+                        filterQuality: FilterQuality.high,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -184,14 +185,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               onPressed: auth.codeCountdown > 0
                   ? null
                   : () {
-                      ref.read(authProvider.notifier).updatePhoneNumber(
-                          _phoneController.text);
+                      ref
+                          .read(authProvider.notifier)
+                          .updatePhoneNumber(_phoneController.text);
                       ref.read(authProvider.notifier).sendVerificationCode();
                     },
               child: Text(
-                auth.codeCountdown > 0
-                    ? '${auth.codeCountdown}s'
-                    : '获取验证码',
+                auth.codeCountdown > 0 ? '${auth.codeCountdown}s' : '获取验证码',
               ),
             ),
           ],
@@ -221,10 +221,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         const SizedBox(height: 24),
         ShadButton(
           onPressed: () {
-            ref.read(authProvider.notifier).updatePhoneNumber(
-                _phoneController.text);
-            ref.read(authProvider.notifier).updateVerificationCode(
-                _codeController.text);
+            ref
+                .read(authProvider.notifier)
+                .updatePhoneNumber(_phoneController.text);
+            ref
+                .read(authProvider.notifier)
+                .updateVerificationCode(_codeController.text);
             ref.read(authProvider.notifier).verifySMSCode();
           },
           child: const Text('登录'),
