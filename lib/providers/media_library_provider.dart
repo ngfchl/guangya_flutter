@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter_riverpod/legacy.dart';
@@ -587,7 +588,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           '[同步识别][DEBUG] 开始：${original.file.name} '
           '(fileId=${original.id}, gcid=${original.file.gcid ?? '-'})',
         );
-        final latestFile = await _resolveCurrentCloudFile(original.file);
+        final latestFile = await _resolveCurrentCloudFile(
+          original.file,
+          libraryID: original.libraryID,
+        );
         if (latestFile == null) {
           throw StateError('云盘中未找到该文件');
         }
@@ -775,7 +779,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           parentID: renamedFile.parentID,
           fullParentIDs: renamedFile.fullParentIDs,
         );
-        final resolved = await _resolveCurrentCloudFile(known) ?? known;
+        final resolved =
+            await _resolveCurrentCloudFile(known, libraryID: item.libraryID) ??
+            known;
         replacements['${item.libraryID}:${item.id}'] = item.copyWith(
           file: resolved,
           updatedAt: DateTime.now(),
@@ -1618,7 +1624,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
   }
 
-  Future<CloudFile?> _resolveCurrentCloudFile(CloudFile knownFile) async {
+  Future<CloudFile?> _resolveCurrentCloudFile(
+    CloudFile knownFile, {
+    String? libraryID,
+  }) async {
     try {
       final detail = await _api!.fsDetail(knownFile.id);
       final current = _fileFromDetail(detail, knownFile.id, knownFile);
@@ -1634,6 +1643,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
     final cached = await FileMetadataCache.file(knownFile.id);
     final parentID = knownFile.parentID ?? cached?.parentID;
+    final gcid = knownFile.gcid?.trim();
+    if (cached != null &&
+        gcid != null &&
+        gcid.isNotEmpty &&
+        cached.gcid == gcid &&
+        cached.id != knownFile.id) {
+      _appendScanLog(
+        '[同步识别][DEBUG] 从 GCID 缓存恢复新文件：${knownFile.id} -> ${cached.id}',
+      );
+      return _cacheResolvedCloudFile(
+        knownFile,
+        cached,
+        cloudPath: cached.cloudPath.isEmpty ? null : cached.cloudPath,
+      );
+    }
     final candidates = <CloudFile>[];
     final candidateIDs = <String>{};
     void addCandidates(Iterable<CloudFile> files) {
@@ -1693,7 +1717,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     // The user may have renamed the file outside this app, so its old name is
     // no longer searchable. Resolve the previous parent directory by name and
     // compare every child by GCID, which remains stable across a rename.
-    final gcid = knownFile.gcid?.trim();
     final parentName = _parentDirectoryName(knownFile.cloudPath);
     if (gcid != null && gcid.isNotEmpty && parentName != null) {
       try {
@@ -1740,13 +1763,167 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         // The caller emits the final diagnostic after all resolution paths fail.
       }
     }
+    if (gcid != null && gcid.isNotEmpty && parentID != null) {
+      final located = await _resolveFromCurrentDirectory(
+        knownFile,
+        parentID: parentID,
+      );
+      if (located != null) return located;
+    }
+    final located = await _resolveFromLibrarySources(
+      knownFile,
+      libraryID: libraryID,
+    );
+    if (located != null) return located;
     return null;
+  }
+
+  Future<CloudFile?> _resolveFromCurrentDirectory(
+    CloudFile knownFile, {
+    required String parentID,
+  }) async {
+    final gcid = knownFile.gcid?.trim();
+    if (gcid == null || gcid.isEmpty) return null;
+    const maxFolders = 1200;
+    final parentPath = _parentPath(knownFile.cloudPath);
+    final queue = Queue<_ScanFolder>()..add(_ScanFolder(parentID, parentPath));
+    final visited = <String>{};
+    var searchedFolders = 0;
+    _appendScanLog('[同步识别][DEBUG] 从当前文件目录扫描：parentId=$parentID，gcid=$gcid');
+    while (queue.isNotEmpty && searchedFolders < maxFolders) {
+      final folder = queue.removeFirst();
+      if (folder.id == null || !visited.add(folder.id!)) continue;
+      searchedFolders++;
+      List<CloudFile> children;
+      try {
+        children = await _allRemoteFolderFiles(folder.id);
+      } catch (_) {
+        continue;
+      }
+      await FileMetadataCache.cacheFolderChildren(folder.id, children);
+      for (final child in children) {
+        final childPath = '${folder.path}/${child.name}';
+        if (child.isDirectory) {
+          queue.add(_ScanFolder(child.id, childPath));
+          continue;
+        }
+        var resolved = child;
+        if (resolved.gcid != gcid) {
+          try {
+            final detail = await _api!.fsDetail(child.id);
+            resolved = _fileFromDetail(detail, child.id, child) ?? child;
+          } catch (_) {
+            continue;
+          }
+        }
+        if (resolved.gcid == gcid) {
+          final exact = _withPath(resolved, childPath);
+          _appendScanLog(
+            '[同步识别][DEBUG] 当前目录定位成功：${knownFile.id} -> '
+            '${exact.id}，路径=${exact.cloudPath}',
+          );
+          return _cacheResolvedCloudFile(
+            knownFile,
+            exact,
+            cloudPath: exact.cloudPath,
+          );
+        }
+      }
+    }
+    _appendScanLog('[同步识别][DEBUG] 当前文件目录未命中：已检查 $searchedFolders 个目录');
+    return null;
+  }
+
+  Future<CloudFile?> _resolveFromLibrarySources(
+    CloudFile knownFile, {
+    String? libraryID,
+  }) async {
+    final gcid = knownFile.gcid?.trim();
+    if (gcid == null || gcid.isEmpty) return null;
+    final library = state.libraries
+        .where((item) => item.id == libraryID)
+        .firstOrNull;
+    if (library == null) return null;
+
+    const maxFolders = 6000;
+    final queue = Queue<_ScanFolder>();
+    for (final source in library.sources) {
+      queue.add(_ScanFolder(source.rootID, source.path));
+    }
+    final visited = <String>{};
+    var searchedFolders = 0;
+    _appendScanLog('[同步识别][DEBUG] 启动媒体库根目录 GCID 定向扫描：$gcid');
+    while (queue.isNotEmpty && searchedFolders < maxFolders) {
+      final folder = queue.removeFirst();
+      final key = folder.id ?? 'root:${folder.path}';
+      if (!visited.add(key)) continue;
+      searchedFolders++;
+      List<CloudFile> children;
+      try {
+        children = await _allRemoteFolderFiles(folder.id);
+      } catch (_) {
+        continue;
+      }
+      await FileMetadataCache.cacheFolderChildren(folder.id, children);
+      for (final child in children) {
+        final childPath = '${folder.path}/${child.name}';
+        if (child.isDirectory) {
+          queue.add(_ScanFolder(child.id, childPath));
+          continue;
+        }
+        var resolved = child;
+        if (resolved.gcid != gcid) {
+          try {
+            final detail = await _api!.fsDetail(child.id);
+            resolved = _fileFromDetail(detail, child.id, child) ?? child;
+          } catch (_) {
+            continue;
+          }
+        }
+        if (resolved.gcid == gcid) {
+          final exact = _withPath(resolved, childPath);
+          _appendScanLog(
+            '[同步识别][DEBUG] 媒体库源目录定位成功：${knownFile.id} -> '
+            '${exact.id}，路径=${exact.cloudPath}',
+          );
+          return _cacheResolvedCloudFile(
+            knownFile,
+            exact,
+            cloudPath: exact.cloudPath,
+          );
+        }
+      }
+    }
+    _appendScanLog(
+      '[同步识别][DEBUG] 媒体库源目录扫描未命中：已检查 $searchedFolders 个目录',
+      isError: true,
+    );
+    return null;
+  }
+
+  Future<List<CloudFile>> _allRemoteFolderFiles(String? parentID) async {
+    const pageSize = 1000;
+    final files = <CloudFile>[];
+    for (var page = 0; ; page++) {
+      final response = await _api!.fsFiles(
+        parentID: parentID,
+        page: page,
+        pageSize: pageSize,
+        orderBy: 0,
+        sortType: 0,
+      );
+      final batch = _extractFiles(response);
+      files.addAll(batch);
+      if (batch.length < pageSize) break;
+    }
+    return files;
   }
 
   Future<CloudFile> _cacheResolvedCloudFile(
     CloudFile knownFile,
-    CloudFile resolved,
-  ) async {
+    CloudFile resolved, {
+    String? cloudPath,
+  }) async {
     final parentPath = _parentPath(knownFile.cloudPath);
     final file = knownFile.copyWith(
       id: resolved.id,
@@ -1754,9 +1931,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       size: resolved.size,
       gcid: resolved.gcid,
       modifiedAt: resolved.modifiedAt,
-      cloudPath: parentPath.isEmpty
-          ? resolved.name
-          : '$parentPath/${resolved.name}',
+      cloudPath:
+          cloudPath ??
+          (parentPath.isEmpty ? resolved.name : '$parentPath/${resolved.name}'),
       parentID: resolved.parentID ?? knownFile.parentID,
       fullParentIDs: resolved.fullParentIDs ?? knownFile.fullParentIDs,
       fileType: resolved.fileType,
