@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -72,8 +74,8 @@ class MediaLibraryPage extends ConsumerStatefulWidget {
 }
 
 class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
-  String _tmdbApiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
-  bool _showApiKeyInput = false;
+  final String _tmdbApiKey =
+      StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
   bool _tmdbSearching = false;
   String? _tmdbError;
   List<Map<String, dynamic>> _tmdbResults = [];
@@ -81,13 +83,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   _MediaWork? _detailWork;
   _MediaWallFilter _wallFilter = _MediaWallFilter.all;
   String? _activeCollectionKey;
-  final _apiKeyController = TextEditingController();
   final _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _apiKeyController.text = _tmdbApiKey;
     Future.microtask(() {
       ref.read(mediaLibraryProvider.notifier).api = ref
           .read(authProvider.notifier)
@@ -98,7 +98,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
 
   @override
   void dispose() {
-    _apiKeyController.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -253,7 +252,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         Expanded(
           child: ShadInput(
             controller: _searchController,
-            placeholder: const Text('搜索影视库或 TMDB…'),
+            placeholder: const Text('搜索影视库或匹配 TMDB…'),
             leading: Icon(
               Icons.search_rounded,
               size: 16,
@@ -288,14 +287,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ),
         const SizedBox(width: 8),
         ShadButton.outline(
-          onPressed: _backupBusy || state.isScanning
-              ? null
-              : _optimizeScrapedStorage,
-          leading: const Icon(Icons.cleaning_services_rounded, size: 16),
-          child: const Text('数据库瘦身'),
-        ),
-        const SizedBox(width: 8),
-        ShadButton.outline(
           onPressed: state.selectedLibrary == null || state.isScanning
               ? null
               : () => ref
@@ -313,15 +304,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             child: const Text('停止'),
           ),
         ],
-        const SizedBox(width: 8),
-        ShadButton.outline(
-          onPressed: () => setState(() => _showApiKeyInput = !_showApiKeyInput),
-          leading: Icon(
-            _tmdbApiKey.isEmpty ? Icons.key_off_rounded : Icons.key_rounded,
-            size: 16,
-          ),
-          child: const Text('TMDB'),
-        ),
         const SizedBox(width: 8),
         ShadButton(
           onPressed: _tmdbApiKey.isEmpty
@@ -363,7 +345,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_showApiKeyInput) _buildTMDBConfig(context),
           Text(
             '媒体库',
             style: TextStyle(
@@ -395,32 +376,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                       );
                     },
                   ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTMDBConfig(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        border: Border.all(color: cs.border),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        children: [
-          ShadInput(
-            controller: _apiKeyController,
-            placeholder: const Text('TMDB API Key'),
-            obscureText: true,
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: ShadButton(onPressed: _saveApiKey, child: const Text('保存')),
           ),
         ],
       ),
@@ -492,10 +447,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         onBack: () => setState(() => _detailWork = null),
         onDownload: (item) =>
             ref.read(fileProvider.notifier).downloadFile(item.file),
-        onPlay: (item) => showShadDialog(
-          context: context,
-          builder: (_) => MediaPlayerDialog(file: item.file),
-        ),
+        onPlay: (item) => unawaited(showMediaPlayerDialog(context, item.file)),
         onExternalPlay: (item) => showShadDialog(
           context: context,
           builder: (_) => ExternalPlayerDialog(file: item.file),
@@ -903,15 +855,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     );
   }
 
-  void _saveApiKey() {
-    final key = _apiKeyController.text.trim();
-    StorageManager.set(StorageKeys.tmdbApiKey, key);
-    setState(() {
-      _tmdbApiKey = key;
-      _showApiKeyInput = false;
-    });
-  }
-
   Future<void> _exportScrapedData() async {
     final directory = await FilePicker.getDirectoryPath(
       dialogTitle: '选择刮削数据导出目录',
@@ -938,15 +881,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     setState(() => _backupBusy = true);
     try {
       await ref.read(mediaLibraryProvider.notifier).importScrapedData(path);
-    } finally {
-      if (mounted) setState(() => _backupBusy = false);
-    }
-  }
-
-  Future<void> _optimizeScrapedStorage() async {
-    setState(() => _backupBusy = true);
-    try {
-      await ref.read(mediaLibraryProvider.notifier).optimizeLocalStorage();
     } finally {
       if (mounted) setState(() => _backupBusy = false);
     }

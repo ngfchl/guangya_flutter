@@ -90,6 +90,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   GuangyaAPI? _api;
   final _store = MediaLibraryStore();
   final _tmdbDetailsRequests = <String, Future<Map<String, dynamic>>>{};
+  final _artworkHydrationLibraries = <String>{};
   bool _loaded = false;
   bool _cancelScan = false;
 
@@ -116,6 +117,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         items: items,
         scanLogs: logs,
       );
+      if (selectedID != null) {
+        unawaited(_hydrateMissingArtwork(selectedID, items));
+      }
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
     } finally {
@@ -124,12 +128,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> selectLibrary(String id) async {
+    final items = await _loadItems(id);
     state = state.copyWith(
       selectedLibraryID: id,
-      items: await _loadItems(id),
+      items: items,
       searchQuery: '',
       clearError: true,
     );
+    unawaited(_hydrateMissingArtwork(id, items));
   }
 
   Future<void> createLibrary({
@@ -222,6 +228,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         items: selectedID == null ? const [] : await _loadItems(selectedID),
         statusMessage: '刮削数据已导入，已回收 ${_formatBytes(stats.reclaimedBytes)}',
       );
+      if (selectedID != null) {
+        unawaited(_hydrateMissingArtwork(selectedID, state.items));
+      }
     } catch (error) {
       state = state.copyWith(errorMessage: '导入失败：$error');
     } finally {
@@ -496,6 +505,93 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       clearError: true,
     );
     return updated;
+  }
+
+  /// Old scrape backups stored artwork as BLOBs.  The compact SQLite schema
+  /// deliberately drops those images, so restore the durable TMDB paths from
+  /// their retained IDs in the background after an import or first load.
+  Future<void> _hydrateMissingArtwork(
+    String libraryID,
+    List<MediaLibraryItem> items,
+  ) async {
+    if (_api == null || _artworkHydrationLibraries.contains(libraryID)) return;
+    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    if (apiKey.trim().isEmpty) return;
+
+    final missingByTMDB = <String, List<MediaLibraryItem>>{};
+    for (final item in items) {
+      final id = item.tmdbID;
+      final kind = item.mediaKind;
+      final missingPoster = item.posterPath == null || item.posterPath!.isEmpty;
+      final missingBackdrop =
+          item.backdropPath == null || item.backdropPath!.isEmpty;
+      if (id == null || kind == null || (!missingPoster && !missingBackdrop)) {
+        continue;
+      }
+      missingByTMDB.putIfAbsent('${kind.name}:$id', () => []).add(item);
+    }
+    if (missingByTMDB.isEmpty) return;
+
+    _artworkHydrationLibraries.add(libraryID);
+    final proxyHost =
+        StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
+    final proxyPort =
+        StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
+    final concurrency =
+        (int.tryParse(
+                  StorageManager.get<String>(
+                        StorageKeys.mediaScanConcurrency,
+                      ) ??
+                      '3',
+                ) ??
+                3)
+            .clamp(1, 12);
+    final groups = missingByTMDB.entries.toList();
+    var completed = 0;
+
+    try {
+      for (var start = 0; start < groups.length; start += concurrency) {
+        final batch = groups.sublist(
+          start,
+          (start + concurrency).clamp(0, groups.length),
+        );
+        final results = await Future.wait(
+          batch.map((entry) async {
+            final prototype = entry.value.first;
+            try {
+              final details = await _tmdbDetails(
+                prototype.tmdbID!,
+                prototype.mediaKind,
+                apiKey: apiKey,
+                proxyHost: proxyHost,
+                proxyPort: proxyPort,
+              );
+              return entry.value
+                  .map((item) => _itemFromTMDBDetails(item, details))
+                  .toList();
+            } catch (_) {
+              return const <MediaLibraryItem>[];
+            }
+          }),
+        );
+        final updates = results.expand((items) => items).toList();
+        completed += batch.length;
+        if (updates.isNotEmpty) await _store.upsertItems(updates);
+        if (state.selectedLibraryID == libraryID) {
+          final updatedByID = {for (final item in updates) item.id: item};
+          state = state.copyWith(
+            items: state.items
+                .map((item) => updatedByID[item.id] ?? item)
+                .toList(),
+            statusMessage: completed == groups.length
+                ? '已补齐 ${groups.length} 个影视条目的海报与横幅'
+                : '正在补齐影视图片 $completed/${groups.length}',
+          );
+        }
+      }
+    } finally {
+      _artworkHydrationLibraries.remove(libraryID);
+    }
   }
 
   void clearError() {

@@ -28,7 +28,7 @@ extension WorkspaceToolDetails on WorkspaceTool {
       case WorkspaceTool.fastTransfer:
         return '秒传工具';
       case WorkspaceTool.tmdb:
-        return 'TMDB 整理';
+        return '媒体库管理';
       case WorkspaceTool.categories:
         return '分类管理';
     }

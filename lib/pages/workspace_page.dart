@@ -43,10 +43,7 @@ class _DraggedCloudFiles {
 
 void _openCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
   if (file.isVideo) {
-    showShadDialog<void>(
-      context: context,
-      builder: (_) => MediaPlayerDialog(file: file),
-    );
+    unawaited(showMediaPlayerDialog(context, file));
     return;
   }
   ref.read(fileProvider.notifier).downloadFile(file);
@@ -685,7 +682,7 @@ class _MediaSidebar extends ConsumerWidget {
             ),
             _SidebarTile(
               icon: Icons.auto_fix_high_rounded,
-              label: 'TMDB 整理',
+              label: '媒体库管理',
               selected: false,
               onTap: () => onTool(WorkspaceTool.tmdb),
             ),

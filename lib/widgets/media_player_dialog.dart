@@ -13,10 +13,36 @@ import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import '../providers/file_provider.dart';
 
+Future<void> showMediaPlayerDialog(BuildContext context, CloudFile file) async {
+  Future<void> openExternalPlayer() async {
+    await Future<void>.delayed(Duration.zero);
+    if (!context.mounted) return;
+    await showShadDialog<void>(
+      context: context,
+      builder: (_) => ExternalPlayerDialog(file: file),
+    );
+  }
+
+  try {
+    await showShadDialog<void>(
+      context: context,
+      builder: (_) =>
+          MediaPlayerDialog(file: file, onPlaybackFailure: openExternalPlayer),
+    );
+  } catch (_) {
+    await openExternalPlayer();
+  }
+}
+
 class MediaPlayerDialog extends ConsumerStatefulWidget {
   final CloudFile file;
+  final Future<void> Function()? onPlaybackFailure;
 
-  const MediaPlayerDialog({super.key, required this.file});
+  const MediaPlayerDialog({
+    super.key,
+    required this.file,
+    this.onPlaybackFailure,
+  });
 
   @override
   ConsumerState<MediaPlayerDialog> createState() => _MediaPlayerDialogState();
@@ -27,10 +53,10 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   late final VideoController _controller;
   StreamSubscription<VideoParams>? _videoParamsSubscription;
   Timer? _videoDimensionFallbackTimer;
-  final _videoKey = GlobalKey<VideoState>();
   late CloudFile _currentFile;
   String? _error;
   bool _loading = true;
+  bool _externalFallbackOpened = false;
   var _videoAspectRatio = 3 / 2;
   var _hasVideoDimensions = false;
   bool _showEpisodes = false;
@@ -41,21 +67,22 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   void initState() {
     super.initState();
     _player = Player();
-    _controller = VideoController(_player);
-    unawaited(
-      _controller.platform.future.then<void>(
-        (_) {},
-        onError: (Object error, StackTrace stackTrace) {
-          if (!mounted) return;
-          setState(() {
-            _error = error is MissingPluginException
-                ? '内置播放器插件未加载。请完全停止当前调试进程后重新运行应用。'
-                : '内置视频输出初始化失败：$error';
-            _loading = false;
-          });
-        },
-      ),
-    );
+    try {
+      _controller = VideoController(_player);
+      unawaited(
+        _controller.platform.future.then<void>(
+          (_) {},
+          onError: (Object error, StackTrace stackTrace) {
+            _handlePlaybackFailure(
+              error,
+              error is MissingPluginException ? '内置播放器插件未加载' : '内置视频输出初始化失败',
+            );
+          },
+        ),
+      );
+    } catch (error) {
+      _handlePlaybackFailure(error, '内置视频输出初始化失败');
+    }
     _videoParamsSubscription = _player.stream.videoParams.listen(
       _updateVideoDimensions,
     );
@@ -64,11 +91,14 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   }
 
   Future<void> _open([CloudFile? file]) async {
-    if (file != null && mounted) {
+    _videoDimensionFallbackTimer?.cancel();
+    if (mounted) {
       setState(() {
-        _currentFile = file;
+        if (file != null) _currentFile = file;
         _loading = true;
         _error = null;
+        _hasVideoDimensions = false;
+        _videoAspectRatio = 3 / 2;
       });
     }
     try {
@@ -91,13 +121,24 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
           .siblingFiles(_currentFile);
       _subtitleCandidates = _matchingSubtitles(_currentFile, folderFiles);
     } catch (error) {
-      if (mounted) {
-        setState(() {
-          _error = error.toString();
-          _loading = false;
-        });
-      }
-    } finally {}
+      _handlePlaybackFailure(error, '内置播放器打开失败');
+    }
+  }
+
+  void _handlePlaybackFailure(Object error, String message) {
+    if (!mounted) return;
+    setState(() {
+      _error = '$message：$error';
+      _loading = false;
+    });
+    if (_externalFallbackOpened || widget.onPlaybackFailure == null) return;
+    _externalFallbackOpened = true;
+    unawaited(() async {
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted) return;
+      await Navigator.of(context).maybePop();
+      await widget.onPlaybackFailure!();
+    }());
   }
 
   void _updateVideoDimensions(VideoParams params) {
@@ -208,7 +249,12 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     final cs = ShadTheme.of(context).colorScheme;
     final screen = MediaQuery.sizeOf(context);
     final sideWidth = _showEpisodes ? 250.0 : 0.0;
-    final maxVideoWidth = math.max(360.0, screen.width - sideWidth - 120);
+    const dialogPadding = 40.0;
+    final maxDialogWidth = math.max(400.0, screen.width - 32);
+    final maxVideoWidth = math.max(
+      360.0,
+      maxDialogWidth - sideWidth - dialogPadding,
+    );
     final maxVideoHeight = math.max(260.0, screen.height - 290);
     final preferredWidth = _hasVideoDimensions
         ? math.min(900.0, _videoAspectRatio * maxVideoHeight)
@@ -219,7 +265,12 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
         .toDouble();
     final contentWidth = videoWidth + sideWidth;
     return ShadDialog(
-      constraints: BoxConstraints(maxWidth: contentWidth),
+      constraints: BoxConstraints(
+        maxWidth: math.min(maxDialogWidth, contentWidth + dialogPadding),
+        maxHeight: math.max(360, screen.height - 24),
+      ),
+      padding: const EdgeInsets.all(20),
+      scrollable: false,
       title: Text(
         _currentFile.name,
         maxLines: 1,
@@ -241,71 +292,53 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
       ],
       child: Material(
         color: Colors.transparent,
-        child: AnimatedSize(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          child: SizedBox(
-            width: contentWidth,
-            height: videoHeight,
-            child: Row(
-              children: [
-                SizedBox(
-                  width: videoWidth,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: ColoredBox(
-                      color: Colors.black,
-                      child: _loading
-                          ? Center(
-                              child: CircularProgressIndicator(
-                                strokeWidth: 3,
-                                color: cs.primary,
-                              ),
-                            )
-                          : _error != null
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(24),
-                                child: Text(
-                                  '无法播放：$_error',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(color: cs.destructive),
-                                ),
-                              ),
-                            )
-                          : Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: Video(
-                                    key: _videoKey,
-                                    controller: _controller,
-                                    controls: NoVideoControls,
-                                  ),
-                                ),
-                                Positioned.fill(
-                                  child: _MediaPlaybackControls(
-                                    player: _player,
-                                    controller: _controller,
-                                    onSearchSubtitles:
-                                        _searchDirectorySubtitles,
-                                    onLoadLocalSubtitle: _loadLocalSubtitle,
-                                    onToggleFullscreen: () =>
-                                        _videoKey.currentState
-                                            ?.toggleFullscreen() ??
-                                        Future.value(),
-                                  ),
-                                ),
-                              ],
+        child: SizedBox(
+          width: contentWidth,
+          height: videoHeight,
+          child: Row(
+            children: [
+              SizedBox(
+                width: videoWidth,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: ColoredBox(
+                    color: Colors.black,
+                    child: _loading
+                        ? Center(
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: cs.primary,
                             ),
-                    ),
+                          )
+                        : _error != null
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Text(
+                                '无法播放：$_error',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: cs.destructive),
+                              ),
+                            ),
+                          )
+                        : Video(
+                            controller: _controller,
+                            controls: (videoState) => _MediaPlaybackControls(
+                              player: _player,
+                              fullscreen: videoState.isFullscreen(),
+                              onSearchSubtitles: _searchDirectorySubtitles,
+                              onLoadLocalSubtitle: _loadLocalSubtitle,
+                              onToggleFullscreen: videoState.toggleFullscreen,
+                            ),
+                          ),
                   ),
                 ),
-                if (_showEpisodes) ...[
-                  const SizedBox(width: 10),
-                  SizedBox(width: 240, child: _episodeList(cs)),
-                ],
+              ),
+              if (_showEpisodes) ...[
+                const SizedBox(width: 10),
+                SizedBox(width: 240, child: _episodeList(cs)),
               ],
-            ),
+            ],
           ),
         ),
       ),
@@ -371,14 +404,14 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
 
 class _MediaPlaybackControls extends StatefulWidget {
   final Player player;
-  final VideoController controller;
+  final bool fullscreen;
   final Future<void> Function() onSearchSubtitles;
   final Future<void> Function() onLoadLocalSubtitle;
   final Future<void> Function() onToggleFullscreen;
 
   const _MediaPlaybackControls({
     required this.player,
-    required this.controller,
+    required this.fullscreen,
     required this.onSearchSubtitles,
     required this.onLoadLocalSubtitle,
     required this.onToggleFullscreen,
@@ -390,6 +423,9 @@ class _MediaPlaybackControls extends StatefulWidget {
 
 class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
   double? _scrubbingValue;
+  final _ratePopover = ShadPopoverController();
+  final _audioPopover = ShadPopoverController();
+  final _subtitlePopover = ShadPopoverController();
 
   Future<void> _seekBy(int seconds) async {
     final position = widget.player.state.position + Duration(seconds: seconds);
@@ -402,57 +438,6 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
     await widget.player.seek(target);
   }
 
-  Future<void> _selectRate() async {
-    final rate = await showShadDialog<double>(
-      context: context,
-      builder: (context) => ShadDialog(
-        title: const Text('播放速度'),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final value in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
-              ShadButton.outline(
-                onPressed: () => Navigator.of(context).pop(value),
-                child: Text('${value}x'),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (rate != null) await widget.player.setRate(rate);
-  }
-
-  Future<void> _selectAudio() async {
-    final tracks = widget.player.state.tracks.audio;
-    final track = await showShadDialog<AudioTrack>(
-      context: context,
-      builder: (context) => _TrackPickerDialog<AudioTrack>(
-        title: '选择音轨',
-        tracks: tracks,
-        selectedID: widget.player.state.track.audio.id,
-        label: _trackLabel,
-        id: (track) => track.id,
-      ),
-    );
-    if (track != null) await widget.player.setAudioTrack(track);
-  }
-
-  Future<void> _selectSubtitle() async {
-    final tracks = widget.player.state.tracks.subtitle;
-    final track = await showShadDialog<SubtitleTrack>(
-      context: context,
-      builder: (context) => _TrackPickerDialog<SubtitleTrack>(
-        title: '选择字幕',
-        tracks: tracks,
-        selectedID: widget.player.state.track.subtitle.id,
-        label: _trackLabel,
-        id: (track) => track.id,
-      ),
-    );
-    if (track != null) await widget.player.setSubtitleTrack(track);
-  }
-
   String _trackLabel(dynamic track) {
     if (track.id == 'no') return '关闭';
     if (track.id == 'auto') return '自动';
@@ -462,6 +447,125 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
       track.codec,
     ].whereType<String>().where((value) => value.isNotEmpty).toSet();
     return values.isEmpty ? '轨道 ${track.id}' : values.join(' · ');
+  }
+
+  @override
+  void dispose() {
+    _ratePopover.dispose();
+    _audioPopover.dispose();
+    _subtitlePopover.dispose();
+    super.dispose();
+  }
+
+  Widget _rateMenu() {
+    return ShadPopover(
+      controller: _ratePopover,
+      popover: (_) => SizedBox(
+        width: 210,
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final value in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
+              ShadButton.outline(
+                size: ShadButtonSize.sm,
+                onPressed: () async {
+                  await widget.player.setRate(value);
+                  _ratePopover.hide();
+                  if (mounted) setState(() {});
+                },
+                child: Text('${value}x'),
+              ),
+          ],
+        ),
+      ),
+      child: _menuButton(
+        '${widget.player.state.rate.toStringAsFixed(widget.player.state.rate % 1 == 0 ? 0 : 2)}x',
+        () async => _ratePopover.toggle(),
+      ),
+    );
+  }
+
+  Widget _audioMenu() {
+    final tracks = widget.player.state.tracks.audio;
+    return ShadPopover(
+      controller: _audioPopover,
+      popover: (_) => _trackPopover<AudioTrack>(
+        title: '音轨',
+        tracks: tracks,
+        selectedID: widget.player.state.track.audio.id,
+        onSelect: (track) async {
+          await widget.player.setAudioTrack(track);
+          _audioPopover.hide();
+          if (mounted) setState(() {});
+        },
+      ),
+      child: _menuButton('音轨', () async => _audioPopover.toggle()),
+    );
+  }
+
+  Widget _subtitleMenu() {
+    final tracks = widget.player.state.tracks.subtitle;
+    return ShadPopover(
+      controller: _subtitlePopover,
+      popover: (_) => _trackPopover<SubtitleTrack>(
+        title: '字幕',
+        tracks: tracks,
+        selectedID: widget.player.state.track.subtitle.id,
+        onSelect: (track) async {
+          await widget.player.setSubtitleTrack(track);
+          _subtitlePopover.hide();
+          if (mounted) setState(() {});
+        },
+      ),
+      child: _menuButton('字幕', () async => _subtitlePopover.toggle()),
+    );
+  }
+
+  Widget _trackPopover<T>({
+    required String title,
+    required List<T> tracks,
+    required String selectedID,
+    required Future<void> Function(T track) onSelect,
+  }) {
+    return SizedBox(
+      width: 280,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: tracks.length,
+              itemBuilder: (context, index) {
+                final track = tracks[index];
+                final selected = (track as dynamic).id == selectedID;
+                return ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: () => onSelect(track),
+                  leading: Icon(
+                    selected ? Icons.check_rounded : Icons.graphic_eq_rounded,
+                    size: 15,
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _trackLabel(track),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -575,12 +679,9 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                                   ),
                                 ),
                                 const SizedBox(width: 20),
-                                _menuButton(
-                                  '${widget.player.state.rate.toStringAsFixed(widget.player.state.rate % 1 == 0 ? 0 : 2)}x',
-                                  _selectRate,
-                                ),
-                                _menuButton('音轨', _selectAudio),
-                                _menuButton('字幕', _selectSubtitle),
+                                _rateMenu(),
+                                _audioMenu(),
+                                _subtitleMenu(),
                                 _menuButton('搜字幕', widget.onSearchSubtitles),
                                 _menuButton('加载字幕', widget.onLoadLocalSubtitle),
                                 _controlButton(
@@ -613,7 +714,9 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                                   ),
                                 ),
                                 _controlButton(
-                                  Icons.fullscreen_rounded,
+                                  widget.fullscreen
+                                      ? Icons.fullscreen_exit_rounded
+                                      : Icons.fullscreen_rounded,
                                   widget.onToggleFullscreen,
                                 ),
                               ],
@@ -657,49 +760,6 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
     final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
     return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
-  }
-}
-
-class _TrackPickerDialog<T> extends StatelessWidget {
-  final String title;
-  final List<T> tracks;
-  final String selectedID;
-  final String Function(T track) label;
-  final String Function(T track) id;
-
-  const _TrackPickerDialog({
-    required this.title,
-    required this.tracks,
-    required this.selectedID,
-    required this.label,
-    required this.id,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return ShadDialog(
-      title: Text(title),
-      child: Material(
-        color: Colors.transparent,
-        child: SizedBox(
-          width: 360,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final track in tracks)
-                ListTile(
-                  onTap: () => Navigator.of(context).pop(track),
-                  title: Text(label(track)),
-                  trailing: id(track) == selectedID
-                      ? Icon(Icons.check_rounded, color: cs.primary)
-                      : null,
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 

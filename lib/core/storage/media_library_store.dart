@@ -238,7 +238,16 @@ class MediaLibraryStore {
     final removedArtwork = await db.rawUpdate('''UPDATE media_items
          SET poster = NULL, backdrop = NULL
          WHERE poster IS NOT NULL OR backdrop IS NOT NULL''');
-    await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    try {
+      await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    } on DatabaseException catch (error) {
+      // sqflite_darwin can report the successful checkpoint result as
+      // "Code=0 not an error". It is not a failed database optimization.
+      final text = error.toString();
+      if (!text.contains('Code=0') || !text.contains('not an error')) {
+        rethrow;
+      }
+    }
     await db.execute('PRAGMA optimize');
     await db.execute('VACUUM');
     final after = await _databaseBytes(db.path);
