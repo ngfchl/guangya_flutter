@@ -160,9 +160,40 @@ class MediaLibraryStore {
   Future<void> replaceItems(List<MediaLibraryItem> items) async {
     final db = await _db;
     await db.transaction((txn) async {
-      await txn.delete('media_items');
+      await txn.execute('''
+        CREATE TEMP TABLE IF NOT EXISTS desired_media_items (
+          library_id TEXT NOT NULL,
+          file_id TEXT NOT NULL,
+          PRIMARY KEY (library_id, file_id)
+        )
+      ''');
+      await txn.delete('desired_media_items');
       for (final item in items) {
-        await txn.insert('media_items', _itemRow(item));
+        await txn.insert('desired_media_items', {
+          'library_id': item.libraryID,
+          'file_id': item.file.id,
+        });
+        await _upsertItem(txn, item);
+      }
+      // Metadata updates deliberately omit poster/backdrop. Imported artwork is
+      // expensive to rebuild and remains valid while the resource still exists.
+      await txn.execute('''
+        DELETE FROM media_items
+        WHERE NOT EXISTS (
+          SELECT 1 FROM desired_media_items desired
+          WHERE desired.library_id = media_items.library_id
+            AND desired.file_id = media_items.file_id
+        )
+      ''');
+    });
+  }
+
+  Future<void> upsertItems(Iterable<MediaLibraryItem> items) async {
+    final values = items.toList();
+    if (values.isEmpty) return;
+    await (await _db).transaction((txn) async {
+      for (final item in values) {
+        await _upsertItem(txn, item);
       }
     });
   }
@@ -466,6 +497,19 @@ class MediaLibraryStore {
     'collection_name': item.collectionName,
     'updated_at': _epoch(item.updatedAt) ?? 0,
   };
+
+  Future<void> _upsertItem(Transaction txn, MediaLibraryItem item) async {
+    final values = _itemRow(item);
+    final updated = await txn.update(
+      'media_items',
+      values,
+      where: 'library_id = ? AND file_id = ?',
+      whereArgs: [item.libraryID, item.file.id],
+    );
+    if (updated == 0) {
+      await txn.insert('media_items', values);
+    }
+  }
 
   static int? _asInt(Object? value) =>
       value is int ? value : int.tryParse('$value');

@@ -293,7 +293,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                     a.title.toLowerCase().compareTo(b.title.toLowerCase()),
               );
             pendingPersistence = pendingPersistence.then(
-              (_) => _saveAllItems([...initialItems, ...unique.values]),
+              (_) => _upsertItems([item]),
             );
             await pendingPersistence;
             state = state.copyWith(
@@ -766,6 +766,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> _saveAllItems(List<MediaLibraryItem> items) {
     return _store.replaceItems(items);
+  }
+
+  Future<void> _upsertItems(Iterable<MediaLibraryItem> items) {
+    return _store.upsertItems(items);
   }
 
   /*
