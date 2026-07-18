@@ -1176,8 +1176,12 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           ),
         ],
         child: SizedBox(
-          width: 620,
-          height: 360,
+          width: (MediaQuery.sizeOf(dialogContext).width - 32)
+              .clamp(280.0, 620.0)
+              .toDouble(),
+          height: (MediaQuery.sizeOf(dialogContext).height - 260)
+              .clamp(240.0, 360.0)
+              .toDouble(),
           child: ListView.separated(
             itemCount: backups.length,
             separatorBuilder: (_, _) => const Divider(height: 1),
@@ -1578,8 +1582,11 @@ class _CreateMediaLibraryDialogState
   }
 
   Widget _form(ShadColorScheme cs) {
+    final width = (MediaQuery.sizeOf(context).width - 32)
+        .clamp(280.0, 520.0)
+        .toDouble();
     return SizedBox(
-      width: 520,
+      width: width,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1709,9 +1716,10 @@ class _CreateMediaLibraryDialogState
   }
 
   Widget _folderBrowser(ShadColorScheme cs) {
+    final size = MediaQuery.sizeOf(context);
     return SizedBox(
-      width: 560,
-      height: 390,
+      width: (size.width - 32).clamp(280.0, 560.0).toDouble(),
+      height: (size.height - 250).clamp(280.0, 390.0).toDouble(),
       child: Column(
         children: [
           Container(
@@ -3130,6 +3138,7 @@ class _ManualTMDBMatchDialogState
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final viewport = MediaQuery.sizeOf(context);
     return ShadDialog(
       title: const Text('手动匹配 TMDB'),
       description: const Text('选择一个结果后，会应用到该作品的全部资源版本。'),
@@ -3145,8 +3154,8 @@ class _ManualTMDBMatchDialogState
         ),
       ],
       child: SizedBox(
-        width: 620,
-        height: 560,
+        width: (viewport.width - 32).clamp(280.0, 620.0).toDouble(),
+        height: (viewport.height - 210).clamp(340.0, 560.0).toDouble(),
         child: Column(
           children: [
             _manualMatchField(
