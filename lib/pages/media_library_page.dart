@@ -120,10 +120,15 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         if (!mounted) return;
         ShadSonner.maybeOf(context)?.show(
           next.errorMessage == null
-              ? ShadToast(title: const Text('媒体库'), description: Text(message))
+              ? ShadToast(
+                  title: const Text('媒体库'),
+                  description: Text(message),
+                  showCloseIconOnlyWhenHovered: false,
+                )
               : ShadToast.destructive(
                   title: const Text('媒体库操作失败'),
                   description: Text(message),
+                  showCloseIconOnlyWhenHovered: false,
                 ),
         );
       });

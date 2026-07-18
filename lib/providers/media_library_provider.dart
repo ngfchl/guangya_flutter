@@ -572,21 +572,47 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     if (originals.isEmpty) return;
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
     state = state.copyWith(statusMessage: '正在同步云盘文件信息…', clearError: true);
-    final updates = <MediaLibraryItem>[];
-    final replacements = <String, MediaLibraryItem>{};
+    final synced = <_SyncedMediaItem>[];
     final failures = <String>[];
-    var recognizedCount = 0;
     for (final original in originals) {
       try {
         final latestFile = await _resolveCurrentCloudFile(original.file);
         if (latestFile == null) {
           throw StateError('云盘中未找到该文件');
         }
-        final fallback = MediaLibraryItem.fromFile(
-          original.libraryID,
-          latestFile,
-          directoryName: _parentDirectoryName(latestFile.cloudPath),
+        synced.add(
+          _SyncedMediaItem(
+            original: original,
+            fallback: MediaLibraryItem.fromFile(
+              original.libraryID,
+              latestFile,
+              directoryName: _parentDirectoryName(latestFile.cloudPath),
+            ),
+          ),
         );
+      } catch (error) {
+        failures.add('${original.file.name}: $error');
+      }
+    }
+    if (synced.isEmpty) {
+      state = state.copyWith(
+        errorMessage: failures.isEmpty
+            ? '未能同步云盘文件信息'
+            : '同步失败：${failures.first}',
+        statusMessage: '未能同步云盘文件信息',
+      );
+      return;
+    }
+
+    state = state.copyWith(statusMessage: '正在自动识别并规范命名…');
+    final updates = <MediaLibraryItem>[];
+    final replacements = <String, MediaLibraryItem>{};
+    var recognizedCount = 0;
+    var renamedCount = 0;
+    for (final entry in synced) {
+      final original = entry.original;
+      try {
+        final fallback = entry.fallback;
         var updated = apiKey.trim().isEmpty
             ? fallback
             : await _recognizeMediaItem(
@@ -602,11 +628,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         // scraped item just because its refreshed file metadata was available.
         if (updated.tmdbID == null && original.tmdbID != null) {
           updated = original.copyWith(
-            file: latestFile,
+            file: fallback.file,
             updatedAt: DateTime.now(),
           );
         }
+        final beforeName = updated.file.name;
         updated = await _renameMatchedMediaFile(updated);
+        if (updated.file.name != beforeName) renamedCount++;
         updates.add(updated);
         replacements['${original.libraryID}:${original.id}'] = updated;
       } catch (error) {
@@ -626,15 +654,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                   item,
             )
             .toList(),
-        statusMessage: failures.isEmpty
-            ? '已同步 ${updates.length} 个资源，自动识别 $recognizedCount 个'
-            : '已同步 ${updates.length} 个资源，识别 $recognizedCount 个，${failures.length} 个同步失败',
+        statusMessage: apiKey.trim().isEmpty
+            ? '已同步 ${updates.length} 个资源，未配置 TMDB，未执行自动识别'
+            : failures.isEmpty
+            ? '已同步 ${updates.length} 个资源，自动识别 $recognizedCount 个，规范命名 $renamedCount 个'
+            : '已同步 ${updates.length} 个资源，识别 $recognizedCount 个，规范命名 $renamedCount 个，${failures.length} 个失败',
         errorMessage: failures.isEmpty ? null : failures.first,
-      );
-    } else if (failures.isNotEmpty) {
-      state = state.copyWith(
-        errorMessage: '同步失败：${failures.first}',
-        statusMessage: '未能同步云盘文件信息',
       );
     }
   }
@@ -1731,6 +1756,13 @@ class _ScanFolder {
   final String path;
 
   const _ScanFolder(this.id, this.path);
+}
+
+class _SyncedMediaItem {
+  final MediaLibraryItem original;
+  final MediaLibraryItem fallback;
+
+  const _SyncedMediaItem({required this.original, required this.fallback});
 }
 
 final mediaLibraryProvider =
