@@ -521,14 +521,58 @@ class _CleanupList extends ConsumerWidget {
   }
 }
 
-class _DuplicateGroup extends ConsumerWidget {
+class _DuplicateGroup extends ConsumerStatefulWidget {
   final List<CloudFile> files;
 
   const _DuplicateGroup({required this.files});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_DuplicateGroup> createState() => _DuplicateGroupState();
+}
+
+class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
+  late Set<String> _selectedIDs;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedIDs = widget.files.skip(1).map((file) => file.id).toSet();
+  }
+
+  Future<void> _confirmDelete() async {
+    final targets = widget.files
+        .where((file) => _selectedIDs.contains(file.id))
+        .toList();
+    if (targets.isEmpty) return;
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: Text('删除 ${targets.length} 个重复文件？'),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton.destructive(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除已选项'),
+          ),
+        ],
+        child: const Padding(
+          padding: EdgeInsets.only(top: 10),
+          child: Text('同组至少会保留一项。删除后无法恢复，请确认选中的文件。'),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await ref.read(fileProvider.notifier).deleteFiles(targets);
+    if (mounted) setState(_selectedIDs.clear);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final selectedCount = _selectedIDs.length;
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(10),
@@ -538,21 +582,73 @@ class _DuplicateGroup extends ConsumerWidget {
       ),
       child: Column(
         children: [
-          for (final file in files.skip(1))
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(file.name),
-              subtitle: Text(
-                file.cloudPath,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+          Row(
+            children: [
+              Text(
+                '重复组 · ${widget.files.length} 项',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: cs.primary,
+                ),
               ),
-              trailing: ShadButton.destructive(
+              const Spacer(),
+              ShadButton.destructive(
                 size: ShadButtonSize.sm,
-                onPressed: () =>
-                    ref.read(fileProvider.notifier).deleteFiles([file]),
-                child: const Text('删除副本'),
+                onPressed: selectedCount == 0 ? null : _confirmDelete,
+                child: Text('删除已选 $selectedCount 项'),
+              ),
+            ],
+          ),
+          for (final file in widget.files)
+            Padding(
+              padding: const EdgeInsets.only(top: 7),
+              child: Row(
+                children: [
+                  ShadCheckbox(
+                    value: _selectedIDs.contains(file.id),
+                    onChanged: (value) => setState(() {
+                      if (value == true) {
+                        if (_selectedIDs.length < widget.files.length - 1) {
+                          _selectedIDs.add(file.id);
+                        }
+                      } else {
+                        _selectedIDs.remove(file.id);
+                      }
+                    }),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          file.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          file.cloudPath,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: cs.mutedForeground,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    _selectedIDs.contains(file.id) ? '将删除' : '保留',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _selectedIDs.contains(file.id)
+                          ? cs.destructive
+                          : cs.primary,
+                    ),
+                  ),
+                ],
               ),
             ),
         ],
