@@ -591,16 +591,20 @@ class _CreateMediaLibraryDialogState
   bool _isBrowsing = false;
   bool _isLoadingFolders = false;
   String? _folderError;
-  late String? _rootID;
-  late String _rootPath;
+  late List<MediaLibrarySource> _sources;
   final _browserPath = <CloudFile>[];
   var _folders = <CloudFile>[];
 
   @override
   void initState() {
     super.initState();
-    _rootID = widget.initialRootID;
-    _rootPath = widget.initialPath;
+    _sources = [
+      MediaLibrarySource(
+        id: 'initial-source',
+        rootID: widget.initialRootID,
+        path: widget.initialPath,
+      ),
+    ];
     _nameController = TextEditingController(text: widget.initialName);
   }
 
@@ -678,9 +682,23 @@ class _CreateMediaLibraryDialogState
   }
 
   void _useBrowserFolder() {
+    final rootID = _browserFolderID;
+    final rootPath = _browserLocation;
     setState(() {
-      _rootID = _browserFolderID;
-      _rootPath = _browserLocation;
+      if (rootID == null) {
+        _sources = [
+          MediaLibrarySource(id: 'root-source', rootID: null, path: rootPath),
+        ];
+      } else if (!_sources.any((source) => source.rootID == rootID)) {
+        _sources = [
+          ..._sources.where((source) => source.rootID != null),
+          MediaLibrarySource(
+            id: 'source-${DateTime.now().microsecondsSinceEpoch}',
+            rootID: rootID,
+            path: rootPath,
+          ),
+        ];
+      }
       if (_nameController.text.trim().isEmpty ||
           _nameController.text == widget.initialName) {
         _nameController.text = _browserPath.isEmpty
@@ -696,8 +714,9 @@ class _CreateMediaLibraryDialogState
         .read(mediaLibraryProvider.notifier)
         .createLibrary(
           name: _nameController.text,
-          rootID: _rootID,
-          rootPath: _rootPath,
+          rootID: _sources.isEmpty ? null : _sources.first.rootID,
+          rootPath: _sources.isEmpty ? '未配置目录' : _sources.first.path,
+          sources: _sources,
           kind: _kind,
           recursive: _recursive,
           minimumSizeMB: int.tryParse(_minSizeController.text.trim()) ?? 50,
@@ -731,7 +750,7 @@ class _CreateMediaLibraryDialogState
                 child: const Text('取消'),
               ),
               ShadButton(
-                onPressed: () => _create(context),
+                onPressed: _sources.isEmpty ? null : () => _create(context),
                 leading: const Icon(Icons.add_rounded, size: 16),
                 child: const Text('创建媒体库'),
               ),
@@ -754,48 +773,72 @@ class _CreateMediaLibraryDialogState
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: cs.border),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: cs.primary.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                  child: Icon(Icons.folder_rounded, color: cs.primary),
+                Row(
+                  children: [
+                    Icon(Icons.folder_rounded, color: cs.primary, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      '媒体来源 (${_sources.length})',
+                      style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                    ),
+                    const Spacer(),
+                    ShadButton.outline(
+                      size: ShadButtonSize.sm,
+                      onPressed: _startBrowsing,
+                      leading: const Icon(Icons.add_rounded, size: 15),
+                      child: const Text('添加目录'),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '媒体来源',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: cs.mutedForeground,
-                        ),
+                const SizedBox(height: 8),
+                if (_sources.isEmpty)
+                  Text(
+                    '请至少添加一个云盘目录',
+                    style: TextStyle(fontSize: 12, color: cs.destructive),
+                  )
+                else
+                  for (final source in _sources)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 5),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.folder_outlined,
+                            size: 16,
+                            color: cs.mutedForeground,
+                          ),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              source.path,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: cs.foreground,
+                              ),
+                            ),
+                          ),
+                          ShadButton.ghost(
+                            size: ShadButtonSize.sm,
+                            onPressed: () => setState(
+                              () => _sources.removeWhere(
+                                (candidate) => candidate.id == source.id,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.remove_circle_outline_rounded,
+                              size: 16,
+                              color: cs.destructive,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _rootPath,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: cs.foreground,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                ShadButton.outline(
-                  size: ShadButtonSize.sm,
-                  onPressed: _startBrowsing,
-                  leading: const Icon(Icons.folder_open_rounded, size: 15),
-                  child: const Text('浏览'),
-                ),
+                    ),
               ],
             ),
           ),
