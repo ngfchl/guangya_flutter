@@ -424,6 +424,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         onBack: () => setState(() => _detailWork = null),
         onDownload: (item) =>
             ref.read(fileProvider.notifier).downloadFile(item.file),
+        onPlay: (item) => ref.read(fileProvider.notifier).playFile(item.file),
+        onPlayInBrowser: (item) =>
+            ref.read(fileProvider.notifier).playInBrowser(item.file),
         onManualMatch: () => _showManualTMDBMatch(current ?? _detailWork!),
         onRescan: state.isScanning
             ? null
@@ -1533,6 +1536,8 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final _MediaWork work;
   final VoidCallback onBack;
   final ValueChanged<MediaLibraryItem> onDownload;
+  final ValueChanged<MediaLibraryItem> onPlay;
+  final ValueChanged<MediaLibraryItem> onPlayInBrowser;
   final VoidCallback onManualMatch;
   final VoidCallback? onRescan;
 
@@ -1540,6 +1545,8 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.work,
     required this.onBack,
     required this.onDownload,
+    required this.onPlay,
+    required this.onPlayInBrowser,
     required this.onManualMatch,
     this.onRescan,
   });
@@ -1567,7 +1574,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
             ShadButton.ghost(
               size: ShadButtonSize.sm,
@@ -1575,11 +1584,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               leading: const Icon(Icons.arrow_back_rounded, size: 16),
               child: const Text('返回海报墙'),
             ),
-            const Spacer(),
             ShadButton.outline(
               onPressed: widget.onManualMatch,
               leading: const Icon(Icons.manage_search_rounded, size: 16),
-              child: const Text('手动匹配'),
+              child: const Text('重新识别'),
             ),
             const SizedBox(width: 8),
             ShadButton.outline(
@@ -1589,9 +1597,19 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             ),
             const SizedBox(width: 8),
             ShadButton(
-              onPressed: () => widget.onDownload(_resource),
+              onPressed: () => widget.onPlay(_resource),
               leading: const Icon(Icons.play_arrow_rounded, size: 16),
-              child: const Text('打开资源'),
+              child: const Text('播放'),
+            ),
+            ShadButton.outline(
+              onPressed: () => widget.onPlayInBrowser(_resource),
+              leading: const Icon(Icons.open_in_browser_rounded, size: 16),
+              child: const Text('浏览器播放'),
+            ),
+            ShadButton.outline(
+              onPressed: () => widget.onDownload(_resource),
+              leading: const Icon(Icons.download_rounded, size: 16),
+              child: const Text('下载'),
             ),
           ],
         ),
@@ -1778,59 +1796,78 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           final selected = resource.id == _resource.id;
           return Padding(
             padding: const EdgeInsets.only(bottom: 6),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () => setState(() => _resource = resource),
-                borderRadius: BorderRadius.circular(6),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? cs.primary.withValues(alpha: 0.10)
-                        : cs.card,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: selected ? cs.primary : cs.border,
+            child: ShadContextMenuRegion(
+              items: [
+                ShadContextMenuItem.inset(
+                  leading: const Icon(LucideIcons.play, size: 16),
+                  onPressed: () => widget.onPlay(resource),
+                  child: const Text('播放'),
+                ),
+                ShadContextMenuItem.inset(
+                  leading: const Icon(LucideIcons.externalLink, size: 16),
+                  onPressed: () => widget.onPlayInBrowser(resource),
+                  child: const Text('浏览器播放'),
+                ),
+                ShadContextMenuItem.inset(
+                  leading: const Icon(LucideIcons.download, size: 16),
+                  onPressed: () => widget.onDownload(resource),
+                  child: const Text('下载'),
+                ),
+              ],
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => setState(() => _resource = resource),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? cs.primary.withValues(alpha: 0.10)
+                          : cs.card,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: selected ? cs.primary : cs.border,
+                      ),
                     ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              resource.file.name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: cs.foreground,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                resource.file.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: cs.foreground,
+                                ),
                               ),
                             ),
-                          ),
-                          if (selected)
-                            Icon(
-                              Icons.check_circle_rounded,
-                              size: 16,
-                              color: cs.primary,
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${resource.file.formattedSize} · ${resource.file.modifiedAt}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: cs.mutedForeground,
+                            if (selected)
+                              Icon(
+                                Icons.check_circle_rounded,
+                                size: 16,
+                                color: cs.primary,
+                              ),
+                          ],
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 4),
+                        Text(
+                          '${resource.file.formattedSize} · ${resource.file.modifiedAt}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: cs.mutedForeground,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

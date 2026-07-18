@@ -640,14 +640,42 @@ class FileNotifier extends StateNotifier<FileState> {
   }
 
   Future<void> downloadFile(CloudFile file) async {
+    await _openRemoteFile(
+      file,
+      preparingMessage: '正在准备下载…',
+      completedMessage: '下载链接已交给系统处理',
+    );
+  }
+
+  Future<void> playFile(CloudFile file) async {
+    await _openRemoteFile(
+      file,
+      preparingMessage: '正在准备播放…',
+      completedMessage: '已交给系统默认播放器',
+    );
+  }
+
+  Future<void> playInBrowser(CloudFile file) async {
+    await _openRemoteFile(
+      file,
+      preparingMessage: '正在准备浏览器播放…',
+      completedMessage: '已在外部浏览器打开播放链接',
+    );
+  }
+
+  Future<void> _openRemoteFile(
+    CloudFile file, {
+    required String preparingMessage,
+    required String completedMessage,
+  }) async {
     if (_api == null) return;
     try {
-      state = state.copyWith(statusMessage: '正在准备外部打开…');
+      state = state.copyWith(statusMessage: preparingMessage);
       final url = await _resolveOpenUrl(file);
       if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-        throw Exception('无法调用系统默认应用打开链接');
+        throw Exception('无法调用系统默认应用打开签名链接');
       }
-      state = state.copyWith(statusMessage: '已交给系统默认应用');
+      state = state.copyWith(statusMessage: completedMessage);
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
     }
