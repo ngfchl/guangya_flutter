@@ -124,6 +124,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     required String name,
     required String? rootID,
     required String rootPath,
+    List<MediaLibrarySource>? sources,
     MediaLibraryKind kind = MediaLibraryKind.mixed,
     bool recursive = true,
     int minimumSizeMB = 50,
@@ -135,9 +136,15 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final library = MediaLibraryDefinition(
       id: id,
       name: trimmed,
-      sources: [
-        MediaLibrarySource(id: '$id-source-0', rootID: rootID, path: rootPath),
-      ],
+      sources:
+          sources ??
+          [
+            MediaLibrarySource(
+              id: '$id-source-0',
+              rootID: rootID,
+              path: rootPath,
+            ),
+          ],
       kind: kind,
       recursive: recursive,
       minimumSizeMB: minimumSizeMB,
