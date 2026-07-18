@@ -202,7 +202,7 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
   }
 }
 
-class MediaSearchResultsPage extends ConsumerWidget {
+class MediaSearchResultsPage extends ConsumerStatefulWidget {
   final String query;
   final VoidCallback onClose;
 
@@ -213,14 +213,35 @@ class MediaSearchResultsPage extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MediaSearchResultsPage> createState() =>
+      _MediaSearchResultsPageState();
+}
+
+class _MediaSearchResultsPageState
+    extends ConsumerState<MediaSearchResultsPage> {
+  final _selectedIDs = <String>{};
+  bool _recognizing = false;
+
+  Future<void> _recognize(Iterable<MediaLibraryItem> items) async {
+    setState(() => _recognizing = true);
+    try {
+      await ref.read(mediaLibraryProvider.notifier).recognizeItems(items);
+    } finally {
+      if (mounted) setState(() => _recognizing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     return _SearchPageFrame(
       title: '影视资源搜索',
-      query: query,
-      onClose: onClose,
+      query: widget.query,
+      onClose: widget.onClose,
       child: FutureBuilder<List<MediaLibraryItem>>(
-        future: ref.read(mediaLibraryProvider.notifier).searchAllItems(query),
+        future: ref
+            .read(mediaLibraryProvider.notifier)
+            .searchAllItems(widget.query),
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const _ShadSearchLoading();
@@ -234,123 +255,168 @@ class MediaSearchResultsPage extends ConsumerWidget {
               ),
             );
           }
-          return GridView.builder(
-            padding: const EdgeInsets.all(16),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 260,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 2.25,
-            ),
-            itemCount: items.length,
-            itemBuilder: (context, index) {
-              final item = items[index];
-              return ShadContextMenuRegion(
-                items: [
-                  ShadContextMenuItem.inset(
-                    leading: const Icon(LucideIcons.play, size: 16),
-                    onPressed: () => showMediaPlayerDialog(context, item.file),
-                    child: const Text('播放'),
-                  ),
-                  ShadContextMenuItem.inset(
-                    leading: const Icon(LucideIcons.monitorPlay, size: 16),
-                    onPressed: () => showShadDialog<void>(
-                      context: context,
-                      builder: (_) => ExternalPlayerDialog(file: item.file),
-                    ),
-                    child: const Text('外部播放器'),
-                  ),
-                  ShadContextMenuItem.inset(
-                    leading: const Icon(LucideIcons.download, size: 16),
-                    onPressed: () =>
-                        ref.read(fileProvider.notifier).downloadFile(item.file),
-                    child: const Text('下载'),
-                  ),
-                  ShadContextMenuItem.inset(
-                    leading: const Icon(LucideIcons.refreshCw, size: 16),
-                    onPressed: () => ref
-                        .read(mediaLibraryProvider.notifier)
-                        .scanSelectedLibrary(),
-                    child: const Text('重新扫描媒体库'),
-                  ),
-                ],
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () => showShadDialog<void>(
-                      context: context,
-                      builder: (_) => ShadDialog(
-                        title: Text(item.title),
-                        description: const Text('影视资源信息'),
-                        child: SelectableText(
-                          'TMDB: ${item.tmdbID ?? '未匹配'}\n文件: ${item.file.name}\n路径: ${item.file.cloudPath}\n${item.overview}',
+          final selected = items
+              .where((item) => _selectedIDs.contains(item.id))
+              .toList();
+          return Column(
+            children: [
+              if (selected.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      Text('已选择 ${selected.length} 个资源'),
+                      const Spacer(),
+                      ShadButton(
+                        size: ShadButtonSize.sm,
+                        onPressed: _recognizing
+                            ? null
+                            : () => _recognize(selected),
+                        leading: const Icon(
+                          Icons.auto_fix_high_rounded,
+                          size: 16,
                         ),
+                        child: Text(_recognizing ? '正在识别' : '批量识别'),
                       ),
-                    ),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: cs.card,
-                        border: Border.all(color: cs.border),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 46,
-                            height: 64,
-                            decoration: BoxDecoration(
-                              color: cs.muted,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Icon(
-                              Icons.movie_rounded,
-                              color: cs.mutedForeground,
-                            ),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: GridView.builder(
+                  padding: const EdgeInsets.all(16),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 260,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 2.25,
+                  ),
+                  itemCount: items.length,
+                  itemBuilder: (context, index) {
+                    final item = items[index];
+                    final isSelected = _selectedIDs.contains(item.id);
+                    return ShadContextMenuRegion(
+                      items: [
+                        ShadContextMenuItem.inset(
+                          leading: const Icon(
+                            LucideIcons.wandSparkles,
+                            size: 16,
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                          onPressed: _recognizing
+                              ? null
+                              : () => _recognize([item]),
+                          child: const Text('手动识别'),
+                        ),
+                        ShadContextMenuItem.inset(
+                          leading: const Icon(LucideIcons.play, size: 16),
+                          onPressed: () =>
+                              showMediaPlayerDialog(context, item.file),
+                          child: const Text('播放'),
+                        ),
+                        ShadContextMenuItem.inset(
+                          leading: const Icon(
+                            LucideIcons.monitorPlay,
+                            size: 16,
+                          ),
+                          onPressed: () => showShadDialog<void>(
+                            context: context,
+                            builder: (_) =>
+                                ExternalPlayerDialog(file: item.file),
+                          ),
+                          child: const Text('外部播放器'),
+                        ),
+                        ShadContextMenuItem.inset(
+                          leading: const Icon(LucideIcons.download, size: 16),
+                          onPressed: () => ref
+                              .read(fileProvider.notifier)
+                              .downloadFile(item.file),
+                          child: const Text('下载'),
+                        ),
+                        ShadContextMenuItem.inset(
+                          leading: const Icon(LucideIcons.refreshCw, size: 16),
+                          onPressed: () => ref
+                              .read(mediaLibraryProvider.notifier)
+                              .scanSelectedLibrary(),
+                          child: const Text('重新扫描媒体库'),
+                        ),
+                      ],
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => setState(() {
+                            isSelected
+                                ? _selectedIDs.remove(item.id)
+                                : _selectedIDs.add(item.id);
+                          }),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: cs.card,
+                              border: Border.all(
+                                color: isSelected ? cs.primary : cs.border,
+                              ),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
                               children: [
-                                Text(
-                                  item.title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: cs.foreground,
-                                    fontWeight: FontWeight.w700,
+                                Container(
+                                  width: 46,
+                                  height: 64,
+                                  decoration: BoxDecoration(
+                                    color: cs.muted,
+                                    borderRadius: BorderRadius.circular(6),
                                   ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  item.year.isEmpty ? '年份未知' : item.year,
-                                  style: TextStyle(
-                                    fontSize: 12,
+                                  child: Icon(
+                                    Icons.movie_rounded,
                                     color: cs.mutedForeground,
                                   ),
                                 ),
-                                Text(
-                                  item.file.cloudPath,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: cs.mutedForeground,
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.title,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: cs.foreground,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        item.year.isEmpty ? '年份未知' : item.year,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: cs.mutedForeground,
+                                        ),
+                                      ),
+                                      Text(
+                                        item.file.cloudPath,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: cs.mutedForeground,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
-              );
-            },
+              ),
+            ],
           );
         },
       ),

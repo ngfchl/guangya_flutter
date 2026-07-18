@@ -91,6 +91,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   GuangyaAPI? _api;
   final _store = MediaLibraryStore();
   final _tmdbDetailsRequests = <String, Future<Map<String, dynamic>>>{};
+  final _searchResultsCache = <String, List<MediaLibraryItem>>{};
   final _artworkHydrationLibraries = <String>{};
   bool _loaded = false;
   bool _cancelScan = false;
@@ -475,12 +476,49 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<List<MediaLibraryItem>> searchAllItems(String query) async {
     final normalized = query.trim().toLowerCase();
     if (normalized.isEmpty) return const [];
-    return (await _loadAllItems()).where((item) {
-        return item.title.toLowerCase().contains(normalized) ||
-            item.file.name.toLowerCase().contains(normalized) ||
-            item.file.cloudPath.toLowerCase().contains(normalized);
-      }).toList()
-      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    final cached = _searchResultsCache[normalized];
+    if (cached != null) return cached;
+    final results =
+        (await _loadAllItems()).where((item) {
+          return item.title.toLowerCase().contains(normalized) ||
+              item.file.name.toLowerCase().contains(normalized) ||
+              item.file.cloudPath.toLowerCase().contains(normalized);
+        }).toList()..sort(
+          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        );
+    _searchResultsCache[normalized] = results;
+    return results;
+  }
+
+  Future<void> recognizeItems(Iterable<MediaLibraryItem> values) async {
+    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    if (_api == null || apiKey.trim().isEmpty) return;
+    final groups = <String, List<MediaLibraryItem>>{};
+    for (final item in values) {
+      final parsed = ParsedMediaName.parse(item.file.name);
+      final key =
+          '${item.mediaKind?.name ?? 'automatic'}:${parsed.title.toLowerCase()}';
+      groups.putIfAbsent(key, () => []).add(item);
+    }
+    final updates = <MediaLibraryItem>[];
+    for (final group in groups.values) {
+      final prototype = group.first;
+      final recognized = await _recognizeMediaItem(
+        prototype.copyWith(file: prototype.file),
+        apiKey,
+        proxyHost: StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+        proxyPort: StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+      );
+      updates.addAll(group.map((item) => recognized.copyWith(file: item.file)));
+    }
+    if (updates.isEmpty) return;
+    await _store.upsertItems(updates);
+    _searchResultsCache.clear();
+    final byID = {for (final item in updates) item.id: item};
+    state = state.copyWith(
+      items: state.items.map((item) => byID[item.id] ?? item).toList(),
+      statusMessage: '已识别 ${updates.length} 个资源（${groups.length} 个作品）',
+    );
   }
 
   Future<MediaLibraryItem> applyTMDBMatch(
