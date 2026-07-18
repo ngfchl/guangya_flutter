@@ -138,12 +138,24 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
     });
     try {
       final empty = <CloudFile>[];
-      for (final folder in state.files.where((file) => file.isDirectory)) {
-        final response = await api.fsFiles(parentID: folder.id, pageSize: 1);
-        if (_extractFileCount(response) == 0) empty.add(folder);
-      }
       final groups = <String, List<CloudFile>>{};
-      for (final file in state.files.where((file) => !file.isDirectory)) {
+      final queue = <CloudFile>[
+        ...state.files.where((file) => file.isDirectory),
+      ];
+      final files = <CloudFile>[
+        ...state.files.where((file) => !file.isDirectory),
+      ];
+      while (queue.isNotEmpty) {
+        final folder = queue.removeLast();
+        final response = await api.fsFiles(parentID: folder.id, pageSize: 1000);
+        final children = _extractFiles(response);
+        if (children.isEmpty) empty.add(folder);
+        for (final child in children) {
+          child.isDirectory ? queue.add(child) : files.add(child);
+        }
+        if (mounted) setState(() => _emptyFolders = List.of(empty));
+      }
+      for (final file in files) {
         final key = file.gcid;
         if (key != null && key.isNotEmpty) {
           groups.putIfAbsent(key, () => []).add(file);
@@ -164,21 +176,25 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
     }
   }
 
-  int _extractFileCount(Map<String, dynamic> value) {
-    List? find(dynamic node) {
+  List<CloudFile> _extractFiles(Map<String, dynamic> value) {
+    final files = <CloudFile>[];
+    void visit(dynamic node) {
       if (node is Map) {
-        for (final key in const ['list', 'files', 'fileList', 'items']) {
-          if (node[key] is List) return node[key] as List;
-        }
+        try {
+          files.add(CloudFile.fromJson(Map<String, dynamic>.from(node)));
+        } catch (_) {}
         for (final child in node.values) {
-          final result = find(child);
-          if (result != null) return result;
+          visit(child);
+        }
+      } else if (node is List) {
+        for (final child in node) {
+          visit(child);
         }
       }
-      return null;
     }
 
-    return find(value)?.length ?? 0;
+    visit(value);
+    return {for (final file in files) file.id: file}.values.toList();
   }
 
   @override
