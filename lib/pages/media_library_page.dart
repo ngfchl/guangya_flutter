@@ -325,9 +325,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     if (state.isLoading) {
       return const Center(child: ShadProgress());
     }
-    if (state.isScanning) {
-      return _scanProgress(context, state);
-    }
     if (_tmdbSearching || _tmdbResults.isNotEmpty || _tmdbError != null) {
       return _tmdbResultPanel(context);
     }
@@ -335,45 +332,69 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     if (state.selectedLibrary == null) {
       return _mainEmpty(context, '还没有媒体库', '从云盘根目录或当前目录创建一个媒体库');
     }
-    if (items.isEmpty) {
-      return _mainEmpty(context, '没有扫描结果', '点击扫描读取该媒体库下的视频文件');
-    }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = (constraints.maxWidth / 220).floor().clamp(2, 6);
-        return GridView.builder(
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.8,
-          ),
-          itemCount: items.length,
-          itemBuilder: (context, index) => _MediaItemTile(item: items[index]),
-        );
-      },
+    final content = items.isEmpty
+        ? _mainEmpty(
+            context,
+            state.isScanning ? '正在扫描媒体库' : '没有扫描结果',
+            state.isScanning ? '发现并入库的资源会立即显示在这里' : '点击扫描读取该媒体库下的视频文件',
+          )
+        : LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = (constraints.maxWidth / 220).floor().clamp(2, 6);
+              return GridView.builder(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  childAspectRatio: 1.8,
+                ),
+                itemCount: items.length,
+                itemBuilder: (context, index) =>
+                    _MediaItemTile(item: items[index]),
+              );
+            },
+          );
+    if (!state.isScanning) return content;
+    return Column(
+      children: [
+        _scanProgress(context, state),
+        const SizedBox(height: 10),
+        Expanded(child: content),
+      ],
     );
   }
 
   Widget _scanProgress(BuildContext context, MediaLibraryState state) {
     final cs = ShadTheme.of(context).colorScheme;
-    return Center(
-      child: SizedBox(
-        width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Semantics(
+      label: '媒体扫描进度：${state.progress.phase}，已处理 ${state.progress.completed} 项',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: cs.muted,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: cs.border),
+        ),
+        child: Row(
           children: [
-            const ShadProgress(),
-            const SizedBox(height: 16),
-            Text(
-              state.progress.phase,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: cs.foreground),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '已发现 ${state.progress.completed} 个视频文件',
-              style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+            const SizedBox(width: 120, child: ShadProgress()),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    state.progress.phase,
+                    style: TextStyle(color: cs.foreground),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '已发现 ${state.progress.completed} 个视频文件，已入库资源会实时显示。',
+                    style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
