@@ -1,0 +1,309 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
+
+import '../models/cloud_file.dart';
+import '../models/media_library.dart';
+import '../providers/auth_provider.dart';
+import '../providers/file_provider.dart';
+import '../providers/media_library_provider.dart';
+import '../widgets/file_list_tile.dart';
+
+class FileSearchResultsPage extends ConsumerStatefulWidget {
+  final String query;
+  final VoidCallback onClose;
+
+  const FileSearchResultsPage({
+    super.key,
+    required this.query,
+    required this.onClose,
+  });
+
+  @override
+  ConsumerState<FileSearchResultsPage> createState() =>
+      _FileSearchResultsPageState();
+}
+
+class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
+  late Future<List<CloudFile>> _results = _search();
+
+  @override
+  void didUpdateWidget(covariant FileSearchResultsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.query != widget.query) _results = _search();
+  }
+
+  Future<List<CloudFile>> _search() async {
+    final api = ref.read(authProvider.notifier).api;
+    final query = widget.query.trim().toLowerCase();
+    final results = <CloudFile>[];
+    final ids = <String>{};
+    var page = 0;
+    while (page < 100) {
+      final response = await api.fsFiles(
+        parentID: '*',
+        page: page,
+        pageSize: 1000,
+        orderBy: 0,
+        sortType: 0,
+      );
+      final batch = _extractFiles(response);
+      for (final file in batch) {
+        if ((file.name.toLowerCase().contains(query) ||
+                file.cloudPath.toLowerCase().contains(query)) &&
+            ids.add(file.id)) {
+          results.add(file);
+        }
+      }
+      if (batch.length < 1000) break;
+      page += 1;
+    }
+    results.sort(
+      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    );
+    return results;
+  }
+
+  List<CloudFile> _extractFiles(Map<String, dynamic> json) {
+    final values = <CloudFile>[];
+    final ids = <String>{};
+    void visit(dynamic value) {
+      if (value is Map) {
+        try {
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+          if (ids.add(file.id)) values.add(file);
+        } catch (_) {}
+        for (final child in value.values) {
+          visit(child);
+        }
+      } else if (value is List) {
+        for (final child in value) {
+          visit(child);
+        }
+      }
+    }
+
+    visit(json);
+    return values;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final notifier = ref.read(fileProvider.notifier);
+    return _SearchPageFrame(
+      title: '文件搜索',
+      query: widget.query,
+      onClose: widget.onClose,
+      child: FutureBuilder<List<CloudFile>>(
+        future: _results,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const _ShadSearchLoading();
+          }
+          if (snapshot.hasError) {
+            return Center(
+              child: Text(
+                snapshot.error.toString(),
+                style: TextStyle(color: cs.destructive),
+              ),
+            );
+          }
+          final files = snapshot.data ?? const <CloudFile>[];
+          if (files.isEmpty) {
+            return Center(
+              child: Text(
+                '没有匹配的文件',
+                style: TextStyle(color: cs.mutedForeground),
+              ),
+            );
+          }
+          return ListView.builder(
+            itemCount: files.length,
+            itemBuilder: (context, index) {
+              final file = files[index];
+              return FileListTile(
+                file: file,
+                onOpen: () => notifier.downloadFile(file),
+                onCopy: () => notifier.copyToClipboard([file]),
+                onCut: () => notifier.cutToClipboard([file]),
+                onDownload: () => notifier.downloadFile(file),
+                onDelete: () => notifier.deleteFiles([file]),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class MediaSearchResultsPage extends ConsumerWidget {
+  final String query;
+  final VoidCallback onClose;
+
+  const MediaSearchResultsPage({
+    super.key,
+    required this.query,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return _SearchPageFrame(
+      title: '影视资源搜索',
+      query: query,
+      onClose: onClose,
+      child: FutureBuilder<List<MediaLibraryItem>>(
+        future: ref.read(mediaLibraryProvider.notifier).searchAllItems(query),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const _ShadSearchLoading();
+          }
+          final items = snapshot.data ?? const <MediaLibraryItem>[];
+          if (items.isEmpty) {
+            return Center(
+              child: Text(
+                '没有匹配的影视资源',
+                style: TextStyle(color: cs.mutedForeground),
+              ),
+            );
+          }
+          return GridView.builder(
+            padding: const EdgeInsets.all(16),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 260,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 2.25,
+            ),
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final item = items[index];
+              return Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: cs.card,
+                  border: Border.all(color: cs.border),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        color: cs.muted,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Icon(
+                        Icons.movie_rounded,
+                        color: cs.mutedForeground,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: cs.foreground,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            item.year.isEmpty ? '年份未知' : item.year,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: cs.mutedForeground,
+                            ),
+                          ),
+                          Text(
+                            item.file.cloudPath,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: cs.mutedForeground,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _SearchPageFrame extends StatelessWidget {
+  final String title;
+  final String query;
+  final VoidCallback onClose;
+  final Widget child;
+
+  const _SearchPageFrame({
+    required this.title,
+    required this.query,
+    required this.onClose,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Column(
+      children: [
+        Container(
+          height: 54,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: cs.border)),
+          ),
+          child: Row(
+            children: [
+              ShadButton.ghost(
+                onPressed: onClose,
+                leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                child: const Text('返回'),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: cs.foreground,
+                ),
+              ),
+              const SizedBox(width: 8),
+              ShadBadge(child: Text(query)),
+            ],
+          ),
+        ),
+        Expanded(child: child),
+      ],
+    );
+  }
+}
+
+class _ShadSearchLoading extends StatelessWidget {
+  const _ShadSearchLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: SizedBox(width: 220, child: ShadProgress()));
+  }
+}
