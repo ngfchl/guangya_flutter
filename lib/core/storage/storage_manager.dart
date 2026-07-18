@@ -14,6 +14,7 @@ class StorageKeys {
   static const String tmdbProxyPort = 'guangya.tmdbProxyPort';
   static const String mediaLibraries = 'guangya.mediaLibraries';
   static const String mediaLibraryItems = 'guangya.mediaLibraryItems';
+  static const String mediaCategoryRules = 'guangya.mediaCategoryRules';
 }
 
 class StorageManager {

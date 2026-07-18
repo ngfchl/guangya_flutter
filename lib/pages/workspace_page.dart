@@ -576,7 +576,7 @@ class _MediaSidebar extends ConsumerWidget {
               icon: Icons.category_rounded,
               label: '分类管理',
               selected: false,
-              onTap: () => onTool(WorkspaceTool.tmdb),
+              onTap: () => onTool(WorkspaceTool.categories),
             ),
           ],
         ),
@@ -782,7 +782,6 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                           state: state,
                         ),
                 ),
-                _CloudStatusBar(state: state),
               ],
             ),
           ),
@@ -909,67 +908,12 @@ class _ToolbarSegment extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return OS26Glass(
-      radius: 10,
-      opacity: 0.36,
-      padding: const EdgeInsets.all(2),
-      child: Row(
-        children: [
-          _ToolbarSegmentButton(
-            icon: Icons.view_agenda_rounded,
-            selected: value == _PaneLayoutMode.single,
-            tooltip: '单面板',
-            onTap: () => onChanged(_PaneLayoutMode.single),
-          ),
-          _ToolbarSegmentButton(
-            icon: Icons.view_column_rounded,
-            selected: value == _PaneLayoutMode.dual,
-            tooltip: '双面板',
-            onTap: () => onChanged(_PaneLayoutMode.dual),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ToolbarSegmentButton extends StatelessWidget {
-  final IconData icon;
-  final bool selected;
-  final String tooltip;
-  final VoidCallback onTap;
-
-  const _ToolbarSegmentButton({
-    required this.icon,
-    required this.selected,
-    required this.tooltip,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return ShadTooltip(
-      builder: (_) => Text(tooltip),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Container(
-          width: 32,
-          height: 28,
-          decoration: BoxDecoration(
-            color: selected
-                ? Colors.white.withValues(alpha: 0.68)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            icon,
-            size: 17,
-            color: selected ? cs.primary : cs.mutedForeground,
-          ),
-        ),
-      ),
+    final isDual = value == _PaneLayoutMode.dual;
+    return _ToolbarButton(
+      icon: isDual ? Icons.view_agenda_rounded : Icons.view_column_rounded,
+      label: isDual ? '切换单面板' : '切换双面板',
+      onTap: () =>
+          onChanged(isDual ? _PaneLayoutMode.single : _PaneLayoutMode.dual),
     );
   }
 }
@@ -1068,6 +1012,8 @@ class _PrimaryFilePane extends ConsumerWidget {
       currentPage: state.currentPage,
       pageSize: state.pageSize,
       totalPages: state.totalPages,
+      fileCount: files.where((file) => !file.isDirectory).length,
+      folderCount: files.where((file) => file.isDirectory).length,
       onPreviousPage: state.currentPage == 0 ? null : notifier.prevPage,
       onNextPage: state.currentPage >= state.totalPages - 1
           ? null
@@ -1238,6 +1184,8 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
       currentPage: _page,
       pageSize: _pageSize,
       totalPages: _totalPages,
+      fileCount: _files.where((file) => !file.isDirectory).length,
+      folderCount: _files.where((file) => file.isDirectory).length,
       onPreviousPage: _page == 0
           ? null
           : () {
@@ -1403,6 +1351,8 @@ class _PanePagination extends StatelessWidget {
   final int currentPage;
   final int pageSize;
   final int totalPages;
+  final int fileCount;
+  final int folderCount;
   final VoidCallback? onPreviousPage;
   final VoidCallback? onNextPage;
   final ValueChanged<int>? onPageSizeChanged;
@@ -1411,6 +1361,8 @@ class _PanePagination extends StatelessWidget {
     required this.currentPage,
     required this.pageSize,
     required this.totalPages,
+    required this.fileCount,
+    required this.folderCount,
     this.onPreviousPage,
     this.onNextPage,
     this.onPageSizeChanged,
@@ -1429,6 +1381,24 @@ class _PanePagination extends StatelessWidget {
       ),
       child: Row(
         children: [
+          Icon(
+            Icons.insert_drive_file_rounded,
+            size: 14,
+            color: cs.mutedForeground,
+          ),
+          const SizedBox(width: 5),
+          Text(
+            '本页文件 $fileCount',
+            style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+          ),
+          const SizedBox(width: 12),
+          Icon(Icons.folder_rounded, size: 14, color: cs.mutedForeground),
+          const SizedBox(width: 5),
+          Text(
+            '本页文件夹 $folderCount',
+            style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+          ),
+          const SizedBox(width: 14),
           Text(
             '第 ${currentPage + 1} / ${totalPages.clamp(1, 1 << 31)} 页',
             style: TextStyle(fontSize: 11, color: cs.mutedForeground),
@@ -1518,6 +1488,8 @@ class _FilePaneFrame extends StatelessWidget {
   final int currentPage;
   final int pageSize;
   final int totalPages;
+  final int fileCount;
+  final int folderCount;
   final VoidCallback? onPreviousPage;
   final VoidCallback? onNextPage;
   final ValueChanged<int>? onPageSizeChanged;
@@ -1538,6 +1510,8 @@ class _FilePaneFrame extends StatelessWidget {
     this.currentPage = 0,
     this.pageSize = 50,
     this.totalPages = 1,
+    this.fileCount = 0,
+    this.folderCount = 0,
     this.onPreviousPage,
     this.onNextPage,
     this.onPageSizeChanged,
@@ -1617,6 +1591,8 @@ class _FilePaneFrame extends StatelessWidget {
               currentPage: currentPage,
               pageSize: pageSize,
               totalPages: totalPages,
+              fileCount: fileCount,
+              folderCount: folderCount,
               onPreviousPage: onPreviousPage,
               onNextPage: onNextPage,
               onPageSizeChanged: onPageSizeChanged,
@@ -1821,60 +1797,6 @@ class _FilePaneHeader extends StatelessWidget {
             width: 116,
             child: Text('修改时间', textAlign: TextAlign.right, style: style),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CloudStatusBar extends StatelessWidget {
-  final FileState state;
-
-  const _CloudStatusBar({required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return Container(
-      height: 40,
-      margin: const EdgeInsets.only(top: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.38),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.insert_drive_file_rounded,
-            size: 15,
-            color: cs.mutedForeground,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            '本页文件 ${state.files.where((file) => !file.isDirectory).length}',
-            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-          ),
-          const SizedBox(width: 14),
-          Icon(Icons.folder_rounded, size: 15, color: cs.mutedForeground),
-          const SizedBox(width: 6),
-          Text(
-            '本页文件夹 ${state.files.where((file) => file.isDirectory).length}',
-            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-          ),
-          const Spacer(),
-          if (state.errorMessage != null)
-            Text(
-              state.errorMessage!,
-              style: TextStyle(fontSize: 12, color: cs.destructive),
-              overflow: TextOverflow.ellipsis,
-            )
-          else if (state.statusMessage != null)
-            Text(
-              state.statusMessage!,
-              style: TextStyle(fontSize: 12, color: cs.primary),
-              overflow: TextOverflow.ellipsis,
-            ),
         ],
       ),
     );

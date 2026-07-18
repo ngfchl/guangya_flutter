@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
+import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import 'media_library_page.dart';
 
-enum WorkspaceTool { scan, rename, fastTransfer, tmdb }
+enum WorkspaceTool { scan, rename, fastTransfer, tmdb, categories }
 
 extension WorkspaceToolDetails on WorkspaceTool {
   String get title {
@@ -22,6 +24,8 @@ extension WorkspaceToolDetails on WorkspaceTool {
         return '秒传工具';
       case WorkspaceTool.tmdb:
         return 'TMDB 整理';
+      case WorkspaceTool.categories:
+        return '分类管理';
     }
   }
 
@@ -35,6 +39,8 @@ extension WorkspaceToolDetails on WorkspaceTool {
         return Icons.bolt_rounded;
       case WorkspaceTool.tmdb:
         return Icons.auto_fix_high_rounded;
+      case WorkspaceTool.categories:
+        return Icons.grid_view_rounded;
     }
   }
 }
@@ -56,6 +62,7 @@ class WorkspaceToolsPage extends StatelessWidget {
       WorkspaceTool.rename => const _BatchRenameTool(),
       WorkspaceTool.fastTransfer => const _FastTransferTool(),
       WorkspaceTool.tmdb => const MediaLibraryPage(showLibrarySidebar: true),
+      WorkspaceTool.categories => const _CategoryManagementTool(),
     };
     return Column(
       children: [
@@ -638,6 +645,389 @@ class _ToolSection extends StatelessWidget {
           ),
           child,
         ],
+      ),
+    );
+  }
+}
+
+class _CategoryManagementTool extends StatefulWidget {
+  const _CategoryManagementTool();
+
+  @override
+  State<_CategoryManagementTool> createState() =>
+      _CategoryManagementToolState();
+}
+
+class _CategoryManagementToolState extends State<_CategoryManagementTool> {
+  List<MediaCategoryRule> _rules = [];
+
+  @override
+  void initState() {
+    super.initState();
+    final raw = StorageManager.get<dynamic>(StorageKeys.mediaCategoryRules);
+    _rules = raw is List
+        ? raw
+              .whereType<Map>()
+              .map(
+                (value) => MediaCategoryRule.fromJson(
+                  Map<String, dynamic>.from(value),
+                ),
+              )
+              .toList()
+        : MediaCategoryRule.presets();
+    if (raw is! List) _save();
+  }
+
+  Future<void> _save() => StorageManager.set(
+    StorageKeys.mediaCategoryRules,
+    _rules.map((rule) => rule.toJson()).toList(),
+  );
+
+  Future<void> _restorePresets() async {
+    setState(() => _rules = MediaCategoryRule.presets());
+    await _save();
+  }
+
+  Future<void> _editRule([MediaCategoryRule? rule]) async {
+    final result = await showShadDialog<MediaCategoryRule>(
+      context: context,
+      builder: (context) => _CategoryRuleDialog(initialRule: rule),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      final index = _rules.indexWhere((item) => item.id == result.id);
+      if (index == -1) {
+        _rules.add(result);
+      } else {
+        _rules[index] = result;
+      }
+    });
+    await _save();
+  }
+
+  Future<void> _deleteRule(MediaCategoryRule rule) async {
+    setState(() => _rules.removeWhere((item) => item.id == rule.id));
+    await _save();
+  }
+
+  Future<void> _move(MediaCategoryRule rule, int offset) async {
+    final index = _rules.indexWhere((item) => item.id == rule.id);
+    final target = index + offset;
+    if (index < 0 || target < 0 || target >= _rules.length) return;
+    setState(() {
+      final moved = _rules.removeAt(index);
+      _rules.insert(target, moved);
+    });
+    await _save();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ListView(
+      padding: const EdgeInsets.all(18),
+      children: [
+        _ToolSection(
+          title: '影视分类规则',
+          description: '按 TMDB 原始语言匹配分类；默认分类会接收未匹配到其它规则的资源。',
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ShadButton.outline(
+                onPressed: _restorePresets,
+                leading: const Icon(Icons.restart_alt_rounded, size: 16),
+                child: const Text('恢复预设'),
+              ),
+              const SizedBox(width: 8),
+              ShadButton(
+                onPressed: () => _editRule(),
+                leading: const Icon(Icons.add_rounded, size: 16),
+                child: const Text('新增分类'),
+              ),
+            ],
+          ),
+          child: const SizedBox.shrink(),
+        ),
+        const SizedBox(height: 16),
+        _ruleGroup(
+          title: '电影分类',
+          icon: Icons.movie_rounded,
+          kind: TMDBMediaKind.movie,
+          color: cs.primary,
+        ),
+        const SizedBox(height: 16),
+        _ruleGroup(
+          title: '剧集分类',
+          icon: Icons.tv_rounded,
+          kind: TMDBMediaKind.tv,
+          color: cs.foreground,
+        ),
+      ],
+    );
+  }
+
+  Widget _ruleGroup({
+    required String title,
+    required IconData icon,
+    required TMDBMediaKind kind,
+    required Color color,
+  }) {
+    final rules = _rules.where((rule) => rule.mediaKind == kind).toList();
+    return _ToolSection(
+      title: title,
+      description: rules.isEmpty ? '尚未配置分类规则。' : '${rules.length} 条分类规则',
+      child: Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: rules.isEmpty
+            ? const SizedBox.shrink()
+            : Container(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: ShadTheme.of(context).colorScheme.border,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  children: [
+                    for (final rule in rules)
+                      _CategoryRuleRow(
+                        rule: rule,
+                        icon: icon,
+                        color: color,
+                        canMoveUp: _rules.indexOf(rule) > 0,
+                        canMoveDown: _rules.indexOf(rule) < _rules.length - 1,
+                        onMoveUp: () => _move(rule, -1),
+                        onMoveDown: () => _move(rule, 1),
+                        onEdit: () => _editRule(rule),
+                        onDelete: () => _deleteRule(rule),
+                      ),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+class _CategoryRuleRow extends StatelessWidget {
+  final MediaCategoryRule rule;
+  final IconData icon;
+  final Color color;
+  final bool canMoveUp;
+  final bool canMoveDown;
+  final VoidCallback onMoveUp;
+  final VoidCallback onMoveDown;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _CategoryRuleRow({
+    required this.rule,
+    required this.icon,
+    required this.color,
+    required this.canMoveUp,
+    required this.canMoveDown,
+    required this.onMoveUp,
+    required this.onMoveDown,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: cs.border.withValues(alpha: 0.7)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 19),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  rule.name,
+                  style: TextStyle(
+                    color: cs.foreground,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  rule.isFallback
+                      ? '未设置原始语言的默认分类'
+                      : '语言 ${rule.languages.join(', ')}',
+                  style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                ),
+              ],
+            ),
+          ),
+          if (rule.isFallback) const ShadBadge(child: Text('默认')),
+          const SizedBox(width: 6),
+          _CategoryIconButton(
+            tooltip: '上移',
+            icon: Icons.arrow_upward_rounded,
+            onPressed: canMoveUp ? onMoveUp : null,
+          ),
+          _CategoryIconButton(
+            tooltip: '下移',
+            icon: Icons.arrow_downward_rounded,
+            onPressed: canMoveDown ? onMoveDown : null,
+          ),
+          _CategoryIconButton(
+            tooltip: '编辑',
+            icon: Icons.edit_outlined,
+            onPressed: onEdit,
+          ),
+          _CategoryIconButton(
+            tooltip: '删除',
+            icon: Icons.delete_outline_rounded,
+            onPressed: onDelete,
+            destructive: true,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryIconButton extends StatelessWidget {
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final bool destructive;
+
+  const _CategoryIconButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    this.destructive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadTooltip(
+      builder: (_) => Text(tooltip),
+      child: ShadButton.ghost(
+        size: ShadButtonSize.sm,
+        onPressed: onPressed,
+        child: Icon(
+          icon,
+          size: 16,
+          color: destructive ? cs.destructive : cs.mutedForeground,
+        ),
+      ),
+    );
+  }
+}
+
+class _CategoryRuleDialog extends StatefulWidget {
+  final MediaCategoryRule? initialRule;
+
+  const _CategoryRuleDialog({this.initialRule});
+
+  @override
+  State<_CategoryRuleDialog> createState() => _CategoryRuleDialogState();
+}
+
+class _CategoryRuleDialogState extends State<_CategoryRuleDialog> {
+  late final TextEditingController _name;
+  late final TextEditingController _languages;
+  late TMDBMediaKind _kind;
+  late bool _isFallback;
+
+  @override
+  void initState() {
+    super.initState();
+    final rule = widget.initialRule;
+    _name = TextEditingController(text: rule?.name ?? '');
+    _languages = TextEditingController(text: rule?.languages.join(', ') ?? '');
+    _kind = rule?.mediaKind ?? TMDBMediaKind.movie;
+    _isFallback = rule?.isFallback ?? false;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _languages.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final name = _name.text.trim();
+    if (name.isEmpty) return;
+    final languages = _languages.text
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList();
+    Navigator.of(context).pop(
+      MediaCategoryRule(
+        id:
+            widget.initialRule?.id ??
+            DateTime.now().microsecondsSinceEpoch.toString(),
+        name: name,
+        mediaKind: _kind,
+        languages: languages,
+        isFallback: _isFallback,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ShadDialog(
+      title: Text(widget.initialRule == null ? '新增分类' : '编辑分类'),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        ShadButton(onPressed: _save, child: const Text('保存')),
+      ],
+      child: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ShadInput(controller: _name, placeholder: const Text('分类名称')),
+            const SizedBox(height: 10),
+            ShadSelect<TMDBMediaKind>(
+              initialValue: _kind,
+              selectedOptionBuilder: (context, value) => Text(value.title),
+              options: const [
+                ShadOption(value: TMDBMediaKind.movie, child: Text('电影')),
+                ShadOption(value: TMDBMediaKind.tv, child: Text('剧集')),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _kind = value);
+              },
+            ),
+            const SizedBox(height: 10),
+            ShadInput(
+              controller: _languages,
+              enabled: !_isFallback,
+              placeholder: const Text('原始语言代码，以英文逗号分隔，例如 zh, en'),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: ShadCheckbox(
+                value: _isFallback,
+                label: const Text('设为默认分类'),
+                sublabel: const Text('在其它分类均未匹配时使用'),
+                onChanged: (value) => setState(() => _isFallback = value),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

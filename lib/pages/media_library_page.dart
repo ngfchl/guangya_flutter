@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../core/storage/storage_manager.dart';
+import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
@@ -498,103 +499,19 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
 
   static void _showCreateLibraryDialog(BuildContext context, WidgetRef ref) {
     final fileState = ref.read(fileProvider);
-    final currentRootID = fileState.folderPath.isEmpty
-        ? null
-        : fileState.folderPath.last.id;
     final currentPath = fileState.folderPath.isEmpty
         ? '云盘根目录'
         : fileState.folderPath.map((file) => file.name).join(' / ');
-    final nameController = TextEditingController(
-      text: fileState.folderPath.isEmpty
-          ? '我的影视库'
-          : fileState.folderPath.last.name,
-    );
-    final minSizeController = TextEditingController(text: '50');
-    var kind = MediaLibraryKind.mixed;
-    var recursive = true;
-
     showShadDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => ShadDialog(
-          title: const Text('创建媒体库'),
-          description: Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text('来源：$currentPath'),
-          ),
-          actions: [
-            ShadButton.outline(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('取消'),
-            ),
-            ShadButton(
-              onPressed: () {
-                ref
-                    .read(mediaLibraryProvider.notifier)
-                    .createLibrary(
-                      name: nameController.text,
-                      rootID: currentRootID,
-                      rootPath: currentPath,
-                      kind: kind,
-                      recursive: recursive,
-                      minimumSizeMB:
-                          int.tryParse(minSizeController.text.trim()) ?? 50,
-                    );
-                Navigator.of(ctx).pop();
-              },
-              child: const Text('创建'),
-            ),
-          ],
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ShadInput(
-                controller: nameController,
-                placeholder: const Text('媒体库名称'),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: ShadSelect<MediaLibraryKind>(
-                      initialValue: kind,
-                      placeholder: const Text('媒体类型'),
-                      selectedOptionBuilder: (context, value) =>
-                          Text(value.title),
-                      options: [
-                        for (final value in MediaLibraryKind.values)
-                          ShadOption(value: value, child: Text(value.title)),
-                      ],
-                      onChanged: (value) {
-                        if (value != null) {
-                          setDialogState(() => kind = value);
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: 120,
-                    child: ShadInput(
-                      controller: minSizeController,
-                      keyboardType: TextInputType.number,
-                      placeholder: const Text('最小 MB'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: ShadCheckbox(
-                  value: recursive,
-                  label: const Text('递归扫描子目录'),
-                  onChanged: (value) => setDialogState(() => recursive = value),
-                ),
-              ),
-            ],
-          ),
-        ),
+      builder: (ctx) => _CreateMediaLibraryDialog(
+        initialRootID: fileState.folderPath.isEmpty
+            ? null
+            : fileState.folderPath.last.id,
+        initialPath: currentPath,
+        initialName: fileState.folderPath.isEmpty
+            ? '我的影视库'
+            : fileState.folderPath.last.name,
       ),
     );
   }
@@ -641,6 +558,407 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         _tmdbSearching = false;
       });
     }
+  }
+}
+
+class _CreateMediaLibraryDialog extends ConsumerStatefulWidget {
+  final String? initialRootID;
+  final String initialPath;
+  final String initialName;
+
+  const _CreateMediaLibraryDialog({
+    required this.initialRootID,
+    required this.initialPath,
+    required this.initialName,
+  });
+
+  @override
+  ConsumerState<_CreateMediaLibraryDialog> createState() =>
+      _CreateMediaLibraryDialogState();
+}
+
+class _CreateMediaLibraryDialogState
+    extends ConsumerState<_CreateMediaLibraryDialog> {
+  late final TextEditingController _nameController;
+  final _minSizeController = TextEditingController(text: '50');
+  MediaLibraryKind _kind = MediaLibraryKind.mixed;
+  bool _recursive = true;
+  bool _isBrowsing = false;
+  bool _isLoadingFolders = false;
+  String? _folderError;
+  late String? _rootID;
+  late String _rootPath;
+  final _browserPath = <CloudFile>[];
+  var _folders = <CloudFile>[];
+
+  @override
+  void initState() {
+    super.initState();
+    _rootID = widget.initialRootID;
+    _rootPath = widget.initialPath;
+    _nameController = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _minSizeController.dispose();
+    super.dispose();
+  }
+
+  String get _browserLocation => _browserPath.isEmpty
+      ? '云盘根目录'
+      : _browserPath.map((folder) => folder.name).join(' / ');
+
+  String? get _browserFolderID =>
+      _browserPath.isEmpty ? null : _browserPath.last.id;
+
+  Future<void> _startBrowsing() async {
+    setState(() {
+      _isBrowsing = true;
+      _browserPath.clear();
+      _folders = [];
+    });
+    await _loadFolders();
+  }
+
+  Future<void> _loadFolders() async {
+    setState(() {
+      _isLoadingFolders = true;
+      _folderError = null;
+    });
+    try {
+      final response = await ref
+          .read(authProvider.notifier)
+          .api
+          .fsFiles(parentID: _browserFolderID, pageSize: 1000);
+      if (mounted) {
+        setState(() {
+          _folders =
+              _extractFiles(response).where((file) => file.isDirectory).toList()
+                ..sort(
+                  (a, b) =>
+                      a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+                );
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _folderError = error.toString());
+    } finally {
+      if (mounted) setState(() => _isLoadingFolders = false);
+    }
+  }
+
+  List<CloudFile> _extractFiles(Map<String, dynamic> value) {
+    final files = <CloudFile>[];
+    final ids = <String>{};
+    void visit(dynamic node) {
+      if (node is Map) {
+        try {
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(node));
+          if (ids.add(file.id)) files.add(file);
+        } catch (_) {}
+        for (final child in node.values) {
+          visit(child);
+        }
+      } else if (node is List) {
+        for (final child in node) {
+          visit(child);
+        }
+      }
+    }
+
+    visit(value);
+    return files;
+  }
+
+  void _useBrowserFolder() {
+    setState(() {
+      _rootID = _browserFolderID;
+      _rootPath = _browserLocation;
+      if (_nameController.text.trim().isEmpty ||
+          _nameController.text == widget.initialName) {
+        _nameController.text = _browserPath.isEmpty
+            ? '我的影视库'
+            : _browserPath.last.name;
+      }
+      _isBrowsing = false;
+    });
+  }
+
+  void _create(BuildContext context) {
+    ref
+        .read(mediaLibraryProvider.notifier)
+        .createLibrary(
+          name: _nameController.text,
+          rootID: _rootID,
+          rootPath: _rootPath,
+          kind: _kind,
+          recursive: _recursive,
+          minimumSizeMB: int.tryParse(_minSizeController.text.trim()) ?? 50,
+        );
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadDialog(
+      title: Text(_isBrowsing ? '选择云盘文件夹' : '创建媒体库'),
+      description: Text(
+        _isBrowsing ? '进入目标目录后，选择该目录作为媒体库来源。' : '媒体库会从指定目录扫描视频文件。',
+      ),
+      actions: _isBrowsing
+          ? [
+              ShadButton.outline(
+                onPressed: () => setState(() => _isBrowsing = false),
+                child: const Text('返回设置'),
+              ),
+              ShadButton(
+                onPressed: _useBrowserFolder,
+                leading: const Icon(Icons.check_rounded, size: 16),
+                child: const Text('使用此目录'),
+              ),
+            ]
+          : [
+              ShadButton.outline(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('取消'),
+              ),
+              ShadButton(
+                onPressed: () => _create(context),
+                leading: const Icon(Icons.add_rounded, size: 16),
+                child: const Text('创建媒体库'),
+              ),
+            ],
+      child: _isBrowsing ? _folderBrowser(cs) : _form(cs),
+    );
+  }
+
+  Widget _form(ShadColorScheme cs) {
+    return SizedBox(
+      width: 520,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: cs.muted,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: cs.border),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Icon(Icons.folder_rounded, color: cs.primary),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '媒体来源',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _rootPath,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: cs.foreground,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                ShadButton.outline(
+                  size: ShadButtonSize.sm,
+                  onPressed: _startBrowsing,
+                  leading: const Icon(Icons.folder_open_rounded, size: 15),
+                  child: const Text('浏览'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          ShadInput(
+            controller: _nameController,
+            placeholder: const Text('媒体库名称'),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: ShadSelect<MediaLibraryKind>(
+                  initialValue: _kind,
+                  placeholder: const Text('媒体类型'),
+                  selectedOptionBuilder: (context, value) => Text(value.title),
+                  options: [
+                    for (final value in MediaLibraryKind.values)
+                      ShadOption(value: value, child: Text(value.title)),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setState(() => _kind = value);
+                  },
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 132,
+                child: ShadInput(
+                  controller: _minSizeController,
+                  keyboardType: TextInputType.number,
+                  placeholder: const Text('最小 MB'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: ShadCheckbox(
+              value: _recursive,
+              label: const Text('递归扫描所有子目录'),
+              sublabel: const Text('关闭后仅扫描当前目录中的视频文件'),
+              onChanged: (value) => setState(() => _recursive = value),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _folderBrowser(ShadColorScheme cs) {
+    return SizedBox(
+      width: 560,
+      height: 390,
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: cs.muted,
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: Row(
+              children: [
+                ShadTooltip(
+                  builder: (_) => const Text('返回上级目录'),
+                  child: ShadButton.ghost(
+                    size: ShadButtonSize.sm,
+                    onPressed: _browserPath.isEmpty
+                        ? null
+                        : () {
+                            setState(() => _browserPath.removeLast());
+                            _loadFolders();
+                          },
+                    child: const Icon(Icons.arrow_back_rounded, size: 16),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Icon(Icons.folder_rounded, size: 16, color: cs.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _browserLocation,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: cs.foreground),
+                  ),
+                ),
+                ShadTooltip(
+                  builder: (_) => const Text('刷新目录'),
+                  child: ShadButton.ghost(
+                    size: ShadButtonSize.sm,
+                    onPressed: _isLoadingFolders ? null : _loadFolders,
+                    child: const Icon(Icons.refresh_rounded, size: 16),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _isLoadingFolders
+                ? const Center(
+                    child: SizedBox(width: 220, child: ShadProgress()),
+                  )
+                : _folderError != null
+                ? Center(
+                    child: Text(
+                      _folderError!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: cs.destructive),
+                    ),
+                  )
+                : _folders.isEmpty
+                ? Center(
+                    child: Text(
+                      '此目录没有子文件夹',
+                      style: TextStyle(color: cs.mutedForeground),
+                    ),
+                  )
+                : ListView.separated(
+                    itemCount: _folders.length,
+                    separatorBuilder: (_, _) =>
+                        Divider(height: 1, color: cs.border),
+                    itemBuilder: (context, index) {
+                      final folder = _folders[index];
+                      return InkWell(
+                        onTap: () {
+                          setState(() => _browserPath.add(folder));
+                          _loadFolders();
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 11,
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.folder_rounded,
+                                size: 19,
+                                color: cs.primary,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  folder.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                size: 18,
+                                color: cs.mutedForeground,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

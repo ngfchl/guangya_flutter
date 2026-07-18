@@ -15,6 +15,116 @@ extension TMDBMediaKindX on TMDBMediaKind {
   }
 }
 
+class MediaCategoryRule {
+  final String id;
+  final String name;
+  final TMDBMediaKind mediaKind;
+  final List<String> languages;
+  final bool isFallback;
+
+  const MediaCategoryRule({
+    required this.id,
+    required this.name,
+    required this.mediaKind,
+    this.languages = const [],
+    this.isFallback = false,
+  });
+
+  MediaCategoryRule copyWith({
+    String? name,
+    TMDBMediaKind? mediaKind,
+    List<String>? languages,
+    bool? isFallback,
+  }) {
+    return MediaCategoryRule(
+      id: id,
+      name: name ?? this.name,
+      mediaKind: mediaKind ?? this.mediaKind,
+      languages: languages ?? this.languages,
+      isFallback: isFallback ?? this.isFallback,
+    );
+  }
+
+  factory MediaCategoryRule.fromJson(Map<String, dynamic> json) {
+    return MediaCategoryRule(
+      id:
+          json['id']?.toString() ??
+          DateTime.now().microsecondsSinceEpoch.toString(),
+      name: json['name']?.toString() ?? '未命名分类',
+      mediaKind: TMDBMediaKind.values.firstWhere(
+        (kind) => kind.name == json['mediaKind']?.toString(),
+        orElse: () => TMDBMediaKind.movie,
+      ),
+      languages:
+          (json['languages'] as List?)
+              ?.map((value) => value.toString().trim())
+              .where((value) => value.isNotEmpty)
+              .toList() ??
+          const [],
+      isFallback: json['isFallback'] == true,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'mediaKind': mediaKind.name,
+    'languages': languages,
+    'isFallback': isFallback,
+  };
+
+  static List<MediaCategoryRule> presets() => const [
+    MediaCategoryRule(
+      id: 'preset-movie-cn',
+      name: '国产电影',
+      mediaKind: TMDBMediaKind.movie,
+      languages: ['zh', 'cn', 'yue'],
+    ),
+    MediaCategoryRule(
+      id: 'preset-movie-jpkr',
+      name: '日韩电影',
+      mediaKind: TMDBMediaKind.movie,
+      languages: ['ja', 'ko', 'th'],
+    ),
+    MediaCategoryRule(
+      id: 'preset-movie-west',
+      name: '欧美电影',
+      mediaKind: TMDBMediaKind.movie,
+      languages: ['en'],
+    ),
+    MediaCategoryRule(
+      id: 'preset-movie-other',
+      name: '其他电影',
+      mediaKind: TMDBMediaKind.movie,
+      isFallback: true,
+    ),
+    MediaCategoryRule(
+      id: 'preset-tv-cn',
+      name: '国产剧集',
+      mediaKind: TMDBMediaKind.tv,
+      languages: ['zh', 'cn', 'yue'],
+    ),
+    MediaCategoryRule(
+      id: 'preset-tv-jpkr',
+      name: '日韩剧集',
+      mediaKind: TMDBMediaKind.tv,
+      languages: ['ja', 'ko', 'th'],
+    ),
+    MediaCategoryRule(
+      id: 'preset-tv-west',
+      name: '欧美剧集',
+      mediaKind: TMDBMediaKind.tv,
+      languages: ['en'],
+    ),
+    MediaCategoryRule(
+      id: 'preset-tv-other',
+      name: '其他剧集',
+      mediaKind: TMDBMediaKind.tv,
+      isFallback: true,
+    ),
+  ];
+}
+
 enum MediaLibraryKind { movies, series, mixed }
 
 extension MediaLibraryKindX on MediaLibraryKind {
