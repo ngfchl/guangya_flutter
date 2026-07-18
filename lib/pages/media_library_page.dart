@@ -1954,6 +1954,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   int? _loadedTMDBID;
   bool _loadingTMDBDetails = false;
   bool _refreshingMedia = false;
+  final _backdropController = PageController();
+  Timer? _backdropTimer;
+  var _backdropIndex = 0;
   final _updatePopover = ShadPopoverController();
 
   @override
@@ -1980,6 +1983,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
 
   @override
   void dispose() {
+    _backdropTimer?.cancel();
+    _backdropController.dispose();
     _updatePopover.dispose();
     super.dispose();
   }
@@ -2063,12 +2068,41 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           _tmdbDetails = details;
           _loadedTMDBID = tmdbID;
         });
+        _restartBackdropCarousel();
       }
     } catch (_) {
       // Artwork enrichments are optional and should not interrupt playback.
     } finally {
       if (mounted) setState(() => _loadingTMDBDetails = false);
     }
+  }
+
+  List<String> _heroBackdropPaths(MediaLibraryItem item) {
+    final images = _tmdbDetails?['images'];
+    final paths = <String>[
+      if (item.backdropPath?.isNotEmpty == true) item.backdropPath!,
+      if (_tmdbDetails?['backdrop_path']?.toString().isNotEmpty == true)
+        _tmdbDetails!['backdrop_path'].toString(),
+      if (images is Map) ..._imagePaths(images['backdrops']),
+    ];
+    return paths.toSet().take(10).toList();
+  }
+
+  void _restartBackdropCarousel() {
+    _backdropTimer?.cancel();
+    final count = _heroBackdropPaths(widget.work.primary).length;
+    if (count < 2) return;
+    _backdropIndex = 0;
+    if (_backdropController.hasClients) _backdropController.jumpToPage(0);
+    _backdropTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      if (!mounted || !_backdropController.hasClients) return;
+      _backdropIndex = (_backdropIndex + 1) % count;
+      _backdropController.animateToPage(
+        _backdropIndex,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   @override
@@ -2163,9 +2197,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final posterURL = item.posterPath?.isNotEmpty == true
         ? _tmdbImageURL(item.posterPath!, size: 'w342')
         : null;
-    final backdropPath = item.backdropPath?.isNotEmpty == true
-        ? item.backdropPath
-        : _tmdbDetails?['backdrop_path']?.toString();
+    final backdrops = _heroBackdropPaths(item);
     return SizedBox(
       height: 340,
       child: ClipRRect(
@@ -2173,14 +2205,19 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (backdropPath != null && backdropPath.isNotEmpty)
-              CachedNetworkImage(
-                imageUrl: _tmdbImageURL(backdropPath, size: 'w1280'),
-                fit: BoxFit.cover,
-                errorWidget: (_, _, _) => _tmdbDirectFallback(
-                  path: backdropPath,
-                  size: 'w1280',
-                  fallback: ColoredBox(color: cs.muted),
+            if (backdrops.isNotEmpty)
+              PageView.builder(
+                controller: _backdropController,
+                itemCount: backdrops.length,
+                onPageChanged: (index) => _backdropIndex = index,
+                itemBuilder: (_, index) => CachedNetworkImage(
+                  imageUrl: _tmdbImageURL(backdrops[index], size: 'w1280'),
+                  fit: BoxFit.cover,
+                  errorWidget: (_, _, _) => _tmdbDirectFallback(
+                    path: backdrops[index],
+                    size: 'w1280',
+                    fallback: ColoredBox(color: cs.muted),
+                  ),
                 ),
               )
             else
@@ -2353,7 +2390,6 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         ? Map<String, dynamic>.from(details['images'] as Map)
         : const <String, dynamic>{};
     final posters = _imagePaths(images['posters']);
-    final backdrops = _imagePaths(images['backdrops']);
     final credits = details['credits'] is Map
         ? Map<String, dynamic>.from(details['credits'] as Map)
         : const <String, dynamic>{};
@@ -2364,46 +2400,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             .take(12)
             .toList() ??
         const <Map<String, dynamic>>[];
-    if (posters.isEmpty && backdrops.isEmpty && cast.isEmpty) {
+    if (posters.isEmpty && cast.isEmpty) {
       return const SizedBox.shrink();
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (backdrops.isNotEmpty) ...[
-          Text(
-            '横幅与剧照',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: cs.foreground,
-            ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 155,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: backdrops.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (context, index) => ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: CachedNetworkImage(
-                  imageUrl: _tmdbImageURL(backdrops[index], size: 'w780'),
-                  width: 260,
-                  fit: BoxFit.cover,
-                  errorWidget: (_, _, _) => _tmdbDirectFallback(
-                    path: backdrops[index],
-                    size: 'w780',
-                    width: 260,
-                    fallback: const SizedBox(width: 260),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-        ],
         if (posters.isNotEmpty) ...[
           Text(
             '更多海报',

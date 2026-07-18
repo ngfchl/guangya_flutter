@@ -1625,8 +1625,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (current != null) {
         return _cacheResolvedCloudFile(knownFile, current);
       }
-    } catch (_) {
+    } catch (error) {
       // A rename can replace the cloud record. Locate its new ID below.
+      _appendScanLog(
+        '[同步识别][DEBUG] 旧 File ID 查询失败：${knownFile.id}，$error；开始回退定位',
+      );
     }
 
     final cached = await FileMetadataCache.file(knownFile.id);
@@ -1685,6 +1688,57 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         continue;
       }
       return _cacheResolvedCloudFile(knownFile, resolved);
+    }
+
+    // The user may have renamed the file outside this app, so its old name is
+    // no longer searchable. Resolve the previous parent directory by name and
+    // compare every child by GCID, which remains stable across a rename.
+    final gcid = knownFile.gcid?.trim();
+    final parentName = _parentDirectoryName(knownFile.cloudPath);
+    if (gcid != null && gcid.isNotEmpty && parentName != null) {
+      try {
+        _appendScanLog('[同步识别][DEBUG] 按父目录 GCID 定位：目录=$parentName，gcid=$gcid');
+        final foldersResponse = await _api!.searchFiles(
+          parentName,
+          page: 0,
+          pageSize: 100,
+        );
+        final folders = _extractFiles(
+          foldersResponse,
+        ).where((file) => file.isDirectory && file.name == parentName);
+        for (final folder in folders) {
+          final response = await _api!.fsFiles(
+            parentID: folder.id,
+            page: 0,
+            pageSize: 1000,
+            orderBy: 0,
+            sortType: 0,
+          );
+          for (final candidate in _extractFiles(response)) {
+            if (candidate.isDirectory) continue;
+            var resolved = candidate;
+            if (resolved.gcid != gcid) {
+              try {
+                final detail = await _api!.fsDetail(candidate.id);
+                resolved =
+                    _fileFromDetail(detail, candidate.id, candidate) ??
+                    candidate;
+              } catch (_) {
+                continue;
+              }
+            }
+            if (resolved.gcid == gcid) {
+              _appendScanLog(
+                '[同步识别][DEBUG] GCID 定位成功：${knownFile.id} -> '
+                '${resolved.id}，名称=${resolved.name}',
+              );
+              return _cacheResolvedCloudFile(knownFile, resolved);
+            }
+          }
+        }
+      } catch (_) {
+        // The caller emits the final diagnostic after all resolution paths fail.
+      }
     }
     return null;
   }
