@@ -625,19 +625,23 @@ class FileNotifier extends StateNotifier<FileState> {
     }
   }
 
-  Future<void> renameFile(CloudFile file, String newName) async {
-    if (_api == null) return;
+  Future<bool> renameFile(CloudFile file, String newName) async {
+    if (_api == null) return false;
     try {
       await _api!.fsRename(file.id, newName);
+      final renamed = file.copyWith(name: newName);
       state = state.copyWith(statusMessage: '重命名成功');
       await FileMetadataCache.updateFolderChildren(
         _currentParentID,
-        addOrReplace: [file.copyWith(name: newName)],
+        addOrReplace: [renamed],
       );
+      await FileMetadataCache.cacheFiles([renamed]);
       await _invalidateListCache(_currentParentID);
       await loadFiles(parentID: _currentParentID);
+      return true;
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
+      return false;
     }
   }
 

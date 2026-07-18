@@ -14,6 +14,7 @@ import '../models/fast_transfer.dart';
 import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
+import '../providers/media_library_provider.dart';
 import 'media_library_page.dart';
 
 enum WorkspaceTool { scan, rename, fastTransfer, tmdb, categories }
@@ -985,6 +986,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
     final api = ref.read(authProvider.notifier).api;
     var succeeded = 0;
     var failed = 0;
+    final renamedFiles = <CloudFile>[];
     try {
       for (final change in changes) {
         if (!mounted) return;
@@ -992,12 +994,18 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
         try {
           await api.fsRename(change.file.id, change.newName);
           succeeded += 1;
+          renamedFiles.add(change.file.copyWith(name: change.newName));
         } catch (_) {
           failed += 1;
         }
         if (mounted) setState(() => _completed += 1);
       }
       await ref.read(fileProvider.notifier).loadFiles();
+      if (renamedFiles.isNotEmpty) {
+        await ref
+            .read(mediaLibraryProvider.notifier)
+            .synchronizeRenamedFiles(renamedFiles);
+      }
     } finally {
       if (mounted) {
         setState(() {

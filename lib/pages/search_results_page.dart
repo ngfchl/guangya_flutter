@@ -314,7 +314,17 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                           onSelect: () => _selectFile(files, file),
                           onOpen: () => notifier.downloadFile(file),
                           onRenameConfirm: (name) async {
-                            await notifier.renameFile(file, name);
+                            final renamed = await notifier.renameFile(
+                              file,
+                              name,
+                            );
+                            if (renamed) {
+                              await ref
+                                  .read(mediaLibraryProvider.notifier)
+                                  .synchronizeRenamedFiles([
+                                    file.copyWith(name: name),
+                                  ]);
+                            }
                             if (mounted) setState(() => _results = _search());
                           },
                           onCopy: () => notifier.copyToClipboard([file]),

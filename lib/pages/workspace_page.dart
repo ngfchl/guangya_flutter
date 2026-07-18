@@ -1407,7 +1407,14 @@ class _PrimaryFilePane extends ConsumerWidget {
               onOpen: file.isDirectory
                   ? () => notifier.navigateToFolder(file)
                   : () => _openCloudFile(context, ref, file),
-              onRenameConfirm: (name) => notifier.renameFile(file, name),
+              onRenameConfirm: (name) async {
+                final renamed = await notifier.renameFile(file, name);
+                if (renamed) {
+                  await ref
+                      .read(mediaLibraryProvider.notifier)
+                      .synchronizeRenamedFiles([file.copyWith(name: name)]);
+                }
+              },
               onCopy: () => notifier.copyToClipboard([file]),
               onCut: () => notifier.cutToClipboard([file]),
               onDownload: () => notifier.downloadFile(file),
@@ -2066,6 +2073,9 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     controller.dispose();
     if (newName == null || newName.isEmpty || newName == file.name) return;
     await ref.read(authProvider.notifier).api.fsRename(file.id, newName);
+    await ref.read(mediaLibraryProvider.notifier).synchronizeRenamedFiles([
+      file.copyWith(name: newName),
+    ]);
     final affected = <int>{};
     for (var index = 0; index < _columns.length; index++) {
       if (_columns[index].files.any((item) => item.id == file.id)) {
@@ -3086,7 +3096,14 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               onCut: () =>
                   ref.read(fileProvider.notifier).cutToClipboard([file]),
               onRenameConfirm: (name) async {
-                await ref.read(fileProvider.notifier).renameFile(file, name);
+                final renamed = await ref
+                    .read(fileProvider.notifier)
+                    .renameFile(file, name);
+                if (renamed) {
+                  await ref
+                      .read(mediaLibraryProvider.notifier)
+                      .synchronizeRenamedFiles([file.copyWith(name: name)]);
+                }
                 if (!mounted) return;
                 setState(() {
                   _files = _files
