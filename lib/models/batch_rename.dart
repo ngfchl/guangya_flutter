@@ -2,6 +2,8 @@ import 'cloud_file.dart';
 
 enum BatchRenameRuleKind { remove, replace, regex, prefix, suffix }
 
+enum BatchRenameItemType { all, files, folders }
+
 class BatchRenameRule {
   final String id;
   final bool enabled;
@@ -115,20 +117,38 @@ List<BatchRenamePreview> buildRenamePreviews(
     }
   }
   final proposed = <String, int>{};
+  final existing = <String, Set<String>>{};
+  for (final file in files) {
+    final key = _destinationKey(file.cloudPath, file.name);
+    (existing[key] ??= <String>{}).add(file.id);
+  }
   for (final item in values.where((item) => item.applicable)) {
-    final key =
-        '${item.file.cloudPath.toLowerCase()}/${item.newName.toLowerCase()}';
+    final key = _destinationKey(item.file.cloudPath, item.newName);
     proposed[key] = (proposed[key] ?? 0) + 1;
   }
   return values.map((item) {
-    final key =
-        '${item.file.cloudPath.toLowerCase()}/${item.newName.toLowerCase()}';
-    return proposed[key] != null && proposed[key]! > 1
-        ? BatchRenamePreview(
-            file: item.file,
-            newName: item.newName,
-            error: '规则产生同名项目',
-          )
-        : item;
+    if (!item.applicable) return item;
+    final key = _destinationKey(item.file.cloudPath, item.newName);
+    if (proposed[key] != null && proposed[key]! > 1) {
+      return BatchRenamePreview(
+        file: item.file,
+        newName: item.newName,
+        error: '规则产生同名项目',
+      );
+    }
+    if (existing[key]?.any((id) => id != item.file.id) ?? false) {
+      return BatchRenamePreview(
+        file: item.file,
+        newName: item.newName,
+        error: '目标名称已存在',
+      );
+    }
+    return item;
   }).toList();
+}
+
+String _destinationKey(String path, String name) {
+  final separator = path.lastIndexOf('/');
+  final parent = separator < 0 ? '' : path.substring(0, separator);
+  return '${parent.toLowerCase()}/${name.toLowerCase()}';
 }
