@@ -20,6 +20,7 @@ class SettingsDialog extends ConsumerStatefulWidget {
 
 class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   _SettingsTab _activeTab = _SettingsTab.general;
+  var _saving = false;
   final _tmdbApiKeyController = TextEditingController();
   final _tmdbImageProxyController = TextEditingController();
   final _httpProxyHostController = TextEditingController();
@@ -85,16 +86,22 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       description: const Text('应用外观、网络任务与影视资料'),
       actions: [
         ShadButton.outline(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
         ShadButton(
-          leading: const Icon(Icons.check_rounded, size: 16),
-          child: const Text('保存设置'),
-          onPressed: () async {
-            await _saveSettings();
-            if (context.mounted) Navigator.of(context).pop();
-          },
+          onPressed: _saving ? null : _saveAndClose,
+          leading: _saving
+              ? SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: cs.primaryForeground,
+                  ),
+                )
+              : const Icon(Icons.check_rounded, size: 16),
+          child: Text(_saving ? '正在保存' : '保存设置'),
         ),
       ],
       child: SizedBox(
@@ -403,6 +410,32 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     ]);
     DioClient.updateNetworkProxy();
     ref.read(mediaLibraryProvider.notifier).updateCloudIndexRefreshSchedule();
+  }
+
+  Future<void> _saveAndClose() async {
+    setState(() => _saving = true);
+    try {
+      await _saveSettings();
+      if (!mounted) return;
+      ShadSonner.maybeOf(context)?.show(
+        const ShadToast(
+          title: Text('设置已保存'),
+          description: Text('新的配置已应用到后续任务。'),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      ShadSonner.maybeOf(context)?.show(
+        ShadToast.destructive(
+          title: const Text('保存设置失败'),
+          description: Text(error.toString()),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+      setState(() => _saving = false);
+    }
   }
 
   String _themeModeToString(ThemeMode mode) {
