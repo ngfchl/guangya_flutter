@@ -108,7 +108,12 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     ref.listen<MediaLibraryState>(mediaLibraryProvider, (previous, next) {
       final message = next.errorMessage ?? next.statusMessage;
       final previousMessage = previous?.errorMessage ?? previous?.statusMessage;
-      if (message == null || message.isEmpty || message == previousMessage) {
+      final isProgressMessage =
+          next.errorMessage == null && message?.startsWith('正在') == true;
+      if (message == null ||
+          message.isEmpty ||
+          message == previousMessage ||
+          isProgressMessage) {
         return;
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {

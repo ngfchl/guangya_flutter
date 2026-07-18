@@ -573,31 +573,15 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
     state = state.copyWith(statusMessage: '正在同步云盘文件信息…', clearError: true);
     final updates = <MediaLibraryItem>[];
+    final replacements = <String, MediaLibraryItem>{};
     final failures = <String>[];
     var recognizedCount = 0;
     for (final original in originals) {
       try {
-        final detail = await _api!.fsDetail(original.file.id);
-        final fromCloud = _fileFromDetail(
-          detail,
-          original.file.id,
-          original.file,
-        );
-        final latestName = fromCloud?.name ?? original.file.name;
-        final latestGCID = fromCloud?.gcid ?? original.file.gcid;
-        final parentPath = _parentPath(original.file.cloudPath);
-        final latestFile = original.file.copyWith(
-          name: latestName,
-          size: fromCloud?.size,
-          gcid: latestGCID,
-          modifiedAt: fromCloud?.modifiedAt,
-          cloudPath: parentPath.isEmpty
-              ? latestName
-              : '$parentPath/$latestName',
-          parentID: fromCloud?.parentID,
-          fullParentIDs: fromCloud?.fullParentIDs,
-        );
-        await FileMetadataCache.cacheFiles([latestFile]);
+        final latestFile = await _resolveCurrentCloudFile(original.file);
+        if (latestFile == null) {
+          throw StateError('云盘中未找到该文件');
+        }
         final fallback = MediaLibraryItem.fromFile(
           original.libraryID,
           latestFile,
@@ -624,16 +608,24 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         }
         updated = await _renameMatchedMediaFile(updated);
         updates.add(updated);
+        replacements['${original.libraryID}:${original.id}'] = updated;
       } catch (error) {
         failures.add('${original.file.name}: $error');
       }
     }
     if (updates.isNotEmpty) {
-      await _store.upsertItems(updates);
+      await _replaceItemsByPreviousIDs(replacements);
       _searchResultsCache.clear();
       final byID = {for (final item in updates) item.id: item};
       state = state.copyWith(
-        items: state.items.map((item) => byID[item.id] ?? item).toList(),
+        items: state.items
+            .map(
+              (item) =>
+                  replacements['${item.libraryID}:${item.id}'] ??
+                  byID[item.id] ??
+                  item,
+            )
+            .toList(),
         statusMessage: failures.isEmpty
             ? '已同步 ${updates.length} 个资源，自动识别 $recognizedCount 个'
             : '已同步 ${updates.length} 个资源，识别 $recognizedCount 个，${failures.length} 个同步失败',
@@ -911,7 +903,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
     try {
       await _api!.fsRename(item.file.id, targetName);
-      final updated = item.copyWith(file: item.file.copyWith(name: targetName));
+      final renamedFile =
+          await _resolveCurrentCloudFile(
+            item.file.copyWith(name: targetName),
+          ) ??
+          item.file.copyWith(name: targetName);
+      final updated = item.copyWith(file: renamedFile);
       await _writeNfoForRenamedMedia(updated, parsed);
       return updated;
     } catch (_) {
@@ -1364,6 +1361,107 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
   }
 
+  Future<CloudFile?> _resolveCurrentCloudFile(CloudFile knownFile) async {
+    try {
+      final detail = await _api!.fsDetail(knownFile.id);
+      final current = _fileFromDetail(detail, knownFile.id, knownFile);
+      if (current != null) {
+        return _cacheResolvedCloudFile(knownFile, current);
+      }
+    } catch (_) {
+      // A rename can replace the cloud record. Locate its new ID below.
+    }
+
+    final cached = await FileMetadataCache.file(knownFile.id);
+    final parentID = knownFile.parentID ?? cached?.parentID;
+    final candidates = <CloudFile>[];
+    final candidateIDs = <String>{};
+    void addCandidates(Iterable<CloudFile> files) {
+      for (final file in files) {
+        if (!file.isDirectory &&
+            file.name == knownFile.name &&
+            candidateIDs.add(file.id)) {
+          candidates.add(file);
+        }
+      }
+    }
+
+    if (parentID != null && parentID.isNotEmpty) {
+      try {
+        final response = await _api!.fsFiles(
+          parentID: parentID,
+          page: 0,
+          pageSize: 1000,
+          orderBy: 0,
+          sortType: 0,
+        );
+        addCandidates(_extractFiles(response));
+      } catch (_) {
+        // The global search below remains available when the parent is stale.
+      }
+    }
+    try {
+      final response = await _api!.searchFiles(
+        knownFile.name,
+        page: 0,
+        pageSize: 100,
+      );
+      addCandidates(_extractFiles(response));
+    } catch (_) {
+      // Return null below so callers can surface an actionable sync failure.
+    }
+
+    for (final candidate in candidates) {
+      var resolved = candidate;
+      if ((knownFile.gcid?.isNotEmpty ?? false) &&
+          candidate.gcid != knownFile.gcid) {
+        try {
+          final detail = await _api!.fsDetail(candidate.id);
+          resolved =
+              _fileFromDetail(detail, candidate.id, candidate) ?? candidate;
+        } catch (_) {
+          continue;
+        }
+      }
+      if (knownFile.gcid?.isNotEmpty == true &&
+          resolved.gcid != knownFile.gcid) {
+        continue;
+      }
+      return _cacheResolvedCloudFile(knownFile, resolved);
+    }
+    return null;
+  }
+
+  Future<CloudFile> _cacheResolvedCloudFile(
+    CloudFile knownFile,
+    CloudFile resolved,
+  ) async {
+    final parentPath = _parentPath(knownFile.cloudPath);
+    final file = knownFile.copyWith(
+      id: resolved.id,
+      name: resolved.name,
+      size: resolved.size,
+      gcid: resolved.gcid,
+      modifiedAt: resolved.modifiedAt,
+      cloudPath: parentPath.isEmpty
+          ? resolved.name
+          : '$parentPath/${resolved.name}',
+      parentID: resolved.parentID ?? knownFile.parentID,
+      fullParentIDs: resolved.fullParentIDs ?? knownFile.fullParentIDs,
+      fileType: resolved.fileType,
+    );
+    await FileMetadataCache.cacheFiles([file]);
+    final parentID = file.parentID ?? knownFile.parentID;
+    if (parentID != null && parentID.isNotEmpty) {
+      await FileMetadataCache.updateFolderChildren(
+        parentID,
+        removeIDs: file.id == knownFile.id ? const [] : [knownFile.id],
+        addOrReplace: [file],
+      );
+    }
+    return file;
+  }
+
   CloudFile? _fileFromDetail(
     Map<String, dynamic> detail,
     String fileID,
@@ -1522,6 +1620,22 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> _saveAllItems(List<MediaLibraryItem> items) {
     return _store.replaceItems(items);
+  }
+
+  Future<void> _replaceItemsByPreviousIDs(
+    Map<String, MediaLibraryItem> replacements,
+  ) async {
+    if (replacements.isEmpty) return;
+    final allItems = await _loadAllItems();
+    final replacementIDs = replacements.values
+        .map((item) => '${item.libraryID}:${item.id}')
+        .toSet();
+    allItems.removeWhere((item) {
+      final key = '${item.libraryID}:${item.id}';
+      return replacements.containsKey(key) || replacementIDs.contains(key);
+    });
+    allItems.addAll(replacements.values);
+    await _saveAllItems(allItems);
   }
 
   Future<int> _removeDiscInternalItems() async {
