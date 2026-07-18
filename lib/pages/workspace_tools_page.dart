@@ -1,5 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -1621,6 +1624,16 @@ class _FastTransferTool extends ConsumerStatefulWidget {
 
 enum _FastTransferTaskState { imported, skipped, failed, cancelled }
 
+class _DigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) => value = data;
+
+  @override
+  void close() {}
+}
+
 class _FastTransferTaskResult {
   final FastTransferEntry entry;
   final _FastTransferTaskState state;
@@ -1660,6 +1673,10 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   bool _cancelRequested = false;
   bool _createDirectories = true;
   bool _skipExisting = true;
+  bool _generating = false;
+  int _generated = 0;
+  int _generationTotal = 0;
+  String _generationName = '';
   String _result = '';
   var _taskResults = <_FastTransferTaskResult>[];
 
@@ -1836,6 +1853,87 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     } finally {
       if (mounted) setState(() => _running = false);
     }
+  }
+
+  Future<void> _generateLocalJson() async {
+    if (_generating || _running) return;
+    final picked = await FilePicker.pickFiles(type: FileType.any);
+    if (picked == null) return;
+    final files = picked.paths
+        .whereType<String>()
+        .map(File.new)
+        .where((file) => file.existsSync())
+        .toList();
+    if (files.isEmpty) return;
+    setState(() {
+      _generating = true;
+      _generated = 0;
+      _generationTotal = files.length;
+      _generationName = '';
+      _result = '';
+    });
+    final entries = <FastTransferEntry>[];
+    var failures = 0;
+    try {
+      for (final file in files) {
+        if (!mounted) return;
+        setState(() => _generationName = file.path.split('/').last);
+        try {
+          final stat = await file.stat();
+          final hashes = await _calculateLocalHashes(file, stat.size);
+          entries.add(
+            FastTransferEntry(
+              path: file.path.split('/').last,
+              size: stat.size,
+              md5: hashes.$1,
+              gcid: hashes.$2,
+            ),
+          );
+        } catch (_) {
+          failures += 1;
+        }
+        if (mounted) setState(() => _generated += 1);
+      }
+      if (!mounted) return;
+      setState(() {
+        _json.text = const JsonEncoder.withIndent(
+          '  ',
+        ).convert({'files': entries.map((entry) => entry.toJson()).toList()});
+        _result = failures == 0
+            ? '已生成 ${entries.length} 个本地文件的秒传 JSON'
+            : '已生成 ${entries.length} 项，$failures 项无法读取';
+      });
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
+  Future<(String, String)> _calculateLocalHashes(File file, int size) async {
+    final chunkSize = switch (size) {
+      <= 0x8000000 => 262144,
+      <= 0x10000000 => 524288,
+      <= 0x20000000 => 1048576,
+      _ => 2097152,
+    };
+    final fileHandle = await file.open(mode: FileMode.read);
+    final md5Sink = _DigestSink();
+    final md5Converter = md5.startChunkedConversion(md5Sink);
+    final chunkHashes = <int>[];
+    try {
+      while (true) {
+        final chunk = await fileHandle.read(chunkSize);
+        if (chunk.isEmpty) break;
+        md5Converter.add(chunk);
+        chunkHashes.addAll(sha1.convert(chunk).bytes);
+      }
+    } finally {
+      md5Converter.close();
+      await fileHandle.close();
+    }
+    final md5Text = md5Sink.value?.toString();
+    if (md5Text == null) throw StateError('无法计算 MD5');
+    final gcid = sha1.convert(chunkHashes).toString().toUpperCase();
+    return (md5Text, gcid);
   }
 
   void _recordTaskResult(
@@ -2042,6 +2140,36 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: ShadButton.outline(
+                      onPressed: _generating || _running
+                          ? null
+                          : _generateLocalJson,
+                      leading: Icon(
+                        _generating
+                            ? Icons.hourglass_top_rounded
+                            : Icons.file_open_rounded,
+                        size: 16,
+                      ),
+                      child: Text(_generating ? '正在生成 JSON' : '从本地文件生成 JSON'),
+                    ),
+                  ),
+                  if (_generating) ...[
+                    const SizedBox(height: 8),
+                    Semantics(
+                      label: '正在计算本地文件校验值：$_generated / $_generationTotal',
+                      child: const ShadProgress(),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$_generated / $_generationTotal ${_generationName.isEmpty ? '' : _generationName}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   SizedBox(
                     height: 220,
