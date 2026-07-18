@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/legacy.dart';
 
 import '../api/guangya_api.dart';
 import '../core/storage/file_metadata_cache.dart';
+import '../core/storage/media_library_store.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
@@ -83,6 +84,7 @@ class MediaLibraryState {
 
 class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   GuangyaAPI? _api;
+  final _store = MediaLibraryStore();
   bool _loaded = false;
   bool _cancelScan = false;
 
@@ -95,11 +97,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     _loaded = true;
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final libraries = _loadLibraries();
+      await _store.initialize();
+      await _migrateLegacyHiveIfNeeded();
+      final libraries = await _loadLibraries();
       final selectedID = libraries.isEmpty ? null : libraries.first.id;
       final items = selectedID == null
           ? <MediaLibraryItem>[]
-          : _loadItems(selectedID);
+          : await _loadItems(selectedID);
       state = state.copyWith(
         libraries: libraries,
         selectedLibraryID: selectedID,
@@ -115,7 +119,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<void> selectLibrary(String id) async {
     state = state.copyWith(
       selectedLibraryID: id,
-      items: _loadItems(id),
+      items: await _loadItems(id),
       searchQuery: '',
       clearError: true,
     );
@@ -165,7 +169,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final libraries = state.libraries
         .where((library) => library.id != id)
         .toList();
-    final allItems = _loadAllItems()
+    final allItems = await _loadAllItems()
       ..removeWhere((item) => item.libraryID == id);
     await _saveLibraries(libraries);
     await _saveAllItems(allItems);
@@ -174,7 +178,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       libraries: libraries,
       selectedLibraryID: selectedID,
       clearSelectedLibrary: selectedID == null,
-      items: selectedID == null ? const [] : _loadItems(selectedID),
+      items: selectedID == null ? const [] : await _loadItems(selectedID),
       statusMessage: '媒体库已删除',
     );
   }
@@ -188,9 +192,51 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     state = state.copyWith(
       libraries: libraries,
       selectedLibraryID: library.id,
-      items: _loadItems(library.id),
+      items: await _loadItems(library.id),
       statusMessage: '媒体库「${library.name}」已更新',
     );
+  }
+
+  Future<void> importScrapedData(String backupPath) async {
+    if (state.isLoading || state.isScanning) return;
+    state = state.copyWith(
+      isLoading: true,
+      clearError: true,
+      clearStatus: true,
+    );
+    try {
+      await _store.importBackup(backupPath);
+      final libraries = await _loadLibraries();
+      final selectedID = libraries.isEmpty ? null : libraries.first.id;
+      state = state.copyWith(
+        libraries: libraries,
+        selectedLibraryID: selectedID,
+        clearSelectedLibrary: selectedID == null,
+        items: selectedID == null ? const [] : await _loadItems(selectedID),
+        statusMessage: '刮削数据已导入',
+      );
+    } catch (error) {
+      state = state.copyWith(errorMessage: '导入失败：$error');
+    } finally {
+      state = state.copyWith(isLoading: false);
+    }
+  }
+
+  Future<void> exportScrapedData(String destinationPath) async {
+    if (state.isLoading || state.isScanning) return;
+    state = state.copyWith(
+      isLoading: true,
+      clearError: true,
+      clearStatus: true,
+    );
+    try {
+      await _store.exportBackupTo(destinationPath);
+      state = state.copyWith(statusMessage: '刮削数据已导出');
+    } catch (error) {
+      state = state.copyWith(errorMessage: '导出失败：$error');
+    } finally {
+      state = state.copyWith(isLoading: false);
+    }
   }
 
   Future<void> scanSelectedLibrary() async {
@@ -206,10 +252,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
 
     try {
-      final initialItems = _loadAllItems()
+      final initialItems = await _loadAllItems()
         ..removeWhere((item) => item.libraryID == library.id);
       final unique = <String, MediaLibraryItem>{
-        for (final item in _loadItems(library.id)) item.file.id: item,
+        for (final item in await _loadItems(library.id)) item.file.id: item,
       };
       state = state.copyWith(items: unique.values.toList());
       final tmdbApiKey =
@@ -331,7 +377,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<List<MediaLibraryItem>> searchAllItems(String query) async {
     final normalized = query.trim().toLowerCase();
     if (normalized.isEmpty) return const [];
-    return _loadAllItems().where((item) {
+    return (await _loadAllItems()).where((item) {
         return item.title.toLowerCase().contains(normalized) ||
             item.file.name.toLowerCase().contains(normalized) ||
             item.file.cloudPath.toLowerCase().contains(normalized);
@@ -424,7 +470,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (!visited.add(visitKey)) continue;
 
       var page = 0;
-      final cachedFolder = FileMetadataCache.folderChildren(folder.id);
+      final cachedFolder = await FileMetadataCache.folderChildren(folder.id);
       final folderSnapshot = <CloudFile>[];
       while (!_cancelScan) {
         late List<CloudFile> files;
@@ -481,7 +527,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final resolved = <CloudFile>[];
     final pending = <CloudFile>[];
     for (final file in files) {
-      final cached = FileMetadataCache.file(file.id);
+      final cached = await FileMetadataCache.file(file.id);
       if (cached != null) {
         resolved.add(
           file.copyWith(
@@ -660,6 +706,56 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return result;
   }
 
+  Future<void> _migrateLegacyHiveIfNeeded() async {
+    if (!await _store.isEmpty) return;
+    final rawLibraries = StorageManager.get<dynamic>(
+      StorageKeys.mediaLibraries,
+    );
+    if (rawLibraries is! List) return;
+    final libraries = rawLibraries
+        .whereType<Map>()
+        .map(
+          (item) =>
+              MediaLibraryDefinition.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .toList();
+    if (libraries.isEmpty) return;
+    final rawItems = StorageManager.get<dynamic>(StorageKeys.mediaLibraryItems);
+    final items = rawItems is List
+        ? rawItems
+              .whereType<Map>()
+              .map(
+                (item) =>
+                    MediaLibraryItem.fromJson(Map<String, dynamic>.from(item)),
+              )
+              .where((item) => item.file.id.isNotEmpty)
+              .toList()
+        : <MediaLibraryItem>[];
+    await _store.saveLibraries(libraries);
+    await _store.replaceItems(items);
+  }
+
+  Future<List<MediaLibraryDefinition>> _loadLibraries() {
+    return _store.libraries();
+  }
+
+  Future<List<MediaLibraryItem>> _loadItems(String libraryID) {
+    return _store.items(libraryID: libraryID);
+  }
+
+  Future<List<MediaLibraryItem>> _loadAllItems() {
+    return _store.items();
+  }
+
+  Future<void> _saveLibraries(List<MediaLibraryDefinition> libraries) {
+    return _store.saveLibraries(libraries);
+  }
+
+  Future<void> _saveAllItems(List<MediaLibraryItem> items) {
+    return _store.replaceItems(items);
+  }
+
+  /*
   List<MediaLibraryDefinition> _loadLibraries() {
     final raw = StorageManager.get<dynamic>(StorageKeys.mediaLibraries);
     if (raw is! List) return [];
@@ -703,6 +799,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       items.map((item) => item.toJson()).toList(),
     );
   }
+  */
 
   static List<dynamic>? _findArrayDeep(
     Map<String, dynamic> json,

@@ -1,0 +1,459 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:path/path.dart' as path;
+import 'package:sqflite/sqflite.dart';
+
+import '../../models/cloud_file.dart';
+import '../../models/media_library.dart';
+
+/// SQLite-backed scraped media cache. The schema intentionally matches the
+/// macOS client so its backup database can be merged without deserializing
+/// large poster/backdrop BLOBs in Dart.
+class MediaLibraryStore {
+  Database? _database;
+
+  Future<Database> get _db async {
+    if (_database != null) return _database!;
+    final databasePath = path.join(
+      await getDatabasesPath(),
+      'media-library.sqlite3',
+    );
+    _database = await openDatabase(
+      databasePath,
+      version: 2,
+      onCreate: (db, _) async {
+        await _createSchema(db);
+      },
+      onUpgrade: (db, _, _) async {
+        await _createSchema(db);
+      },
+    );
+    await _createSchema(_database!);
+    return _database!;
+  }
+
+  Future<void> initialize() async {
+    await _db;
+  }
+
+  Future<bool> get isEmpty async {
+    final rows = await (await _db).rawQuery(
+      'SELECT COUNT(*) AS count FROM media_libraries',
+    );
+    return (rows.first['count'] as int? ?? 0) == 0;
+  }
+
+  Future<List<MediaLibraryDefinition>> libraries() async {
+    final db = await _db;
+    final rows = await db.query(
+      'media_libraries',
+      orderBy: 'updated_at DESC, name COLLATE NOCASE',
+    );
+    final sources = await db.query(
+      'media_library_sources',
+      orderBy: 'library_id, sort_order',
+    );
+    final sourcesByLibrary = <String, List<MediaLibrarySource>>{};
+    for (final row in sources) {
+      final libraryID = row['library_id']?.toString() ?? '';
+      sourcesByLibrary
+          .putIfAbsent(libraryID, () => [])
+          .add(
+            MediaLibrarySource(
+              id: row['id']?.toString() ?? '',
+              rootID: row['root_id']?.toString(),
+              path: row['root_path']?.toString() ?? '未配置目录',
+            ),
+          );
+    }
+    return rows.map((row) {
+      final id = row['id']?.toString() ?? '';
+      return MediaLibraryDefinition(
+        id: id,
+        name: row['name']?.toString() ?? '未命名媒体库',
+        sources:
+            sourcesByLibrary[id] ??
+            [
+              MediaLibrarySource(
+                id: '$id-legacy',
+                rootID: row['root_id']?.toString(),
+                path: row['root_path']?.toString() ?? '未配置目录',
+              ),
+            ],
+        kind: MediaLibraryKind.values.firstWhere(
+          (kind) => kind.name == row['kind']?.toString(),
+          orElse: () => MediaLibraryKind.mixed,
+        ),
+        recursive: row['recursive'] != 0,
+        minimumSizeMB: _asInt(row['minimum_size_mb']) ?? 50,
+        updatedAt: _dateFromEpoch(row['updated_at']),
+      );
+    }).toList();
+  }
+
+  Future<List<MediaLibraryItem>> items({String? libraryID}) async {
+    final rows = await (await _db).query(
+      'media_items',
+      where: libraryID == null ? null : 'library_id = ?',
+      whereArgs: libraryID == null ? null : [libraryID],
+      orderBy: 'title COLLATE NOCASE',
+    );
+    return rows.map(_itemFromRow).toList();
+  }
+
+  Future<void> saveLibraries(List<MediaLibraryDefinition> libraries) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final library in libraries) {
+        await txn.insert('media_libraries', {
+          'id': library.id,
+          'name': library.name,
+          'root_id': library.rootID,
+          'root_path': library.rootPath,
+          'kind': library.kind.name,
+          'recursive': library.recursive ? 1 : 0,
+          'minimum_size_mb': library.minimumSizeMB,
+          'updated_at': _epoch(library.updatedAt),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.delete(
+          'media_library_sources',
+          where: 'library_id = ?',
+          whereArgs: [library.id],
+        );
+        for (var index = 0; index < library.sources.length; index++) {
+          final source = library.sources[index];
+          await txn.insert('media_library_sources', {
+            'id': source.id,
+            'library_id': library.id,
+            'root_id': source.rootID,
+            'root_path': source.path,
+            'sort_order': index,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      }
+    });
+  }
+
+  Future<void> deleteLibrary(String id) async {
+    await (await _db).delete(
+      'media_libraries',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> replaceItems(List<MediaLibraryItem> items) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      await txn.delete('media_items');
+      for (final item in items) {
+        await txn.insert('media_items', _itemRow(item));
+      }
+    });
+  }
+
+  Future<void> importBackup(String backupPath) async {
+    final db = await _db;
+    await db.execute('ATTACH DATABASE ? AS imported_backup', [backupPath]);
+    try {
+      await db.transaction((txn) async {
+        await txn.execute(
+          'INSERT OR REPLACE INTO media_libraries SELECT * FROM imported_backup.media_libraries',
+        );
+        await txn.execute(
+          'INSERT OR REPLACE INTO media_library_sources SELECT * FROM imported_backup.media_library_sources',
+        );
+        await txn.execute(
+          'INSERT OR REPLACE INTO media_items SELECT * FROM imported_backup.media_items',
+        );
+      });
+    } finally {
+      await db.execute('DETACH DATABASE imported_backup');
+    }
+  }
+
+  Future<void> exportBackupTo(String destinationPath) async {
+    final db = await _db;
+    await db.execute('PRAGMA wal_checkpoint(FULL)');
+    await File(db.path).copy(destinationPath);
+  }
+
+  Future<void> cacheFolderChildren(
+    String? folderID,
+    List<CloudFile> files,
+  ) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final file in files) {
+        final gcid = file.gcid?.trim();
+        if (gcid == null || gcid.isEmpty) continue;
+        await txn.insert('file_index', {
+          'file_id': file.id,
+          'gcid': gcid,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('gcid_details', {
+          'gcid': gcid,
+          'file_json': jsonEncode(file.toJson()),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await txn.insert('folder_children', {
+        'folder_id': _folderID(folderID),
+        'child_ids': jsonEncode(files.map((file) => file.id).toList()),
+        'children_json': jsonEncode(
+          files.map((file) => file.toJson()).toList(),
+        ),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+  }
+
+  Future<void> cacheFiles(List<CloudFile> files) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final file in files) {
+        final gcid = file.gcid?.trim();
+        if (gcid == null || gcid.isEmpty) continue;
+        await txn.insert('file_index', {
+          'file_id': file.id,
+          'gcid': gcid,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('gcid_details', {
+          'gcid': gcid,
+          'file_json': jsonEncode(file.toJson()),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<List<CloudFile>?> folderChildren(String? folderID) async {
+    final rows = await (await _db).query(
+      'folder_children',
+      columns: ['children_json'],
+      where: 'folder_id = ?',
+      whereArgs: [_folderID(folderID)],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    try {
+      final values = jsonDecode(
+        rows.first['children_json']?.toString() ?? '[]',
+      );
+      if (values is! List) return null;
+      return values
+          .whereType<Map>()
+          .map((value) => CloudFile.fromJson(Map<String, dynamic>.from(value)))
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<CloudFile?> cachedFile(String fileID) async {
+    final rows = await (await _db).rawQuery(
+      '''SELECT d.file_json FROM file_index i
+         JOIN gcid_details d ON d.gcid = i.gcid
+         WHERE i.file_id = ? LIMIT 1''',
+      [fileID],
+    );
+    if (rows.isEmpty) return null;
+    try {
+      final value = jsonDecode(rows.first['file_json']?.toString() ?? '{}');
+      return value is Map
+          ? CloudFile.fromJson(Map<String, dynamic>.from(value))
+          : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> updateFolderChildren(
+    String? folderID, {
+    Iterable<String> removeIDs = const [],
+    Iterable<CloudFile> addOrReplace = const [],
+    bool invalidate = false,
+  }) async {
+    final db = await _db;
+    final key = _folderID(folderID);
+    if (invalidate) {
+      await db.delete(
+        'folder_children',
+        where: 'folder_id = ?',
+        whereArgs: [key],
+      );
+      return;
+    }
+    final existing = await folderChildren(folderID);
+    if (existing == null) return;
+    final removed = removeIDs.toSet();
+    final replacement = {for (final file in addOrReplace) file.id: file};
+    final children =
+        existing
+            .where(
+              (file) =>
+                  !removed.contains(file.id) &&
+                  !replacement.containsKey(file.id),
+            )
+            .toList()
+          ..addAll(replacement.values);
+    await cacheFolderChildren(folderID, children);
+  }
+
+  Future<void> removeFilesFromAllFolders(Iterable<String> fileIDs) async {
+    final ids = fileIDs.toSet();
+    if (ids.isEmpty) return;
+    final db = await _db;
+    final rows = await db.query('folder_children');
+    await db.transaction((txn) async {
+      for (final row in rows) {
+        final folderID = row['folder_id']?.toString();
+        final children = await folderChildren(
+          folderID == _rootFolderID ? null : folderID,
+        );
+        if (children == null) continue;
+        final retained = children
+            .where((file) => !ids.contains(file.id))
+            .toList();
+        if (retained.length == children.length) continue;
+        await txn.update(
+          'folder_children',
+          {
+            'child_ids': jsonEncode(retained.map((file) => file.id).toList()),
+            'children_json': jsonEncode(
+              retained.map((file) => file.toJson()).toList(),
+            ),
+          },
+          where: 'folder_id = ?',
+          whereArgs: [folderID],
+        );
+      }
+    });
+  }
+
+  Future<void> _createSchema(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS media_libraries (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        root_id TEXT,
+        root_path TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        recursive INTEGER NOT NULL DEFAULT 1,
+        updated_at REAL,
+        minimum_size_mb INTEGER NOT NULL DEFAULT 50
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS media_library_sources (
+        id TEXT PRIMARY KEY NOT NULL,
+        library_id TEXT NOT NULL,
+        root_id TEXT,
+        root_path TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS media_items (
+        library_id TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        resource_path TEXT NOT NULL,
+        cloud_name TEXT NOT NULL,
+        file_size INTEGER,
+        gcid TEXT,
+        file_type INTEGER NOT NULL,
+        tmdb_id INTEGER,
+        media_kind TEXT,
+        title TEXT NOT NULL,
+        original_title TEXT NOT NULL,
+        release_date TEXT NOT NULL,
+        overview TEXT NOT NULL,
+        poster BLOB,
+        backdrop BLOB,
+        has_chinese_audio INTEGER NOT NULL DEFAULT 0,
+        has_chinese_subtitle INTEGER NOT NULL DEFAULT 0,
+        collection_id INTEGER,
+        collection_name TEXT,
+        updated_at REAL NOT NULL,
+        PRIMARY KEY (library_id, file_id)
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS file_index (
+        file_id TEXT PRIMARY KEY NOT NULL,
+        gcid TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS gcid_details (
+        gcid TEXT PRIMARY KEY NOT NULL,
+        file_json TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS folder_children (
+        folder_id TEXT PRIMARY KEY NOT NULL,
+        child_ids TEXT NOT NULL,
+        children_json TEXT NOT NULL
+      )
+    ''');
+  }
+
+  MediaLibraryItem _itemFromRow(Map<String, Object?> row) {
+    return MediaLibraryItem.fromJson({
+      'libraryID': row['library_id'],
+      'fileID': row['file_id'],
+      'resourcePath': row['resource_path'],
+      'cloudName': row['cloud_name'],
+      'fileSize': row['file_size'],
+      'gcid': row['gcid'],
+      'fileType': row['file_type'],
+      'tmdbID': row['tmdb_id'],
+      'mediaKind': row['media_kind'],
+      'title': row['title'],
+      'originalTitle': row['original_title'],
+      'releaseDate': row['release_date'],
+      'overview': row['overview'],
+      'hasChineseAudio': row['has_chinese_audio'] == 1,
+      'hasChineseSubtitle': row['has_chinese_subtitle'] == 1,
+      'collectionID': row['collection_id'],
+      'collectionName': row['collection_name'],
+      'updatedAt': _dateFromEpoch(row['updated_at'])?.toIso8601String(),
+    });
+  }
+
+  Map<String, Object?> _itemRow(MediaLibraryItem item) => {
+    'library_id': item.libraryID,
+    'file_id': item.file.id,
+    'resource_path': item.file.cloudPath,
+    'cloud_name': item.file.name,
+    'file_size': item.file.size,
+    'gcid': item.file.gcid,
+    'file_type': item.file.fileType,
+    'tmdb_id': item.tmdbID,
+    'media_kind': item.mediaKind?.name,
+    'title': item.title,
+    'original_title': item.originalTitle,
+    'release_date': item.releaseDate,
+    'overview': item.overview,
+    'has_chinese_audio': item.hasChineseAudio ? 1 : 0,
+    'has_chinese_subtitle': item.hasChineseSubtitle ? 1 : 0,
+    'collection_id': item.collectionID,
+    'collection_name': item.collectionName,
+    'updated_at': _epoch(item.updatedAt) ?? 0,
+  };
+
+  static int? _asInt(Object? value) =>
+      value is int ? value : int.tryParse('$value');
+
+  static double? _epoch(DateTime? value) =>
+      value == null ? null : value.millisecondsSinceEpoch / 1000;
+
+  static DateTime? _dateFromEpoch(Object? value) {
+    final seconds = value is num ? value.toDouble() : double.tryParse('$value');
+    return seconds == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch((seconds * 1000).round());
+  }
+
+  static const _rootFolderID = '@root';
+  static String _folderID(String? folderID) => folderID ?? _rootFolderID;
+}

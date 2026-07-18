@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../core/storage/storage_manager.dart';
@@ -33,6 +34,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   bool _tmdbSearching = false;
   String? _tmdbError;
   List<Map<String, dynamic>> _tmdbResults = [];
+  bool _backupBusy = false;
   final _apiKeyController = TextEditingController();
   final _searchController = TextEditingController();
 
@@ -163,6 +165,22 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           onPressed: () => _showCreateLibraryDialog(context, ref),
           leading: const Icon(Icons.add_rounded, size: 16),
           child: const Text('媒体库'),
+        ),
+        const SizedBox(width: 8),
+        ShadButton.outline(
+          onPressed: _backupBusy || state.isScanning
+              ? null
+              : _exportScrapedData,
+          leading: const Icon(Icons.save_alt_rounded, size: 16),
+          child: const Text('导出数据'),
+        ),
+        const SizedBox(width: 8),
+        ShadButton.outline(
+          onPressed: _backupBusy || state.isScanning
+              ? null
+              : _importScrapedData,
+          leading: const Icon(Icons.upload_file_rounded, size: 16),
+          child: const Text('导入数据'),
         ),
         const SizedBox(width: 8),
         ShadButton.outline(
@@ -562,6 +580,37 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       _tmdbApiKey = key;
       _showApiKeyInput = false;
     });
+  }
+
+  Future<void> _exportScrapedData() async {
+    final directory = await FilePicker.getDirectoryPath(
+      dialogTitle: '选择刮削数据导出目录',
+    );
+    if (directory == null || !mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      await ref
+          .read(mediaLibraryProvider.notifier)
+          .exportScrapedData('$directory/media-library.sqlite3');
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _importScrapedData() async {
+    final backup = await FilePicker.pickFile(
+      dialogTitle: '导入影视缓存与刮削数据',
+      type: FileType.custom,
+      allowedExtensions: const ['sqlite3', 'sqlite', 'db'],
+    );
+    final path = backup?.path;
+    if (path == null || !mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      await ref.read(mediaLibraryProvider.notifier).importScrapedData(path);
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
   }
 
   Future<void> _searchTMDB(String query) async {
