@@ -461,6 +461,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           builder: (_) => ExternalPlayerDialog(file: item.file),
         ),
         onManualMatch: () => _showManualTMDBMatch(current ?? _detailWork!),
+        onRefreshAndRecognize: () => ref
+            .read(mediaLibraryProvider.notifier)
+            .refreshAndRecognizeItems((current ?? _detailWork!).resources),
         onRescan: state.isScanning
             ? null
             : () =>
@@ -1879,6 +1882,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final ValueChanged<MediaLibraryItem> onPlay;
   final ValueChanged<MediaLibraryItem> onExternalPlay;
   final VoidCallback onManualMatch;
+  final VoidCallback onRefreshAndRecognize;
   final VoidCallback? onRescan;
 
   const _MediaDetailPanel({
@@ -1888,6 +1892,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onPlay,
     required this.onExternalPlay,
     required this.onManualMatch,
+    required this.onRefreshAndRecognize,
     this.onRescan,
   });
 
@@ -1976,9 +1981,15 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               child: const Text('返回海报墙'),
             ),
             ShadButton.outline(
-              onPressed: widget.onManualMatch,
+              onPressed: widget.onRefreshAndRecognize,
               leading: const Icon(Icons.manage_search_rounded, size: 16),
               child: const Text('重新识别'),
+            ),
+            ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: widget.onManualMatch,
+              leading: const Icon(Icons.edit_note_rounded, size: 16),
+              child: const Text('手动匹配'),
             ),
             const SizedBox(width: 8),
             ShadButton.outline(

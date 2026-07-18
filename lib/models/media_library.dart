@@ -576,6 +576,37 @@ class ParsedMediaName {
       parent = ParsedMediaName.parse(directoryName);
       if (parent.title.isNotEmpty) title = parent.title;
     }
+    final seasonOnly = RegExp(
+      r'\b(?:Season|S)\s*0?(\d{1,2})\b',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    if (season == null && seasonOnly != null) {
+      season = int.tryParse(seasonOnly.group(1)!);
+    }
+    // Disc/episode files are frequently named only "0102" or "02". Use an
+    // explicit season from the parent directory first; otherwise only infer
+    // the unambiguous SS EE form to avoid treating years as episode numbers.
+    final numericOnly = RegExp(r'^\d{1,4}$').hasMatch(stem.trim());
+    if (episode == null && numericOnly && directoryName != null) {
+      final digits = stem.trim();
+      final parentSeason = parent?.season;
+      if (parentSeason != null) {
+        season = parentSeason;
+        episode = int.tryParse(digits);
+      } else if (digits.length == 3 || digits.length == 4) {
+        final split = digits.length - 2;
+        final inferredSeason = int.tryParse(digits.substring(0, split));
+        final inferredEpisode = int.tryParse(digits.substring(split));
+        if (inferredSeason != null &&
+            inferredSeason > 0 &&
+            inferredSeason <= 99 &&
+            inferredEpisode != null &&
+            inferredEpisode > 0) {
+          season = inferredSeason;
+          episode = inferredEpisode;
+        }
+      }
+    }
     if (title.isEmpty) title = normalized.trim();
 
     return ParsedMediaName(

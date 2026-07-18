@@ -325,7 +325,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               directoryName: _parentDirectoryName(file.cloudPath),
             );
             final existing = unique[file.id];
-            var item = existing == null
+            final fileChanged =
+                existing != null &&
+                (existing.file.name != file.name ||
+                    existing.file.gcid != file.gcid ||
+                    existing.file.cloudPath != file.cloudPath);
+            var item = existing == null || fileChanged
                 ? await _recognizeMediaItem(
                     fallback,
                     tmdbApiKey,
@@ -521,6 +526,66 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
   }
 
+  /// Pulls current file metadata from the cloud before parsing and matching it.
+  /// This is required after a file was renamed outside the media scanner.
+  Future<void> refreshAndRecognizeItems(
+    Iterable<MediaLibraryItem> values,
+  ) async {
+    if (_api == null) return;
+    final originals = values.toList();
+    if (originals.isEmpty) return;
+    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    state = state.copyWith(statusMessage: '正在同步云盘文件信息…', clearError: true);
+    final updates = <MediaLibraryItem>[];
+    for (final original in originals) {
+      try {
+        final detail = await _api!.fsDetail(original.file.id);
+        final fromCloud = _extractFiles(
+          detail,
+        ).where((file) => file.id == original.file.id).firstOrNull;
+        final latestName =
+            fromCloud?.name ??
+            _findStringDeep(detail, const ['fileName', 'name', 'resName']) ??
+            original.file.name;
+        final parentPath = _parentPath(original.file.cloudPath);
+        final latestFile = (fromCloud ?? original.file).copyWith(
+          name: latestName,
+          cloudPath: parentPath.isEmpty
+              ? latestName
+              : '$parentPath/$latestName',
+        );
+        await FileMetadataCache.cacheFiles([latestFile]);
+        final fallback = MediaLibraryItem.fromFile(
+          original.libraryID,
+          latestFile,
+          directoryName: _parentDirectoryName(latestFile.cloudPath),
+        );
+        var updated = apiKey.trim().isEmpty
+            ? fallback
+            : await _recognizeMediaItem(
+                fallback,
+                apiKey,
+                proxyHost:
+                    StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+                proxyPort:
+                    StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+              );
+        updated = await _renameMatchedMediaFile(updated);
+        updates.add(updated);
+      } catch (_) {
+        // Keep indexing the remaining resources when one cloud detail fails.
+      }
+    }
+    if (updates.isEmpty) return;
+    await _store.upsertItems(updates);
+    _searchResultsCache.clear();
+    final byID = {for (final item in updates) item.id: item};
+    state = state.copyWith(
+      items: state.items.map((item) => byID[item.id] ?? item).toList(),
+      statusMessage: '已同步并重新识别 ${updates.length} 个资源',
+    );
+  }
+
   Future<MediaLibraryItem> applyTMDBMatch(
     MediaLibraryItem item,
     Map<String, dynamic> candidate,
@@ -698,17 +763,40 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     if (_api == null || item.tmdbID == null || item.mediaKind == null) {
       return item;
     }
-    final parsed = ParsedMediaName.parse(
-      item.file.name,
-      directoryName: _parentDirectoryName(item.file.cloudPath),
+    final directoryName = _parentDirectoryName(item.file.cloudPath);
+    final fileParsed = ParsedMediaName.parse(item.file.name);
+    final parentParsed = directoryName == null
+        ? null
+        : ParsedMediaName.parse(directoryName);
+    final parsed = ParsedMediaName(
+      title: fileParsed.title,
+      year: fileParsed.year ?? parentParsed?.year,
+      season: fileParsed.season ?? parentParsed?.season,
+      episode: fileParsed.episode,
+      isEpisode: fileParsed.isEpisode,
+      resolution: fileParsed.resolution ?? parentParsed?.resolution,
+      source: fileParsed.source ?? parentParsed?.source,
+      videoCodec: fileParsed.videoCodec ?? parentParsed?.videoCodec,
+      audio: fileParsed.audio ?? parentParsed?.audio,
+      dynamicRange: fileParsed.dynamicRange ?? parentParsed?.dynamicRange,
     );
+    // A canonical media name must retain a resolution. If neither the file nor
+    // its immediate directory provides one, leave the resource untouched.
+    if (parsed.resolution == null || parsed.resolution!.isEmpty) return item;
     final extension = _extensionOf(item.file.name);
     final year = item.year.isEmpty ? '' : '.${item.year}';
     final episode = item.mediaKind == TMDBMediaKind.tv && parsed.isEpisode
         ? '.S${parsed.season!.toString().padLeft(2, '0')}E${parsed.episode!.toString().padLeft(2, '0')}'
         : '';
+    final technical = <String>[
+      parsed.resolution!,
+      if (parsed.source?.isNotEmpty == true) parsed.source!,
+      if (parsed.dynamicRange?.isNotEmpty == true) parsed.dynamicRange!,
+      if (parsed.videoCodec?.isNotEmpty == true) parsed.videoCodec!,
+      if (parsed.audio?.isNotEmpty == true) parsed.audio!,
+    ].join('.');
     final targetName =
-        '${_safeCloudName('${item.title}$year$episode')}${extension.isEmpty ? '' : '.$extension'}';
+        '${_safeCloudName('${item.title}$year$episode.$technical')}${extension.isEmpty ? '' : '.$extension'}';
     if (targetName == item.file.name) return item;
 
     try {
@@ -793,6 +881,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         .where((part) => part.isNotEmpty)
         .toList();
     return values.length < 2 ? null : values[values.length - 2];
+  }
+
+  String _parentPath(String cloudPath) {
+    final index = cloudPath.lastIndexOf(RegExp(r'[\\/]'));
+    return index <= 0 ? '' : cloudPath.substring(0, index);
   }
 
   String _safeCloudName(String value) {
@@ -1134,6 +1227,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       subFileCount: file.subFileCount,
       modifiedAt: file.modifiedAt,
       cloudPath: path,
+      parentID: file.parentID,
+      fullParentIDs: file.fullParentIDs,
       fileType: file.fileType,
     );
   }

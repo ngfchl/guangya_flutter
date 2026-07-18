@@ -43,5 +43,23 @@ void main() {
       expect(stream.title, '加勒比海盗5：死无对证');
       expect(stream.year, 2017);
     });
+
+    test('uses parent season information for numeric episode file names', () {
+      final fromSeasonFolder = ParsedMediaName.parse(
+        '02.mkv',
+        directoryName: '示例剧集 Season 3 2160p WEB-DL',
+      );
+      final compact = ParsedMediaName.parse(
+        '0102.mkv',
+        directoryName: '示例剧集 1080p',
+      );
+
+      expect(fromSeasonFolder.season, 3);
+      expect(fromSeasonFolder.episode, 2);
+      expect(fromSeasonFolder.isEpisode, isTrue);
+      expect(compact.season, 1);
+      expect(compact.episode, 2);
+      expect(compact.isEpisode, isTrue);
+    });
   });
 }
