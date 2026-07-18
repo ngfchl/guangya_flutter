@@ -175,60 +175,63 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
           child: const Text('关闭'),
         ),
       ],
-      child: SizedBox(
-        width: 960,
-        height: 610,
-        child: Row(
-          children: [
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: ColoredBox(
-                  color: Colors.black,
-                  child: _loading
-                      ? const Center(child: ShadProgress())
-                      : _error != null
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Text(
-                              '无法播放：$_error',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: cs.destructive),
+      child: Material(
+        color: Colors.transparent,
+        child: SizedBox(
+          width: 960,
+          height: 610,
+          child: Row(
+            children: [
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: ColoredBox(
+                    color: Colors.black,
+                    child: _loading
+                        ? const Center(child: ShadProgress())
+                        : _error != null
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Text(
+                                '无法播放：$_error',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: cs.destructive),
+                              ),
                             ),
+                          )
+                        : Stack(
+                            children: [
+                              Positioned.fill(
+                                child: Video(
+                                  key: _videoKey,
+                                  controller: _controller,
+                                  controls: NoVideoControls,
+                                ),
+                              ),
+                              Positioned.fill(
+                                child: _MediaPlaybackControls(
+                                  player: _player,
+                                  controller: _controller,
+                                  onSearchSubtitles: _searchDirectorySubtitles,
+                                  onLoadLocalSubtitle: _loadLocalSubtitle,
+                                  onToggleFullscreen: () =>
+                                      _videoKey.currentState
+                                          ?.toggleFullscreen() ??
+                                      Future.value(),
+                                ),
+                              ),
+                            ],
                           ),
-                        )
-                      : Stack(
-                          children: [
-                            Positioned.fill(
-                              child: Video(
-                                key: _videoKey,
-                                controller: _controller,
-                                controls: NoVideoControls,
-                              ),
-                            ),
-                            Positioned.fill(
-                              child: _MediaPlaybackControls(
-                                player: _player,
-                                controller: _controller,
-                                onSearchSubtitles: _searchDirectorySubtitles,
-                                onLoadLocalSubtitle: _loadLocalSubtitle,
-                                onToggleFullscreen: () =>
-                                    _videoKey.currentState
-                                        ?.toggleFullscreen() ??
-                                    Future.value(),
-                              ),
-                            ),
-                          ],
-                        ),
+                  ),
                 ),
               ),
-            ),
-            if (_showEpisodes) ...[
-              const SizedBox(width: 10),
-              SizedBox(width: 240, child: _episodeList(cs)),
+              if (_showEpisodes) ...[
+                const SizedBox(width: 10),
+                SizedBox(width: 240, child: _episodeList(cs)),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
