@@ -10,6 +10,23 @@ import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 
+/// Blu-ray and DVD folders contain transport streams rather than standalone
+/// media. They must be handled as a disc structure, never as individual files.
+bool isMediaScanDiscInternalPath(String path) {
+  return path
+      .split(RegExp(r'[/\\]+'))
+      .map((component) => component.trim().toUpperCase())
+      .any((component) => component == 'BDMV' || component == 'VIDEO_TS');
+}
+
+bool isMediaScanDiscLayout(Iterable<CloudFile> children) {
+  final directoryNames = children
+      .where((file) => file.isDirectory)
+      .map((file) => file.name.trim().toUpperCase())
+      .toSet();
+  return directoryNames.contains('BDMV') || directoryNames.contains('VIDEO_TS');
+}
+
 class MediaLibraryState {
   final List<MediaLibraryDefinition> libraries;
   final String? selectedLibraryID;
@@ -107,6 +124,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     try {
       await _store.initialize();
       await _migrateLegacyHiveIfNeeded();
+      final removedDiscStreams = await _removeDiscInternalItems();
       final libraries = await _loadLibraries();
       final selectedID = libraries.isEmpty ? null : libraries.first.id;
       final items = selectedID == null
@@ -118,6 +136,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         selectedLibraryID: selectedID,
         items: items,
         scanLogs: logs,
+        statusMessage: removedDiscStreams == 0
+            ? null
+            : '已清理 $removedDiscStreams 个光盘目录内部文件',
       );
       if (selectedID != null) {
         unawaited(_hydrateMissingArtwork(selectedID, items));
@@ -297,6 +318,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
 
     try {
+      final removedDiscStreams = await _removeDiscInternalItems();
+      if (removedDiscStreams > 0) {
+        _appendScanLog('已清理 $removedDiscStreams 个已入库的光盘目录内部文件');
+      }
       final initialItems = await _loadAllItems()
         ..removeWhere((item) => item.libraryID == library.id);
       final unique = <String, MediaLibraryItem>{
@@ -1053,6 +1078,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final folder = folders.removeAt(0);
       final visitKey = folder.id ?? 'root';
       if (!visited.add(visitKey)) continue;
+      // A library source can point at BDMV/VIDEO_TS directly. There is no
+      // parent disc folder to inspect in that case, so skip it before listing
+      // and scraping its internal transport streams.
+      if (isMediaScanDiscInternalPath(folder.path)) {
+        _appendScanLog('跳过光盘目录内部文件：${folder.path}');
+        continue;
+      }
 
       var page = 0;
       final cachedFolder = await FileMetadataCache.folderChildren(folder.id);
@@ -1073,11 +1105,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           files = await _enrichAndCacheFiles(files);
           folderSnapshot.addAll(files);
         }
+        // A folder containing BDMV or VIDEO_TS is a disc root. Do not descend
+        // into any of its children: BDMV/STREAM and VIDEO_TS files are segments
+        // of one work, not separately scrapeable media files.
+        final isDiscRoot = isMediaScanDiscLayout(files);
         final mediaBatch = <CloudFile>[];
         for (final file in files) {
           if (file.isDirectory) {
-            if (recursive) {
-              folders.add(_ScanFolder(file.id, '${folder.path}/${file.name}'));
+            if (recursive && !isDiscRoot) {
+              final childPath = '${folder.path}/${file.name}';
+              if (!isMediaScanDiscInternalPath(childPath)) {
+                folders.add(_ScanFolder(file.id, childPath));
+              }
             }
           } else if (file.isVideo && (file.size ?? 0) >= minimumSizeBytes) {
             mediaBatch.add(_withPath(file, '${folder.path}/${file.name}'));
@@ -1401,6 +1440,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> _saveAllItems(List<MediaLibraryItem> items) {
     return _store.replaceItems(items);
+  }
+
+  Future<int> _removeDiscInternalItems() async {
+    final items = await _loadAllItems();
+    final retained = items
+        .where((item) => !isMediaScanDiscInternalPath(item.file.cloudPath))
+        .toList();
+    final removed = items.length - retained.length;
+    if (removed > 0) await _saveAllItems(retained);
+    return removed;
   }
 
   Future<void> _upsertItems(Iterable<MediaLibraryItem> items) {
