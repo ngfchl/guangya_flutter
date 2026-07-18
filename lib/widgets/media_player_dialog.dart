@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:media_kit/media_kit.dart';
@@ -397,112 +398,156 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
         final current = _scrubbingValue ?? position.inMilliseconds.toDouble();
         final value = max <= 0 ? 0.0 : current.clamp(0.0, max);
         final cs = ShadTheme.of(context).colorScheme;
-        return GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onDoubleTap: widget.onToggleFullscreen,
-          onTap: () => widget.player.playOrPause(),
-          child: Stack(
-            children: [
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(12, 28, 12, 10),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, Color(0xE6000000)],
+        return CallbackShortcuts(
+          bindings: {
+            const SingleActivator(LogicalKeyboardKey.space):
+                widget.player.playOrPause,
+            const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+                _seekBy(-5),
+            const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+                _seekBy(5),
+            const SingleActivator(LogicalKeyboardKey.keyF):
+                widget.onToggleFullscreen,
+          },
+          child: Focus(
+            autofocus: true,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onDoubleTap: widget.onToggleFullscreen,
+              onTap: () => widget.player.playOrPause(),
+              child: Stack(
+                children: [
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(12, 28, 12, 10),
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.transparent, Color(0xE6000000)],
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              trackHeight: 3,
+                              thumbShape: const RoundSliderThumbShape(
+                                enabledThumbRadius: 6,
+                              ),
+                              activeTrackColor: cs.primary,
+                              inactiveTrackColor: Colors.white.withValues(
+                                alpha: 0.28,
+                              ),
+                              thumbColor: cs.primary,
+                            ),
+                            child: Slider(
+                              value: value,
+                              min: 0,
+                              max: max <= 0 ? 1 : max,
+                              onChangeStart: max <= 0
+                                  ? null
+                                  : (next) =>
+                                        setState(() => _scrubbingValue = next),
+                              onChanged: max <= 0
+                                  ? null
+                                  : (next) =>
+                                        setState(() => _scrubbingValue = next),
+                              onChangeEnd: max <= 0
+                                  ? null
+                                  : (next) async {
+                                      await widget.player.seek(
+                                        Duration(milliseconds: next.round()),
+                                      );
+                                      if (mounted) {
+                                        setState(() => _scrubbingValue = null);
+                                      }
+                                    },
+                            ),
+                          ),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _controlButton(
+                                  widget.player.state.playing
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  widget.player.playOrPause,
+                                ),
+                                _controlButton(
+                                  Icons.replay_10_rounded,
+                                  () => _seekBy(-10),
+                                ),
+                                _controlButton(
+                                  Icons.forward_10_rounded,
+                                  () => _seekBy(10),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '${_formatTime(position)} / ${_formatTime(duration)}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(width: 20),
+                                _menuButton(
+                                  '${widget.player.state.rate.toStringAsFixed(widget.player.state.rate % 1 == 0 ? 0 : 2)}x',
+                                  _selectRate,
+                                ),
+                                _menuButton('音轨', _selectAudio),
+                                _menuButton('字幕', _selectSubtitle),
+                                _menuButton('搜字幕', widget.onSearchSubtitles),
+                                _menuButton('加载字幕', widget.onLoadLocalSubtitle),
+                                _controlButton(
+                                  widget.player.state.volume <= 0
+                                      ? Icons.volume_off_rounded
+                                      : Icons.volume_up_rounded,
+                                  () => widget.player.setVolume(
+                                    widget.player.state.volume <= 0 ? 100 : 0,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 90,
+                                  child: SliderTheme(
+                                    data: SliderTheme.of(context).copyWith(
+                                      trackHeight: 2,
+                                      activeTrackColor: Colors.white,
+                                      inactiveTrackColor: Colors.white
+                                          .withValues(alpha: 0.28),
+                                      thumbColor: Colors.white,
+                                    ),
+                                    child: Slider(
+                                      value: widget.player.state.volume.clamp(
+                                        0.0,
+                                        100.0,
+                                      ),
+                                      min: 0,
+                                      max: 100,
+                                      onChanged: widget.player.setVolume,
+                                    ),
+                                  ),
+                                ),
+                                _controlButton(
+                                  Icons.fullscreen_rounded,
+                                  widget.onToggleFullscreen,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          trackHeight: 3,
-                          thumbShape: const RoundSliderThumbShape(
-                            enabledThumbRadius: 6,
-                          ),
-                          activeTrackColor: cs.primary,
-                          inactiveTrackColor: Colors.white.withValues(
-                            alpha: 0.28,
-                          ),
-                          thumbColor: cs.primary,
-                        ),
-                        child: Slider(
-                          value: value,
-                          min: 0,
-                          max: max <= 0 ? 1 : max,
-                          onChangeStart: max <= 0
-                              ? null
-                              : (next) =>
-                                    setState(() => _scrubbingValue = next),
-                          onChanged: max <= 0
-                              ? null
-                              : (next) =>
-                                    setState(() => _scrubbingValue = next),
-                          onChangeEnd: max <= 0
-                              ? null
-                              : (next) async {
-                                  await widget.player.seek(
-                                    Duration(milliseconds: next.round()),
-                                  );
-                                  if (mounted) {
-                                    setState(() => _scrubbingValue = null);
-                                  }
-                                },
-                        ),
-                      ),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _controlButton(
-                              widget.player.state.playing
-                                  ? Icons.pause_rounded
-                                  : Icons.play_arrow_rounded,
-                              widget.player.playOrPause,
-                            ),
-                            _controlButton(
-                              Icons.replay_10_rounded,
-                              () => _seekBy(-10),
-                            ),
-                            _controlButton(
-                              Icons.forward_10_rounded,
-                              () => _seekBy(10),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              '${_formatTime(position)} / ${_formatTime(duration)}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                              ),
-                            ),
-                            const SizedBox(width: 20),
-                            _menuButton(
-                              '${widget.player.state.rate.toStringAsFixed(widget.player.state.rate % 1 == 0 ? 0 : 2)}x',
-                              _selectRate,
-                            ),
-                            _menuButton('音轨', _selectAudio),
-                            _menuButton('字幕', _selectSubtitle),
-                            _menuButton('搜字幕', widget.onSearchSubtitles),
-                            _menuButton('加载字幕', widget.onLoadLocalSubtitle),
-                            _controlButton(
-                              Icons.fullscreen_rounded,
-                              widget.onToggleFullscreen,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         );
       },
