@@ -336,10 +336,54 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
   }
 }
 
-class _SimilarFolderGroup extends StatelessWidget {
+class _SimilarFolderGroup extends ConsumerStatefulWidget {
   final List<CloudFile> folders;
 
   const _SimilarFolderGroup({required this.folders});
+
+  @override
+  ConsumerState<_SimilarFolderGroup> createState() =>
+      _SimilarFolderGroupState();
+}
+
+class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
+  late Set<String> _selectedIDs;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedIDs = widget.folders.skip(1).map((folder) => folder.id).toSet();
+  }
+
+  Future<void> _confirmDelete() async {
+    final targets = widget.folders
+        .where((folder) => _selectedIDs.contains(folder.id))
+        .toList();
+    if (targets.isEmpty) return;
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: Text('删除 ${targets.length} 个相似文件夹？'),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton.destructive(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除已选项'),
+          ),
+        ],
+        child: const Padding(
+          padding: EdgeInsets.only(top: 10),
+          child: Text('同组至少会保留一个文件夹。删除会移除其中的全部内容，请确认完整路径。'),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await ref.read(fileProvider.notifier).deleteFiles(targets);
+    if (mounted) setState(_selectedIDs.clear);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -355,18 +399,31 @@ class _SimilarFolderGroup extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '相似名称组 · ${folders.length} 个文件夹',
+            '相似名称组 · ${widget.folders.length} 个文件夹',
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
               color: cs.primary,
             ),
           ),
-          for (final folder in folders)
+          for (final folder in widget.folders)
             Padding(
               padding: const EdgeInsets.only(top: 7),
               child: Row(
                 children: [
+                  ShadCheckbox(
+                    value: _selectedIDs.contains(folder.id),
+                    onChanged: (value) => setState(() {
+                      if (value == true) {
+                        if (_selectedIDs.length < widget.folders.length - 1) {
+                          _selectedIDs.add(folder.id);
+                        }
+                      } else {
+                        _selectedIDs.remove(folder.id);
+                      }
+                    }),
+                  ),
+                  const SizedBox(width: 8),
                   Icon(Icons.folder_rounded, size: 17, color: cs.primary),
                   const SizedBox(width: 8),
                   Expanded(
@@ -383,6 +440,15 @@ class _SimilarFolderGroup extends StatelessWidget {
                 ],
               ),
             ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: ShadButton.destructive(
+              size: ShadButtonSize.sm,
+              onPressed: _selectedIDs.isEmpty ? null : _confirmDelete,
+              child: Text('删除已选 ${_selectedIDs.length} 项'),
+            ),
+          ),
         ],
       ),
     );
