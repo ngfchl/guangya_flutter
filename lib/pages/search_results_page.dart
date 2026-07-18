@@ -116,6 +116,40 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
     });
   }
 
+  Future<void> _deleteFiles(List<CloudFile> files) async {
+    if (files.isEmpty) return;
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: Text('删除 ${files.length} 项？'),
+        description: Text(
+          files.length == 1 ? files.first.name : '将删除所选的 ${files.length} 个项目。',
+        ),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton.destructive(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+        child: const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text('项目会被移入回收站。'),
+        ),
+      ),
+    );
+    if (confirmed != true) return;
+    await ref.read(fileProvider.notifier).deleteFiles(files);
+    if (!mounted) return;
+    setState(() {
+      _selectedIDs.removeAll(files.map((file) => file.id));
+      _results = _search();
+    });
+  }
+
   @override
   void didUpdateWidget(covariant FileSearchResultsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -245,7 +279,7 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                       ),
                       ShadButton.ghost(
                         size: ShadButtonSize.sm,
-                        onPressed: () => notifier.deleteFiles(selected),
+                        onPressed: () => _deleteFiles(selected),
                         leading: const Icon(
                           Icons.delete_outline_rounded,
                           size: 16,
@@ -288,7 +322,7 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                           onCopyFastTransfer: () =>
                               notifier.copyFastTransferJSON(file),
                           onDownload: () => notifier.downloadFile(file),
-                          onDelete: () => notifier.deleteFiles([file]),
+                          onDelete: () => _deleteFiles([file]),
                         );
                       },
                     ),

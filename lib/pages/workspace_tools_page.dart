@@ -1137,7 +1137,10 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
           description: '规则按从上到下的顺序应用。',
           child: Padding(
             padding: const EdgeInsets.only(top: 12),
-            child: Column(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 for (var index = 0; index < _rules.length; index++)
                   _BatchRenameRuleRow(
@@ -1160,34 +1163,28 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                       }
                     }),
                   ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    ShadButton.outline(
-                      onPressed: () => setState(() {
-                        _rules.add(
-                          BatchRenameRule(
-                            id: 'rule-${DateTime.now().microsecondsSinceEpoch}',
-                            kind: BatchRenameRuleKind.replace,
-                          ),
-                        );
-                      }),
-                      leading: const Icon(Icons.add_rounded, size: 16),
-                      child: const Text('添加规则'),
-                    ),
-                    const SizedBox(width: 8),
-                    ShadButton.ghost(
-                      onPressed: () => setState(() {
-                        _rules = const [
-                          BatchRenameRule(
-                            id: 'rule-0',
-                            kind: BatchRenameRuleKind.replace,
-                          ),
-                        ];
-                      }),
-                      child: const Text('清空规则'),
-                    ),
-                  ],
+                ShadButton.outline(
+                  onPressed: () => setState(() {
+                    _rules.add(
+                      BatchRenameRule(
+                        id: 'rule-${DateTime.now().microsecondsSinceEpoch}',
+                        kind: BatchRenameRuleKind.replace,
+                      ),
+                    );
+                  }),
+                  leading: const Icon(Icons.add_rounded, size: 16),
+                  child: const Text('添加规则'),
+                ),
+                ShadButton.ghost(
+                  onPressed: () => setState(() {
+                    _rules = const [
+                      BatchRenameRule(
+                        id: 'rule-0',
+                        kind: BatchRenameRuleKind.replace,
+                      ),
+                    ];
+                  }),
+                  child: const Text('清空规则'),
                 ),
               ],
             ),
@@ -1269,25 +1266,36 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                             ),
                           ),
                         )
-                      : ListView.separated(
-                          itemCount: previews.length,
-                          separatorBuilder: (_, _) => const Divider(height: 1),
-                          itemBuilder: (context, index) {
-                            final preview = previews[index];
-                            final canSelect = preview.applicable;
-                            return _BatchRenamePreviewRow(
-                              preview: preview,
-                              selected: _selectedIDs.contains(preview.file.id),
-                              enabled: canSelect && !_running,
-                              onChanged: (selected) => setState(() {
-                                if (selected == true && canSelect) {
-                                  _selectedIDs.add(preview.file.id);
-                                } else {
-                                  _selectedIDs.remove(preview.file.id);
-                                }
-                              }),
-                            );
-                          },
+                      : Column(
+                          children: [
+                            const _BatchRenamePreviewHeader(),
+                            const Divider(height: 1),
+                            Expanded(
+                              child: ListView.separated(
+                                itemCount: previews.length,
+                                separatorBuilder: (_, _) =>
+                                    const Divider(height: 1),
+                                itemBuilder: (context, index) {
+                                  final preview = previews[index];
+                                  final canSelect = preview.applicable;
+                                  return _BatchRenamePreviewRow(
+                                    preview: preview,
+                                    selected: _selectedIDs.contains(
+                                      preview.file.id,
+                                    ),
+                                    enabled: canSelect && !_running,
+                                    onChanged: (selected) => setState(() {
+                                      if (selected == true && canSelect) {
+                                        _selectedIDs.add(preview.file.id);
+                                      } else {
+                                        _selectedIDs.remove(preview.file.id);
+                                      }
+                                    }),
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
                         ),
                 ),
               ],
@@ -1644,6 +1652,37 @@ class _RenameRuleIconButton extends StatelessWidget {
   }
 }
 
+class _BatchRenamePreviewHeader extends StatelessWidget {
+  const _BatchRenamePreviewHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final style = TextStyle(
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+      color: cs.mutedForeground,
+    );
+    return Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      color: cs.muted.withValues(alpha: 0.28),
+      child: Row(
+        children: [
+          const SizedBox(width: 64),
+          Expanded(flex: 3, child: Text('名称变更', style: style)),
+          Expanded(flex: 4, child: Text('完整路径', style: style)),
+          SizedBox(width: 270, child: Text('GCID', style: style)),
+          SizedBox(
+            width: 130,
+            child: Text('状态', textAlign: TextAlign.right, style: style),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _BatchRenamePreviewRow extends StatelessWidget {
   final BatchRenamePreview preview;
   final bool selected;
@@ -1666,8 +1705,15 @@ class _BatchRenamePreviewRow extends StatelessWidget {
         ? preview.file.name
         : (rawPath.startsWith('/') ? rawPath : '/$rawPath');
     final gcid = preview.file.gcid?.trim();
+    final gcidText = gcid?.isNotEmpty == true ? gcid! : '未获取';
+    final status = preview.error ?? (changed ? '将修改' : '无变化');
+    final statusColor = preview.error != null
+        ? cs.destructive
+        : changed
+        ? cs.primary
+        : cs.mutedForeground;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       child: Row(
         children: [
           ShadCheckbox(value: selected, onChanged: enabled ? onChanged : null),
@@ -1681,41 +1727,75 @@ class _BatchRenamePreviewRow extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Expanded(
+            flex: 3,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  preview.file.name,
+                  '原  ${preview.file.name}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12, color: cs.mutedForeground),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 4),
                 Text(
-                  preview.newName,
+                  '新  ${preview.newName}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: preview.error != null
-                        ? cs.destructive
-                        : changed
-                        ? cs.primary
-                        : cs.mutedForeground,
+                    fontWeight: FontWeight.w700,
+                    color: statusColor,
                   ),
                 ),
-                const SizedBox(height: 4),
-                SelectableText(
-                  '路径  $path',
-                  maxLines: 1,
-                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+              ],
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            flex: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+              decoration: BoxDecoration(
+                color: cs.muted.withValues(alpha: 0.48),
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.folder_outlined,
+                    size: 14,
+                    color: cs.mutedForeground,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: SelectableText(
+                      path,
+                      maxLines: 1,
+                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          SizedBox(
+            width: 270,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  'GCID',
+                  style: TextStyle(fontSize: 10, color: cs.mutedForeground),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
                 SelectableText(
-                  'GCID  ${gcid?.isNotEmpty == true ? gcid : '未获取'}',
+                  gcidText,
                   maxLines: 1,
+                  textAlign: TextAlign.right,
                   style: TextStyle(
+                    fontFamily: 'monospace',
                     fontSize: 11,
                     color: gcid?.isNotEmpty == true
                         ? cs.mutedForeground
@@ -1725,16 +1805,19 @@ class _BatchRenamePreviewRow extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 10),
-          Text(
-            preview.error ?? (changed ? '将修改' : '无变化'),
-            style: TextStyle(
-              fontSize: 12,
-              color: preview.error != null
-                  ? cs.destructive
-                  : changed
-                  ? cs.primary
-                  : cs.mutedForeground,
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 118,
+            child: Text(
+              status,
+              textAlign: TextAlign.right,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: statusColor,
+              ),
             ),
           ),
         ],
