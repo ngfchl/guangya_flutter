@@ -207,7 +207,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       clearStatus: true,
     );
     try {
-      await _store.importBackup(backupPath);
+      final stats = await _store.importBackup(backupPath);
       final libraries = await _loadLibraries();
       final selectedID = libraries.isEmpty ? null : libraries.first.id;
       state = state.copyWith(
@@ -215,7 +215,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         selectedLibraryID: selectedID,
         clearSelectedLibrary: selectedID == null,
         items: selectedID == null ? const [] : await _loadItems(selectedID),
-        statusMessage: '刮削数据已导入',
+        statusMessage: '刮削数据已导入，已回收 ${_formatBytes(stats.reclaimedBytes)}',
       );
     } catch (error) {
       state = state.copyWith(errorMessage: '导入失败：$error');
@@ -236,6 +236,27 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       state = state.copyWith(statusMessage: '刮削数据已导出');
     } catch (error) {
       state = state.copyWith(errorMessage: '导出失败：$error');
+    } finally {
+      state = state.copyWith(isLoading: false);
+    }
+  }
+
+  Future<void> optimizeLocalStorage() async {
+    if (state.isLoading || state.isScanning) return;
+    state = state.copyWith(
+      isLoading: true,
+      clearError: true,
+      clearStatus: true,
+    );
+    try {
+      final stats = await _store.optimizeStorage();
+      state = state.copyWith(
+        statusMessage: stats.removedBackdropCount == 0
+            ? '本地刮削数据库已是最优状态'
+            : '已清理 ${stats.removedBackdropCount} 张背景图，回收 ${_formatBytes(stats.reclaimedBytes)}',
+      );
+    } catch (error) {
+      state = state.copyWith(errorMessage: '数据库优化失败：$error');
     } finally {
       state = state.copyWith(isLoading: false);
     }
@@ -483,6 +504,15 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   int? _toInt(dynamic value) {
     if (value is int) return value;
     return int.tryParse(value?.toString() ?? '');
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
   Future<void> _scanSource(

@@ -250,6 +250,14 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ),
         const SizedBox(width: 8),
         ShadButton.outline(
+          onPressed: _backupBusy || state.isScanning
+              ? null
+              : _optimizeScrapedStorage,
+          leading: const Icon(Icons.cleaning_services_rounded, size: 16),
+          child: const Text('数据库瘦身'),
+        ),
+        const SizedBox(width: 8),
+        ShadButton.outline(
           onPressed: state.selectedLibrary == null || state.isScanning
               ? null
               : () => ref
@@ -780,6 +788,15 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     setState(() => _backupBusy = true);
     try {
       await ref.read(mediaLibraryProvider.notifier).importScrapedData(path);
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _optimizeScrapedStorage() async {
+    setState(() => _backupBusy = true);
+    try {
+      await ref.read(mediaLibraryProvider.notifier).optimizeLocalStorage();
     } finally {
       if (mounted) setState(() => _backupBusy = false);
     }

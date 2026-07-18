@@ -22,7 +22,7 @@ class MediaLibraryStore {
     );
     _database = await openDatabase(
       databasePath,
-      version: 2,
+      version: 3,
       onCreate: (db, _) async {
         await _createSchema(db);
       },
@@ -198,7 +198,7 @@ class MediaLibraryStore {
     });
   }
 
-  Future<void> importBackup(String backupPath) async {
+  Future<MediaLibraryStorageStats> importBackup(String backupPath) async {
     final db = await _db;
     await db.execute('ATTACH DATABASE ? AS imported_backup', [backupPath]);
     try {
@@ -216,6 +216,26 @@ class MediaLibraryStore {
     } finally {
       await db.execute('DETACH DATABASE imported_backup');
     }
+    return optimizeStorage();
+  }
+
+  /// Reclaims space used by imported backdrop BLOBs. Posters remain available
+  /// for offline poster walls; backdrops can always be fetched from TMDB again.
+  Future<MediaLibraryStorageStats> optimizeStorage() async {
+    final db = await _db;
+    final before = await _databaseBytes(db.path);
+    final removedBackdrops = await db.rawUpdate(
+      'UPDATE media_items SET backdrop = NULL WHERE backdrop IS NOT NULL',
+    );
+    await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    await db.execute('PRAGMA optimize');
+    await db.execute('VACUUM');
+    final after = await _databaseBytes(db.path);
+    return MediaLibraryStorageStats(
+      beforeBytes: before,
+      afterBytes: after,
+      removedBackdropCount: removedBackdrops,
+    );
   }
 
   Future<void> exportBackupTo(String destinationPath) async {
@@ -477,6 +497,17 @@ class MediaLibraryStore {
         children_json TEXT NOT NULL
       )
     ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_library_title '
+      'ON media_items(library_id, title COLLATE NOCASE)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_id '
+      'ON media_items(tmdb_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_file_index_gcid ON file_index(gcid)',
+    );
   }
 
   MediaLibraryItem _itemFromRow(Map<String, Object?> row) {
@@ -571,4 +602,27 @@ class MediaLibraryStore {
     'updated_at',
   ];
   static String _folderID(String? folderID) => folderID ?? _rootFolderID;
+
+  Future<int> _databaseBytes(String databasePath) async {
+    var bytes = 0;
+    for (final suffix in const ['', '-wal', '-shm']) {
+      final file = File('$databasePath$suffix');
+      if (await file.exists()) bytes += await file.length();
+    }
+    return bytes;
+  }
+}
+
+class MediaLibraryStorageStats {
+  final int beforeBytes;
+  final int afterBytes;
+  final int removedBackdropCount;
+
+  const MediaLibraryStorageStats({
+    required this.beforeBytes,
+    required this.afterBytes,
+    required this.removedBackdropCount,
+  });
+
+  int get reclaimedBytes => (beforeBytes - afterBytes).clamp(0, beforeBytes);
 }
