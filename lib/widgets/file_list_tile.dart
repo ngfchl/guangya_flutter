@@ -132,7 +132,7 @@ class _FileListTileState extends State<FileListTile> {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = theme.colorScheme;
     return ShadContextMenuRegion(
       items: [
         ShadContextMenuItem.inset(
@@ -210,20 +210,9 @@ class _FileListTileState extends State<FileListTile> {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: widget.isSelected
-                ? (isDark
-                      ? theme.colorScheme.primary.withAlpha(30)
-                      : theme.colorScheme.primary.withAlpha(15))
-                : (isDark
-                      ? Colors.white.withAlpha(3)
-                      : Colors.black.withAlpha(2)),
-            border: Border(
-              bottom: BorderSide(
-                color: isDark
-                    ? Colors.white.withAlpha(10)
-                    : Colors.black.withAlpha(8),
-                width: 0.5,
-              ),
-            ),
+                ? cs.primary.withValues(alpha: 0.14)
+                : cs.card,
+            border: Border(bottom: BorderSide(color: cs.border, width: 0.5)),
           ),
           child: Row(
             children: [

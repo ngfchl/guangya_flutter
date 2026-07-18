@@ -18,21 +18,13 @@ class SortMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final cs = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = ShadTheme.of(context).colorScheme;
     return Container(
       height: 36,
       decoration: BoxDecoration(
-        color: isDark
-            ? cs.secondary.withValues(alpha: 0.88)
-            : Colors.white.withValues(alpha: 0.46),
+        color: cs.secondary,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isDark
-              ? cs.border.withValues(alpha: 0.9)
-              : Colors.white.withValues(alpha: 0.54),
-        ),
+        border: Border.all(color: cs.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

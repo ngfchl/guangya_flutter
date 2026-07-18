@@ -70,7 +70,7 @@ class GlassCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = theme.colorScheme;
     return ClipRRect(
       borderRadius: BorderRadius.circular(borderRadius),
       child: BackdropFilter(
@@ -78,16 +78,9 @@ class GlassCard extends StatelessWidget {
         child: Container(
           padding: padding ?? const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: isDark
-                ? theme.colorScheme.card.withValues(alpha: 0.72)
-                : Colors.white.withValues(alpha: 0.15),
+            color: cs.card.withValues(alpha: 0.92),
             borderRadius: BorderRadius.circular(borderRadius),
-            border: Border.all(
-              color: isDark
-                  ? theme.colorScheme.border.withValues(alpha: 0.82)
-                  : Colors.white.withValues(alpha: 0.2),
-              width: 1,
-            ),
+            border: Border.all(color: cs.border, width: 1),
           ),
           child: child,
         ),
@@ -103,17 +96,9 @@ class OS26Surface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = ShadTheme.of(context).brightness == Brightness.dark;
+    final cs = ShadTheme.of(context).colorScheme;
     return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: isDark
-              ? const [Color(0xFF0B1220), Color(0xFF111827), Color(0xFF20151A)]
-              : const [Color(0xFFE9F6F5), Color(0xFFF6FAF6), Color(0xFFF9E6D4)],
-        ),
-      ),
+      decoration: BoxDecoration(color: cs.background),
       child: child,
     );
   }
@@ -138,7 +123,7 @@ class OS26Glass extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = theme.colorScheme;
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: BackdropFilter(
@@ -146,18 +131,9 @@ class OS26Glass extends StatelessWidget {
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: isDark
-                ? theme.colorScheme.card.withValues(alpha: opacity + 0.18)
-                : Colors.white.withValues(alpha: opacity),
+            color: cs.card.withValues(alpha: opacity.clamp(0.0, 1.0)),
             borderRadius: BorderRadius.circular(radius),
-            border:
-                border ??
-                Border.all(
-                  color: isDark
-                      ? theme.colorScheme.border.withValues(alpha: 0.9)
-                      : Colors.white.withValues(alpha: 0.58),
-                  width: 1,
-                ),
+            border: border ?? Border.all(color: cs.border, width: 1),
           ),
           child: child,
         ),

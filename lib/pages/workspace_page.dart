@@ -523,9 +523,7 @@ class _SegmentButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final cs = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = ShadTheme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(10),
       onTap: onTap,
@@ -534,16 +532,12 @@ class _SegmentButton extends StatelessWidget {
         width: 126,
         height: 32,
         decoration: BoxDecoration(
-          color: selected
-              ? (isDark ? cs.secondary : Colors.white.withValues(alpha: 0.74))
-              : Colors.transparent,
+          color: selected ? cs.secondary : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
           boxShadow: selected
               ? [
                   BoxShadow(
-                    color: (isDark ? Colors.black : Colors.black).withValues(
-                      alpha: isDark ? 0.28 : 0.08,
-                    ),
+                    color: cs.border.withValues(alpha: 0.7),
                     blurRadius: 10,
                     offset: const Offset(0, 3),
                   ),
@@ -1229,9 +1223,7 @@ class _ToolbarButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final cs = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = ShadTheme.of(context).colorScheme;
     return ShadTooltip(
       builder: (_) => Text(label),
       child: Padding(
@@ -1250,9 +1242,7 @@ class _ToolbarButton extends StatelessWidget {
                   ? cs.primary.withValues(alpha: 0.14)
                   : grouped
                   ? Colors.transparent
-                  : (isDark
-                        ? cs.secondary.withValues(alpha: 0.88)
-                        : Colors.white.withValues(alpha: 0.46)),
+                  : cs.secondary,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
                 color: primary
@@ -1261,9 +1251,7 @@ class _ToolbarButton extends StatelessWidget {
                     ? cs.primary.withValues(alpha: 0.45)
                     : grouped
                     ? Colors.transparent
-                    : (isDark
-                          ? cs.border.withValues(alpha: 0.9)
-                          : Colors.white.withValues(alpha: 0.54)),
+                    : cs.border,
               ),
             ),
             child: Row(
@@ -1305,22 +1293,14 @@ class _ToolbarControlGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final cs = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = ShadTheme.of(context).colorScheme;
     return Container(
       height: 36,
       padding: const EdgeInsets.symmetric(horizontal: 2),
       decoration: BoxDecoration(
-        color: isDark
-            ? cs.secondary.withValues(alpha: 0.88)
-            : Colors.white.withValues(alpha: 0.46),
+        color: cs.secondary,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isDark
-              ? cs.border.withValues(alpha: 0.9)
-              : Colors.white.withValues(alpha: 0.54),
-        ),
+        border: Border.all(color: cs.border),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: children),
     );
@@ -2220,9 +2200,7 @@ class _FinderColumnState extends State<_FinderColumn> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final cs = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = ShadTheme.of(context).colorScheme;
     final column = widget.column;
     return FocusableActionDetector(
       focusNode: _focusNode,
@@ -2278,9 +2256,7 @@ class _FinderColumnState extends State<_FinderColumn> {
                 decoration: BoxDecoration(
                   color: _dragActive || candidates.isNotEmpty
                       ? cs.primary.withValues(alpha: 0.10)
-                      : (isDark
-                            ? cs.secondary.withValues(alpha: 0.62)
-                            : Colors.white.withValues(alpha: 0.22)),
+                      : cs.secondary,
                   border: Border(
                     right: BorderSide(color: cs.border.withValues(alpha: 0.70)),
                     left: BorderSide(
@@ -2483,9 +2459,7 @@ class _FileGridCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final cs = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = ShadTheme.of(context).colorScheme;
     return Semantics(
       button: true,
       label:
@@ -2496,11 +2470,7 @@ class _FileGridCard extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: isSelected
-                ? cs.primary.withValues(alpha: 0.12)
-                : (isDark
-                      ? cs.secondary.withValues(alpha: 0.78)
-                      : Colors.white.withValues(alpha: 0.34)),
+            color: isSelected ? cs.primary.withValues(alpha: 0.12) : cs.card,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: isSelected
@@ -3291,24 +3261,16 @@ class _FilePaneFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final cs = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = ShadTheme.of(context).colorScheme;
     return _PaneDropSurface(
       parentID: dropParentID,
       onMoveCloudFiles: onMoveCloudFiles,
       onUploadLocalFiles: onUploadLocalFiles,
       child: Container(
         decoration: BoxDecoration(
-          color: isDark
-              ? cs.card.withValues(alpha: 0.92)
-              : Colors.white.withValues(alpha: 0.42),
+          color: cs.card,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isDark
-                ? cs.border.withValues(alpha: 0.92)
-                : Colors.white.withValues(alpha: 0.62),
-          ),
+          border: Border.all(color: cs.border),
         ),
         child: Column(
           children: [
