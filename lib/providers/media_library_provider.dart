@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/legacy.dart';
 
@@ -85,6 +86,7 @@ class MediaLibraryState {
 class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   GuangyaAPI? _api;
   final _store = MediaLibraryStore();
+  final _posterRequests = <String, Future<Uint8List?>>{};
   bool _loaded = false;
   bool _cancelScan = false;
 
@@ -383,6 +385,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             item.file.cloudPath.toLowerCase().contains(normalized);
       }).toList()
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+  }
+
+  Future<Uint8List?> posterBytes(MediaLibraryItem item) {
+    final key = '${item.libraryID}:${item.file.id}';
+    return _posterRequests.putIfAbsent(key, () async {
+      final bytes = await _store.posterBytes(item.libraryID, item.file.id);
+      if (_posterRequests.length > 48) {
+        _posterRequests.remove(_posterRequests.keys.first);
+      }
+      return bytes;
+    });
   }
 
   void clearError() {

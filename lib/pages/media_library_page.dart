@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -1221,13 +1223,13 @@ class _LibraryRow extends StatelessWidget {
   }
 }
 
-class _MediaItemTile extends StatelessWidget {
+class _MediaItemTile extends ConsumerWidget {
   final MediaLibraryItem item;
 
   const _MediaItemTile({required this.item});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = ShadTheme.of(context).colorScheme;
     final posterURL = item.posterPath == null || item.posterPath!.isEmpty
         ? null
@@ -1250,13 +1252,14 @@ class _MediaItemTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(6),
             ),
             clipBehavior: Clip.antiAlias,
-            child: posterURL == null
-                ? Icon(
-                    isSeries ? Icons.tv_rounded : Icons.movie_rounded,
-                    size: 24,
-                    color: cs.mutedForeground,
-                  )
-                : Image.network(
+            child: FutureBuilder<Uint8List?>(
+              future: ref.read(mediaLibraryProvider.notifier).posterBytes(item),
+              builder: (context, snapshot) {
+                if (snapshot.data != null) {
+                  return Image.memory(snapshot.data!, fit: BoxFit.cover);
+                }
+                if (posterURL != null) {
+                  return Image.network(
                     posterURL,
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) => Icon(
@@ -1264,7 +1267,15 @@ class _MediaItemTile extends StatelessWidget {
                       size: 24,
                       color: cs.mutedForeground,
                     ),
-                  ),
+                  );
+                }
+                return Icon(
+                  isSeries ? Icons.tv_rounded : Icons.movie_rounded,
+                  size: 24,
+                  color: cs.mutedForeground,
+                );
+              },
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(

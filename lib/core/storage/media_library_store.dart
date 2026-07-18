@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
@@ -95,11 +96,24 @@ class MediaLibraryStore {
   Future<List<MediaLibraryItem>> items({String? libraryID}) async {
     final rows = await (await _db).query(
       'media_items',
+      columns: _itemMetadataColumns,
       where: libraryID == null ? null : 'library_id = ?',
       whereArgs: libraryID == null ? null : [libraryID],
       orderBy: 'title COLLATE NOCASE',
     );
     return rows.map(_itemFromRow).toList();
+  }
+
+  Future<Uint8List?> posterBytes(String libraryID, String fileID) async {
+    final rows = await (await _db).query(
+      'media_items',
+      columns: const ['poster'],
+      where: 'library_id = ? AND file_id = ?',
+      whereArgs: [libraryID, fileID],
+      limit: 1,
+    );
+    final value = rows.isEmpty ? null : rows.first['poster'];
+    return value is Uint8List ? value : null;
   }
 
   Future<void> saveLibraries(List<MediaLibraryDefinition> libraries) async {
@@ -467,5 +481,25 @@ class MediaLibraryStore {
   }
 
   static const _rootFolderID = '@root';
+  static const _itemMetadataColumns = [
+    'library_id',
+    'file_id',
+    'resource_path',
+    'cloud_name',
+    'file_size',
+    'gcid',
+    'file_type',
+    'tmdb_id',
+    'media_kind',
+    'title',
+    'original_title',
+    'release_date',
+    'overview',
+    'has_chinese_audio',
+    'has_chinese_subtitle',
+    'collection_id',
+    'collection_name',
+    'updated_at',
+  ];
   static String _folderID(String? folderID) => folderID ?? _rootFolderID;
 }
