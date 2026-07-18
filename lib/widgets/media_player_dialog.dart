@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -66,9 +67,20 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   @override
   void initState() {
     super.initState();
-    _player = Player();
+    _player = Player(
+      configuration: PlayerConfiguration(async: !Platform.isMacOS),
+    );
     try {
-      _controller = VideoController(_player);
+      _controller = VideoController(
+        _player,
+        configuration: VideoControllerConfiguration(
+          // The macOS OpenGL texture backend can abort libmpv while creating
+          // a render context. Software textures keep the embedded player
+          // stable; other desktop and mobile platforms retain GPU output.
+          enableHardwareAcceleration: !Platform.isMacOS,
+          hwdec: Platform.isMacOS ? 'no' : null,
+        ),
+      );
       unawaited(
         _controller.platform.future.then<void>(
           (_) {},
@@ -102,6 +114,9 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
       });
     }
     try {
+      // NativeVideoController applies mpv output configuration asynchronously.
+      // Opening only after it is ready avoids racing the render context setup.
+      await _controller.platform.future;
       final url = await ref
           .read(fileProvider.notifier)
           .playbackUrl(_currentFile);
