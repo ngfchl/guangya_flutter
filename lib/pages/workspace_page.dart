@@ -2348,16 +2348,30 @@ class _FinderColumnState extends State<_FinderColumn> {
                     Container(
                       height: 34,
                       padding: const EdgeInsets.symmetric(horizontal: 10),
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        column.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: cs.foreground,
-                        ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              column.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                                color: cs.foreground,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${column.files.where((file) => file.isDirectory).length} 夹 · '
+                            '${column.files.where((file) => !file.isDirectory).length} 件',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: cs.mutedForeground,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     Divider(
@@ -3460,20 +3474,32 @@ class _FilePaneFrame extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Row(
                 children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                      color: cs.foreground,
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: cs.foreground,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '$folderCount 个文件夹 · $fileCount 个文件',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: cs.mutedForeground,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '$itemCount 项',
-                    style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-                  ),
-                  const Spacer(),
                   if (trailing case final Widget trailing) trailing,
                 ],
               ),
