@@ -4,6 +4,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import '../providers/theme_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/app_log_dialog.dart';
+import '../core/http/dio_client.dart';
 import '../core/storage/storage_manager.dart';
 
 class SettingsDialog extends ConsumerStatefulWidget {
@@ -15,8 +16,6 @@ class SettingsDialog extends ConsumerStatefulWidget {
 
 class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   final _tmdbApiKeyController = TextEditingController();
-  final _tmdbProxyHostController = TextEditingController();
-  final _tmdbProxyPortController = TextEditingController();
   final _tmdbImageProxyController = TextEditingController();
   final _httpProxyHostController = TextEditingController();
   final _httpProxyPortController = TextEditingController();
@@ -31,17 +30,11 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     super.initState();
     _tmdbApiKeyController.text =
         StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
-    _tmdbProxyHostController.text =
-        StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
-    _tmdbProxyPortController.text =
-        StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
     _tmdbImageProxyController.text =
         StorageManager.get<String>(StorageKeys.tmdbImageProxy) ??
         'https://wsrv.nl';
-    _httpProxyHostController.text =
-        StorageManager.get<String>(StorageKeys.httpProxyHost) ?? '';
-    _httpProxyPortController.text =
-        StorageManager.get<String>(StorageKeys.httpProxyPort) ?? '';
+    _httpProxyHostController.text = StorageManager.networkProxyHost;
+    _httpProxyPortController.text = StorageManager.networkProxyPort;
     _scanConcurrencyController.text =
         StorageManager.get<String>(StorageKeys.mediaScanConcurrency) ?? '3';
     _transferConcurrencyController.text =
@@ -58,8 +51,6 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   @override
   void dispose() {
     _tmdbApiKeyController.dispose();
-    _tmdbProxyHostController.dispose();
-    _tmdbProxyPortController.dispose();
     _tmdbImageProxyController.dispose();
     _httpProxyHostController.dispose();
     _httpProxyPortController.dispose();
@@ -172,7 +163,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
               const SizedBox(height: 12),
               _SettingsRow(
                 icon: Icons.http_rounded,
-                label: 'HTTP 代理地址',
+                label: '网络代理地址',
                 child: SizedBox(
                   width: 200,
                   child: ShadInput(
@@ -183,7 +174,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
               ),
               _SettingsRow(
                 icon: Icons.numbers_rounded,
-                label: 'HTTP 代理端口',
+                label: '网络代理端口',
                 child: SizedBox(
                   width: 200,
                   child: ShadInput(
@@ -295,30 +286,6 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-              _SettingsRow(
-                icon: Icons.dns_rounded,
-                label: '代理地址',
-                child: SizedBox(
-                  width: 200,
-                  child: ShadInput(
-                    controller: _tmdbProxyHostController,
-                    placeholder: const Text('例: 127.0.0.1'),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              _SettingsRow(
-                icon: Icons.numbers_rounded,
-                label: '代理端口',
-                child: SizedBox(
-                  width: 200,
-                  child: ShadInput(
-                    controller: _tmdbProxyPortController,
-                    placeholder: const Text('例: 7890'),
-                  ),
-                ),
-              ),
               _SettingsRow(
                 icon: Icons.image_rounded,
                 label: '图片加速代理',
@@ -387,25 +354,20 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       _tmdbApiKeyController.text.trim(),
     );
     StorageManager.set(
-      StorageKeys.tmdbProxyHost,
-      _tmdbProxyHostController.text.trim(),
-    );
-    StorageManager.set(
-      StorageKeys.tmdbProxyPort,
-      _tmdbProxyPortController.text.trim(),
-    );
-    StorageManager.set(
       StorageKeys.tmdbImageProxy,
       _tmdbImageProxyController.text.trim(),
     );
-    StorageManager.set(
+    await StorageManager.set(
       StorageKeys.httpProxyHost,
       _httpProxyHostController.text.trim(),
     );
-    StorageManager.set(
+    await StorageManager.set(
       StorageKeys.httpProxyPort,
       _httpProxyPortController.text.trim(),
     );
+    await StorageManager.delete(StorageKeys.tmdbProxyHost);
+    await StorageManager.delete(StorageKeys.tmdbProxyPort);
+    DioClient.updateNetworkProxy();
     StorageManager.set(
       StorageKeys.mediaScanConcurrency,
       _scanConcurrencyController.text.trim(),

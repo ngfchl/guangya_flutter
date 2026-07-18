@@ -52,6 +52,22 @@ class StorageManager {
 
   static T? get<T>(String key) => _box?.get(key) as T?;
 
+  /// 全局网络代理。保留旧 TMDB 配置作为一次性迁移兼容。
+  static String get networkProxyHost =>
+      _nonEmptyString(StorageKeys.httpProxyHost) ??
+      _nonEmptyString(StorageKeys.tmdbProxyHost) ??
+      '';
+
+  static String get networkProxyPort =>
+      _nonEmptyString(StorageKeys.httpProxyPort) ??
+      _nonEmptyString(StorageKeys.tmdbProxyPort) ??
+      '';
+
+  static String? _nonEmptyString(String key) {
+    final value = get<String>(key)?.trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
   static Future<void> set(String key, dynamic value) async {
     if (value == null) {
       await _instance.delete(key);

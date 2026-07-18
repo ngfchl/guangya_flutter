@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 
 import '../config/app_config.dart';
+import '../storage/storage_manager.dart';
 import 'interceptors/app_log_interceptor.dart';
 import 'interceptors/auth_interceptor.dart';
 import 'interceptors/response_interceptor.dart';
@@ -40,6 +41,12 @@ class DioClient {
     }
   }
 
+  /// 设置变更后重建连接客户端，让全局 HTTP 代理立即生效。
+  static void updateNetworkProxy() {
+    _configureHttpClient(dio);
+    _configureHttpClient(accountDio);
+  }
+
   /// 重新设置 onLogout 回调（例如切换 provider 时）
   static void setOnLogout(OnLogout? onLogout) {
     if (_authInterceptor != null) {
@@ -70,17 +77,26 @@ class DioClient {
       ),
     );
 
-    // Windows 下优化连接池
-    if (Platform.isWindows) {
-      (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient = () {
-        final client = HttpClient();
-        client.maxConnectionsPerHost = 10;
-        client.idleTimeout = const Duration(seconds: 60);
-        return client;
-      };
-    }
+    _configureHttpClient(dio);
 
     dio.interceptors.addAll(interceptors);
     return dio;
+  }
+
+  static void _configureHttpClient(Dio dio) {
+    dio.httpClientAdapter.close(force: true);
+    final adapter = IOHttpClientAdapter();
+    adapter.createHttpClient = () {
+      final client = HttpClient()
+        ..maxConnectionsPerHost = Platform.isWindows ? 10 : 6
+        ..idleTimeout = const Duration(seconds: 60);
+      final host = StorageManager.networkProxyHost;
+      final port = StorageManager.networkProxyPort;
+      if (host.isNotEmpty && port.isNotEmpty) {
+        client.findProxy = (_) => 'PROXY $host:$port';
+      }
+      return client;
+    };
+    dio.httpClientAdapter = adapter;
   }
 }

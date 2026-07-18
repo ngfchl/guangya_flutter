@@ -1604,8 +1604,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<List<CloudFile>> _allGlobalRemoteFilesByType({int? resType}) async {
-    const pageSize = 10000;
+    // get_file_list 会将任意更大的 pageSize 静默限制为 1000；若用请求值
+    // 10000 判断末页，会在第一页被错误地视为已读完。
+    const pageSize = 1000;
     final values = <CloudFile>[];
+    final seenIDs = <String>{};
     for (var page = 0; !_cancelScan; page++) {
       final typeLabel = resType == 2 ? '目录' : '文件';
       AppLogger.info('CloudIndex', '正在获取全盘$typeLabel索引，第 ${page + 1} 页');
@@ -1618,18 +1621,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         resType: resType,
       );
       final batch = _extractFiles(response);
-      values.addAll(batch);
+      final added = batch.where((file) => seenIDs.add(file.id)).toList();
+      values.addAll(added);
       AppLogger.info(
         'CloudIndex',
-        '全盘$typeLabel索引第 ${page + 1} 页完成，获取 ${batch.length} 项，累计 ${values.length} 项',
+        '全盘$typeLabel索引第 ${page + 1} 页完成，获取 ${batch.length} 项，新增 ${added.length} 项，累计 ${values.length} 项',
       );
-      final total = _findIntDeep(response, const [
-        'total',
-        'totalCount',
-        'count',
-      ]);
-      if (batch.length < pageSize ||
-          (total != null && values.length >= total)) {
+      if (batch.length < pageSize) break;
+      if (added.isEmpty) {
+        AppLogger.warning(
+          'CloudIndex',
+          '全盘$typeLabel索引第 ${page + 1} 页与上一页重复，已停止继续分页',
+        );
         break;
       }
     }
