@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../core/storage/storage_manager.dart';
@@ -12,6 +13,17 @@ import '../providers/media_library_provider.dart';
 import '../widgets/media_player_dialog.dart';
 
 enum _MediaWallFilter { all, movies, series, collections, unmatched }
+
+String _tmdbImageURL(String path, {required String size}) {
+  final source = path.startsWith('http')
+      ? path
+      : 'https://image.tmdb.org/t/p/$size$path';
+  return Uri.https('wsrv.nl', '/', {
+    'url': source,
+    'output': 'webp',
+    'q': '85',
+  }).toString();
+}
 
 class MediaLibraryPage extends ConsumerStatefulWidget {
   final bool showLibrarySidebar;
@@ -662,12 +674,12 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             borderRadius: BorderRadius.circular(6),
             child: posterPath == null
                 ? _posterPlaceholder(context, 74, 110)
-                : Image.network(
-                    'https://image.tmdb.org/t/p/w200$posterPath',
+                : CachedNetworkImage(
+                    imageUrl: _tmdbImageURL(posterPath, size: 'w200'),
                     width: 74,
                     height: 110,
                     fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) =>
+                    errorWidget: (context, url, error) =>
                         _posterPlaceholder(context, 74, 110),
                   ),
           ),
@@ -1544,7 +1556,7 @@ class _MediaCollectionTile extends ConsumerWidget {
     final cs = ShadTheme.of(context).colorScheme;
     final item = collection.primary;
     final posterURL = item.posterPath?.isNotEmpty == true
-        ? 'https://image.tmdb.org/t/p/w342${item.posterPath}'
+        ? _tmdbImageURL(item.posterPath!, size: 'w342')
         : null;
     return Semantics(
       button: true,
@@ -1576,10 +1588,10 @@ class _MediaCollectionTile extends ConsumerWidget {
                                 size: 34,
                               ),
                             )
-                          : Image.network(
-                              posterURL,
+                          : CachedNetworkImage(
+                              imageUrl: posterURL,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) => Center(
+                              errorWidget: (_, _, _) => Center(
                                 child: Icon(
                                   Icons.collections_bookmark_rounded,
                                   color: cs.mutedForeground,
@@ -1656,7 +1668,7 @@ class _MediaPosterTile extends ConsumerWidget {
     final item = work.primary;
     final isSeries = item.mediaKind == TMDBMediaKind.tv;
     final posterURL = item.posterPath?.isNotEmpty == true
-        ? 'https://image.tmdb.org/t/p/w342${item.posterPath}'
+        ? _tmdbImageURL(item.posterPath!, size: 'w342')
         : null;
     return ShadContextMenuRegion(
       items: [
@@ -1701,10 +1713,10 @@ class _MediaPosterTile extends ConsumerWidget {
                         clipBehavior: Clip.antiAlias,
                         child: posterURL == null
                             ? _posterFallback(cs, isSeries)
-                            : Image.network(
-                                posterURL,
+                            : CachedNetworkImage(
+                                imageUrl: posterURL,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) =>
+                                errorWidget: (_, _, _) =>
                                     _posterFallback(cs, isSeries),
                               ),
                       ),
@@ -1952,7 +1964,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   ) {
     final cs = ShadTheme.of(context).colorScheme;
     final posterURL = item.posterPath?.isNotEmpty == true
-        ? 'https://image.tmdb.org/t/p/w342${item.posterPath}'
+        ? _tmdbImageURL(item.posterPath!, size: 'w342')
         : null;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1964,10 +1976,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             borderRadius: BorderRadius.circular(6),
             child: posterURL == null
                 ? _detailPosterFallback(cs, isSeries)
-                : Image.network(
-                    posterURL,
+                : CachedNetworkImage(
+                    imageUrl: posterURL,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) =>
+                    errorWidget: (_, _, _) =>
                         _detailPosterFallback(cs, isSeries),
                   ),
           ),
@@ -2078,11 +2090,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemBuilder: (context, index) => ClipRRect(
                 borderRadius: BorderRadius.circular(6),
-                child: Image.network(
-                  'https://image.tmdb.org/t/p/w780${backdrops[index]}',
+                child: CachedNetworkImage(
+                  imageUrl: _tmdbImageURL(backdrops[index], size: 'w780'),
                   width: 260,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => const SizedBox(width: 260),
+                  errorWidget: (_, _, _) => const SizedBox(width: 260),
                 ),
               ),
             ),
@@ -2107,11 +2119,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemBuilder: (context, index) => ClipRRect(
                 borderRadius: BorderRadius.circular(6),
-                child: Image.network(
-                  'https://image.tmdb.org/t/p/w342${posters[index]}',
+                child: CachedNetworkImage(
+                  imageUrl: _tmdbImageURL(posters[index], size: 'w342'),
                   width: 106,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => const SizedBox(width: 106),
+                  errorWidget: (_, _, _) => const SizedBox(width: 106),
                 ),
               ),
             ),
@@ -2154,12 +2166,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                                   color: cs.mutedForeground,
                                 ),
                               )
-                            : Image.network(
-                                'https://image.tmdb.org/t/p/w185$profile',
+                            : CachedNetworkImage(
+                                imageUrl: _tmdbImageURL(profile, size: 'w185'),
                                 width: 96,
                                 height: 122,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => Container(
+                                errorWidget: (_, _, _) => Container(
                                   width: 96,
                                   height: 122,
                                   color: cs.muted,
@@ -2578,10 +2590,10 @@ class _ManualTMDBMatchDialogState
                             color: cs.mutedForeground,
                           ),
                         )
-                      : Image.network(
-                          'https://image.tmdb.org/t/p/w154$posterPath',
+                      : CachedNetworkImage(
+                          imageUrl: _tmdbImageURL(posterPath, size: 'w154'),
                           fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => Container(
+                          errorWidget: (_, _, _) => Container(
                             color: cs.muted,
                             child: Icon(
                               Icons.movie_rounded,
