@@ -464,10 +464,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         onRefreshAndRecognize: () => ref
             .read(mediaLibraryProvider.notifier)
             .refreshAndRecognizeItems((current ?? _detailWork!).resources),
-        onRescan: state.isScanning
-            ? null
-            : () =>
-                  ref.read(mediaLibraryProvider.notifier).scanSelectedLibrary(),
       );
     }
     final showingCollectionOverview =
@@ -1883,7 +1879,6 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final ValueChanged<MediaLibraryItem> onExternalPlay;
   final VoidCallback onManualMatch;
   final VoidCallback onRefreshAndRecognize;
-  final VoidCallback? onRescan;
 
   const _MediaDetailPanel({
     required this.work,
@@ -1893,7 +1888,6 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onExternalPlay,
     required this.onManualMatch,
     required this.onRefreshAndRecognize,
-    this.onRescan,
   });
 
   @override
@@ -1905,6 +1899,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   Map<String, dynamic>? _tmdbDetails;
   int? _loadedTMDBID;
   bool _loadingTMDBDetails = false;
+  final _updatePopover = ShadPopoverController();
 
   @override
   void initState() {
@@ -1915,12 +1910,63 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   @override
   void didUpdateWidget(covariant _MediaDetailPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.work.resources.any((item) => item.id == _resource.id)) {
+    final updatedResource = widget.work.resources
+        .where((item) => item.id == _resource.id)
+        .firstOrNull;
+    if (updatedResource != null) {
+      _resource = updatedResource;
+    } else {
       _resource = widget.work.primary;
     }
     if (widget.work.primary.tmdbID != _loadedTMDBID) {
       Future.microtask(_loadTMDBDetails);
     }
+  }
+
+  @override
+  void dispose() {
+    _updatePopover.dispose();
+    super.dispose();
+  }
+
+  Widget _updateMediaMenu() {
+    return ShadPopover(
+      controller: _updatePopover,
+      padding: const EdgeInsets.all(8),
+      popover: (_) => SizedBox(
+        width: 230,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ShadButton.outline(
+              size: ShadButtonSize.sm,
+              onPressed: () {
+                _updatePopover.hide();
+                widget.onRefreshAndRecognize();
+              },
+              leading: const Icon(Icons.sync_rounded, size: 16),
+              child: const Text('同步并自动识别'),
+            ),
+            const SizedBox(height: 6),
+            ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: () {
+                _updatePopover.hide();
+                widget.onManualMatch();
+              },
+              leading: const Icon(Icons.edit_note_rounded, size: 16),
+              child: const Text('手动匹配 TMDB'),
+            ),
+          ],
+        ),
+      ),
+      child: ShadButton.outline(
+        onPressed: () => _updatePopover.toggle(),
+        leading: const Icon(Icons.sync_rounded, size: 16),
+        child: const Text('更新媒体信息'),
+      ),
+    );
   }
 
   Future<void> _loadTMDBDetails() async {
@@ -1980,23 +2026,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               leading: const Icon(Icons.arrow_back_rounded, size: 16),
               child: const Text('返回海报墙'),
             ),
-            ShadButton.outline(
-              onPressed: widget.onRefreshAndRecognize,
-              leading: const Icon(Icons.manage_search_rounded, size: 16),
-              child: const Text('重新识别'),
-            ),
-            ShadButton.ghost(
-              size: ShadButtonSize.sm,
-              onPressed: widget.onManualMatch,
-              leading: const Icon(Icons.edit_note_rounded, size: 16),
-              child: const Text('手动匹配'),
-            ),
-            const SizedBox(width: 8),
-            ShadButton.outline(
-              onPressed: widget.onRescan,
-              leading: const Icon(Icons.refresh_rounded, size: 16),
-              child: const Text('重新扫描'),
-            ),
+            _updateMediaMenu(),
             const SizedBox(width: 8),
             ShadButton(
               onPressed: () => widget.onPlay(_resource),
