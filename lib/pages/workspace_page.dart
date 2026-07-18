@@ -1367,7 +1367,10 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
       final entry = cache[file.id];
       final cachedAt = int.tryParse(entry?['cachedAt']?.toString() ?? '');
       final size = int.tryParse(entry?['size']?.toString() ?? '');
-      if (cachedAt != null && size != null && now - cachedAt <= ttl) {
+      if (cachedAt != null &&
+          size != null &&
+          size > 0 &&
+          now - cachedAt <= ttl) {
         cached[file.id] = size;
       } else {
         queue.add(file);
@@ -1397,11 +1400,14 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
           final folder = queue.removeLast();
           try {
             final detail = await api.fsDetail(folder.id);
-            final size = _extractFiles(detail)
-                .where((file) => file.id == folder.id)
-                .map((file) => file.size)
-                .whereType<int>()
-                .firstOrNull;
+            final size = _findIntDeep(detail, const [
+              'size',
+              'fileSize',
+              'resSize',
+              'totalSize',
+              'dirSize',
+              'folderSize',
+            ]);
             if (size == null) continue;
             cache[folder.id] = {'size': size, 'cachedAt': now};
             resolved[folder.id] = size;
@@ -1426,6 +1432,30 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
         value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{},
       ),
     );
+  }
+
+  int? _findIntDeep(Map<String, dynamic> value, List<String> keys) {
+    for (final entry in value.entries) {
+      if (keys.contains(entry.key)) {
+        final parsed = int.tryParse(entry.value?.toString() ?? '');
+        if (parsed != null) return parsed;
+      }
+      if (entry.value is Map) {
+        final found = _findIntDeep(
+          Map<String, dynamic>.from(entry.value),
+          keys,
+        );
+        if (found != null) return found;
+      } else if (entry.value is List) {
+        for (final child in entry.value as List) {
+          if (child is Map) {
+            final found = _findIntDeep(Map<String, dynamic>.from(child), keys);
+            if (found != null) return found;
+          }
+        }
+      }
+    }
+    return null;
   }
 
   String? get _currentParentID => _path.isEmpty ? null : _path.last.id;

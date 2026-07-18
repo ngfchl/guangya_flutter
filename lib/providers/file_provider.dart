@@ -247,7 +247,10 @@ class FileNotifier extends StateNotifier<FileState> {
       final entry = cache[file.id];
       final cachedAt = int.tryParse(entry?['cachedAt']?.toString() ?? '');
       final cachedSize = int.tryParse(entry?['size']?.toString() ?? '');
-      if (cachedAt != null && cachedSize != null && now - cachedAt <= ttl) {
+      if (cachedAt != null &&
+          cachedSize != null &&
+          cachedSize > 0 &&
+          now - cachedAt <= ttl) {
         known[file.id] = cachedSize;
       } else {
         pending.add(file);
@@ -285,7 +288,6 @@ class FileNotifier extends StateNotifier<FileState> {
                   orElse: () => null,
                 );
             final size =
-                detailFile?.size ??
                 _findIntDeep(detail, const [
                   'size',
                   'fileSize',
@@ -293,7 +295,8 @@ class FileNotifier extends StateNotifier<FileState> {
                   'totalSize',
                   'dirSize',
                   'folderSize',
-                ]);
+                ]) ??
+                detailFile?.size;
             if (size == null) continue;
             cache[file.id] = {'size': size, 'cachedAt': now};
             resolved[file.id] = size;
