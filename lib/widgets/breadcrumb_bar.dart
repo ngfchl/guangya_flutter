@@ -54,7 +54,9 @@ class BreadcrumbBar extends StatelessWidget {
         GestureDetector(
           onTap: isLast ? null : () => onNavigate(i),
           child: MouseRegion(
-            cursor: isLast ? SystemMouseCursors.basic : SystemMouseCursors.click,
+            cursor: isLast
+                ? SystemMouseCursors.basic
+                : SystemMouseCursors.click,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
@@ -75,9 +77,16 @@ class BreadcrumbBar extends StatelessWidget {
       );
     }
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(children: items),
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.start,
+          children: items,
+        ),
+      ),
     );
   }
 }
