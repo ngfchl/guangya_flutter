@@ -179,6 +179,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
   }
 
+  Future<void> updateLibrary(MediaLibraryDefinition library) async {
+    if (library.name.trim().isEmpty || library.sources.isEmpty) return;
+    final libraries = state.libraries
+        .map((item) => item.id == library.id ? library : item)
+        .toList();
+    await _saveLibraries(libraries);
+    state = state.copyWith(
+      libraries: libraries,
+      selectedLibraryID: library.id,
+      items: _loadItems(library.id),
+      statusMessage: '媒体库「${library.name}」已更新',
+    );
+  }
+
   Future<void> scanSelectedLibrary() async {
     final library = state.selectedLibrary;
     if (library == null || _api == null || state.isScanning) return;

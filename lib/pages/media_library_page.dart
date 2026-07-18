@@ -257,6 +257,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                         onTap: () => ref
                             .read(mediaLibraryProvider.notifier)
                             .selectLibrary(library.id),
+                        onEdit: () =>
+                            _showEditLibraryDialog(context, ref, library),
                         onDelete: () => ref
                             .read(mediaLibraryProvider.notifier)
                             .deleteLibrary(library.id),
@@ -537,6 +539,22 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     );
   }
 
+  static void _showEditLibraryDialog(
+    BuildContext context,
+    WidgetRef ref,
+    MediaLibraryDefinition library,
+  ) {
+    showShadDialog(
+      context: context,
+      builder: (_) => _CreateMediaLibraryDialog(
+        initialRootID: library.rootID,
+        initialPath: library.rootPath,
+        initialName: library.name,
+        editingLibrary: library,
+      ),
+    );
+  }
+
   void _saveApiKey() {
     final key = _apiKeyController.text.trim();
     StorageManager.set(StorageKeys.tmdbApiKey, key);
@@ -591,11 +609,13 @@ class _CreateMediaLibraryDialog extends ConsumerStatefulWidget {
   final String? initialRootID;
   final String initialPath;
   final String initialName;
+  final MediaLibraryDefinition? editingLibrary;
 
   const _CreateMediaLibraryDialog({
     required this.initialRootID,
     required this.initialPath,
     required this.initialName,
+    this.editingLibrary,
   });
 
   @override
@@ -616,17 +636,26 @@ class _CreateMediaLibraryDialogState
   final _browserPath = <CloudFile>[];
   var _folders = <CloudFile>[];
 
+  bool get _isEditing => widget.editingLibrary != null;
+
   @override
   void initState() {
     super.initState();
-    _sources = [
-      MediaLibrarySource(
-        id: 'initial-source',
-        rootID: widget.initialRootID,
-        path: widget.initialPath,
-      ),
-    ];
+    _sources =
+        widget.editingLibrary?.sources ??
+        [
+          MediaLibrarySource(
+            id: 'initial-source',
+            rootID: widget.initialRootID,
+            path: widget.initialPath,
+          ),
+        ];
     _nameController = TextEditingController(text: widget.initialName);
+    if (_isEditing) {
+      _kind = widget.editingLibrary!.kind;
+      _recursive = widget.editingLibrary!.recursive;
+      _minSizeController.text = widget.editingLibrary!.minimumSizeMB.toString();
+    }
   }
 
   @override
@@ -730,26 +759,38 @@ class _CreateMediaLibraryDialogState
     });
   }
 
-  void _create(BuildContext context) {
-    ref
-        .read(mediaLibraryProvider.notifier)
-        .createLibrary(
+  Future<void> _save(BuildContext context) async {
+    final notifier = ref.read(mediaLibraryProvider.notifier);
+    if (_isEditing) {
+      await notifier.updateLibrary(
+        widget.editingLibrary!.copyWith(
           name: _nameController.text,
-          rootID: _sources.isEmpty ? null : _sources.first.rootID,
-          rootPath: _sources.isEmpty ? '未配置目录' : _sources.first.path,
           sources: _sources,
           kind: _kind,
           recursive: _recursive,
           minimumSizeMB: int.tryParse(_minSizeController.text.trim()) ?? 50,
-        );
-    Navigator.of(context).pop();
+          updatedAt: DateTime.now(),
+        ),
+      );
+    } else {
+      await notifier.createLibrary(
+        name: _nameController.text,
+        rootID: _sources.isEmpty ? null : _sources.first.rootID,
+        rootPath: _sources.isEmpty ? '未配置目录' : _sources.first.path,
+        sources: _sources,
+        kind: _kind,
+        recursive: _recursive,
+        minimumSizeMB: int.tryParse(_minSizeController.text.trim()) ?? 50,
+      );
+    }
+    if (context.mounted) Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     return ShadDialog(
-      title: Text(_isBrowsing ? '选择云盘文件夹' : '创建媒体库'),
+      title: Text(_isBrowsing ? '选择云盘文件夹' : (_isEditing ? '管理媒体库' : '创建媒体库')),
       description: Text(
         _isBrowsing ? '进入目标目录后，选择该目录作为媒体库来源。' : '媒体库会从指定目录扫描视频文件。',
       ),
@@ -771,9 +812,9 @@ class _CreateMediaLibraryDialogState
                 child: const Text('取消'),
               ),
               ShadButton(
-                onPressed: _sources.isEmpty ? null : () => _create(context),
+                onPressed: _sources.isEmpty ? null : () => _save(context),
                 leading: const Icon(Icons.add_rounded, size: 16),
-                child: const Text('创建媒体库'),
+                child: Text(_isEditing ? '保存并扫描' : '创建媒体库'),
               ),
             ],
       child: _isBrowsing ? _folderBrowser(cs) : _form(cs),
@@ -1039,12 +1080,14 @@ class _LibraryRow extends StatelessWidget {
   final MediaLibraryDefinition library;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const _LibraryRow({
     required this.library,
     required this.selected,
     required this.onTap,
+    required this.onEdit,
     required this.onDelete,
   });
 
@@ -1102,6 +1145,14 @@ class _LibraryRow extends StatelessWidget {
                         ),
                       ),
                     ],
+                  ),
+                ),
+                ShadTooltip(
+                  builder: (_) => const Text('管理媒体库'),
+                  child: ShadButton.ghost(
+                    size: ShadButtonSize.sm,
+                    onPressed: onEdit,
+                    child: const Icon(Icons.edit_outlined, size: 15),
                   ),
                 ),
                 ShadTooltip(
