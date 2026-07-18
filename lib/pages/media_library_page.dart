@@ -105,6 +105,24 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(mediaLibraryProvider);
+    ref.listen<MediaLibraryState>(mediaLibraryProvider, (previous, next) {
+      final message = next.errorMessage ?? next.statusMessage;
+      final previousMessage = previous?.errorMessage ?? previous?.statusMessage;
+      if (message == null || message.isEmpty || message == previousMessage) {
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ShadSonner.maybeOf(context)?.show(
+          next.errorMessage == null
+              ? ShadToast(title: const Text('媒体库'), description: Text(message))
+              : ShadToast.destructive(
+                  title: const Text('媒体库操作失败'),
+                  description: Text(message),
+                ),
+        );
+      });
+    });
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
@@ -114,8 +132,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           const SizedBox(height: 12),
           _buildToolbar(context, state),
           const SizedBox(height: 12),
-          if (state.errorMessage != null || state.statusMessage != null)
-            _buildMessageBar(context, state),
           Expanded(
             child: widget.showLibrarySidebar
                 ? Row(
@@ -316,28 +332,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     );
   }
 
-  Widget _buildMessageBar(BuildContext context, MediaLibraryState state) {
-    final cs = ShadTheme.of(context).colorScheme;
-    final isError = state.errorMessage != null;
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: isError ? cs.destructive.withValues(alpha: 0.08) : cs.muted,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: isError ? cs.destructive : cs.border),
-      ),
-      child: Text(
-        state.errorMessage ?? state.statusMessage ?? '',
-        style: TextStyle(
-          fontSize: 12,
-          color: isError ? cs.destructive : cs.mutedForeground,
-        ),
-      ),
-    );
-  }
-
   Widget _buildLibraryList(BuildContext context, MediaLibraryState state) {
     final cs = ShadTheme.of(context).colorScheme;
     return SizedBox(
@@ -439,8 +433,17 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       return _mainEmpty(context, '还没有媒体库', '从云盘根目录或当前目录创建一个媒体库');
     }
     if (_detailWork != null) {
+      final detailResourceIDs = _detailWork!.resources
+          .map((resource) => resource.id)
+          .toSet();
       final current = works
-          .where((work) => work.key == _detailWork!.key)
+          .where(
+            (work) =>
+                work.key == _detailWork!.key ||
+                work.resources.any(
+                  (resource) => detailResourceIDs.contains(resource.id),
+                ),
+          )
           .firstOrNull;
       return _MediaDetailPanel(
         work: current ?? _detailWork!,
@@ -461,9 +464,27 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           builder: (_) => ExternalPlayerDialog(file: item.file),
         ),
         onManualMatch: () => _showManualTMDBMatch(current ?? _detailWork!),
-        onRefreshAndRecognize: () => ref
-            .read(mediaLibraryProvider.notifier)
-            .refreshAndRecognizeItems((current ?? _detailWork!).resources),
+        onRefreshAndRecognize: () async {
+          final selected = current ?? _detailWork!;
+          await ref
+              .read(mediaLibraryProvider.notifier)
+              .refreshAndRecognizeItems(selected.resources);
+          if (!mounted || _detailWork == null) return;
+          final updatedWorks = _MediaWork.fromItems(
+            ref.read(mediaLibraryProvider).items,
+          );
+          final selectedIDs = selected.resources
+              .map((resource) => resource.id)
+              .toSet();
+          final refreshed = updatedWorks
+              .where(
+                (work) => work.resources.any(
+                  (resource) => selectedIDs.contains(resource.id),
+                ),
+              )
+              .firstOrNull;
+          if (refreshed != null) setState(() => _detailWork = refreshed);
+        },
       );
     }
     final showingCollectionOverview =
@@ -1878,7 +1899,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final ValueChanged<MediaLibraryItem> onPlay;
   final ValueChanged<MediaLibraryItem> onExternalPlay;
   final VoidCallback onManualMatch;
-  final VoidCallback onRefreshAndRecognize;
+  final Future<void> Function() onRefreshAndRecognize;
 
   const _MediaDetailPanel({
     required this.work,
@@ -1899,6 +1920,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   Map<String, dynamic>? _tmdbDetails;
   int? _loadedTMDBID;
   bool _loadingTMDBDetails = false;
+  bool _refreshingMedia = false;
   final _updatePopover = ShadPopoverController();
 
   @override
@@ -1941,12 +1963,15 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           children: [
             ShadButton.outline(
               size: ShadButtonSize.sm,
-              onPressed: () {
-                _updatePopover.hide();
-                widget.onRefreshAndRecognize();
-              },
-              leading: const Icon(Icons.sync_rounded, size: 16),
-              child: const Text('同步云盘命名并识别'),
+              onPressed: _refreshingMedia ? null : _refreshAndRecognize,
+              leading: _refreshingMedia
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.sync_rounded, size: 16),
+              child: Text(_refreshingMedia ? '正在同步并识别' : '同步云盘命名并识别'),
             ),
             const SizedBox(height: 6),
             ShadButton.ghost(
@@ -1962,14 +1987,31 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         ),
       ),
       child: ShadButton.outline(
-        onPressed: () => _updatePopover.toggle(),
-        leading: const Icon(Icons.sync_rounded, size: 16),
-        child: const Text('更新媒体信息'),
+        onPressed: _refreshingMedia ? null : () => _updatePopover.toggle(),
+        leading: _refreshingMedia
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.sync_rounded, size: 16),
+        child: Text(_refreshingMedia ? '正在识别' : '更新媒体信息'),
       ),
     );
   }
 
-  Future<void> _loadTMDBDetails() async {
+  Future<void> _refreshAndRecognize() async {
+    if (_refreshingMedia) return;
+    setState(() => _refreshingMedia = true);
+    try {
+      await widget.onRefreshAndRecognize();
+      await _loadTMDBDetails(force: true);
+    } finally {
+      if (mounted) setState(() => _refreshingMedia = false);
+    }
+  }
+
+  Future<void> _loadTMDBDetails({bool force = false}) async {
     final item = widget.work.primary;
     final tmdbID = item.tmdbID;
     final kind = item.mediaKind;
@@ -1977,7 +2019,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     if (tmdbID == null ||
         kind == null ||
         apiKey.isEmpty ||
-        _loadedTMDBID == tmdbID ||
+        (!force && _loadedTMDBID == tmdbID) ||
         _loadingTMDBDetails) {
       return;
     }
