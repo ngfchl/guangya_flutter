@@ -550,7 +550,15 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> refreshGlobalCloudIndex({bool force = false}) async {
-    if (_api == null || _refreshingCloudIndex) return;
+    if (_api == null) {
+      AppLogger.warning('CloudIndex', '无法刷新全盘文件索引：云盘接口尚未初始化');
+      return;
+    }
+    if (_refreshingCloudIndex) {
+      AppLogger.debug('CloudIndex', '全盘文件索引正在刷新，本次请求已合并');
+      return;
+    }
+    AppLogger.info('CloudIndex', force ? '正在强制刷新全盘文件索引' : '正在检查全盘文件索引缓存');
     final minutes =
         (int.tryParse(
                   StorageManager.get<String>(
@@ -568,6 +576,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         DateTime.fromMillisecondsSinceEpoch(lastUpdated),
       );
       if (elapsed < Duration(minutes: minutes)) {
+        final remaining = Duration(minutes: minutes) - elapsed;
+        AppLogger.info(
+          'CloudIndex',
+          '全盘文件索引缓存仍有效，已跳过本次刷新；约 ${remaining.inMinutes + 1} 分钟后自动更新',
+        );
         _scheduleCloudIndexRefresh(minutes);
         return;
       }
@@ -588,6 +601,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       AppLogger.info('CloudIndex', '全盘文件索引刷新完成，共 ${files.length} 项');
       _appendScanLog('[云盘索引] 已刷新 ${files.length} 个文件与目录缓存');
     } catch (error) {
+      AppLogger.error('CloudIndex', '刷新全盘文件索引失败', error: error);
       _appendScanLog('[云盘索引] 刷新失败：$error', isError: true);
     } finally {
       _refreshingCloudIndex = false;
