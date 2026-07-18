@@ -78,6 +78,29 @@ class FileMetadataCache {
     });
   }
 
+  static Future<void> removeFilesFromAllFolders(Iterable<String> fileIDs) {
+    final removed = fileIDs.toSet();
+    if (removed.isEmpty) return Future.value();
+    return _enqueue(() async {
+      final folders = _map(StorageKeys.folderChildrenIndex);
+      for (final entry in folders.entries.toList()) {
+        final snapshot = entry.value;
+        if (snapshot is! Map || snapshot['children'] is! List) continue;
+        final children = (snapshot['children'] as List)
+            .whereType<Map>()
+            .where((child) => !removed.contains(_fileID(child)))
+            .toList();
+        final original = snapshot['children'] as List;
+        if (children.length == original.length) continue;
+        folders[entry.key] = {
+          'childIds': children.map(_fileID).whereType<String>().toList(),
+          'children': children,
+        };
+      }
+      await StorageManager.set(StorageKeys.folderChildrenIndex, folders);
+    });
+  }
+
   static List<CloudFile>? folderChildren(String? folderID) {
     final folders = _map(StorageKeys.folderChildrenIndex);
     final entry = folders[_folderKey(folderID)];
@@ -123,6 +146,16 @@ class FileMetadataCache {
       fileIndex[file.id] = gcid;
       details[gcid] = file.toJson();
     }
+  }
+
+  static String? _fileID(Map value) {
+    for (final key in const ['id', 'fileId', 'file_id', 'resId', 'res_id']) {
+      final candidate = value[key];
+      if (candidate != null && candidate.toString().isNotEmpty) {
+        return candidate.toString();
+      }
+    }
+    return null;
   }
 
   static Future<void> _enqueue(Future<void> Function() operation) {

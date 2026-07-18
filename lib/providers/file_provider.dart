@@ -549,6 +549,9 @@ class FileNotifier extends StateNotifier<FileState> {
     state = state.copyWith(statusMessage: '正在删除…');
     try {
       await _api!.fsDelete(files.map((f) => f.id).toList());
+      await FileMetadataCache.removeFilesFromAllFolders(
+        files.map((file) => file.id),
+      );
       await FileMetadataCache.updateFolderChildren(
         _currentParentID,
         removeIDs: files.map((file) => file.id),
@@ -568,6 +571,9 @@ class FileNotifier extends StateNotifier<FileState> {
     if (_api == null) return;
     try {
       await _api!.fsRecycle(files.map((f) => f.id).toList());
+      await FileMetadataCache.removeFilesFromAllFolders(
+        files.map((file) => file.id),
+      );
       await FileMetadataCache.updateFolderChildren(
         _currentParentID,
         removeIDs: files.map((file) => file.id),
@@ -609,6 +615,7 @@ class FileNotifier extends StateNotifier<FileState> {
       final ids = state.clipboard!.map((f) => f.id).toList();
       if (state.clipboardIsMove) {
         await _api!.fsMove(ids, parentID: _currentParentID);
+        await FileMetadataCache.removeFilesFromAllFolders(ids);
         await FileMetadataCache.updateFolderChildren(
           _currentParentID,
           addOrReplace: state.clipboard!,
@@ -742,6 +749,9 @@ class FileNotifier extends StateNotifier<FileState> {
       await _api!.fsMove(
         files.map((file) => file.id).toList(),
         parentID: parentID,
+      );
+      await FileMetadataCache.removeFilesFromAllFolders(
+        files.map((file) => file.id),
       );
       await FileMetadataCache.updateFolderChildren(
         _currentParentID,
