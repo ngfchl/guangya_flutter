@@ -75,6 +75,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final themeState = ref.watch(themeProvider);
+    final mediaState = ref.watch(mediaLibraryProvider);
 
     return ShadDialog(
       title: const Text('设置'),
@@ -232,6 +233,31 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                   child: ShadInput(
                     controller: _cloudIndexRefreshController,
                     keyboardType: TextInputType.number,
+                  ),
+                ),
+              ),
+              _SettingsRow(
+                icon: Icons.refresh_rounded,
+                label: '全盘文件索引',
+                child: ShadButton.outline(
+                  size: ShadButtonSize.sm,
+                  onPressed: mediaState.isRefreshingCloudIndex
+                      ? null
+                      : () => ref
+                            .read(mediaLibraryProvider.notifier)
+                            .refreshGlobalCloudIndex(force: true),
+                  leading: mediaState.isRefreshingCloudIndex
+                      ? SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: cs.primary,
+                          ),
+                        )
+                      : const Icon(Icons.refresh_rounded, size: 15),
+                  child: Text(
+                    mediaState.isRefreshingCloudIndex ? '刷新中' : '立即刷新',
                   ),
                 ),
               ),

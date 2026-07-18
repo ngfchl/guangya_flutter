@@ -41,6 +41,7 @@ class MediaLibraryState {
   final List<MediaLibraryItem> items;
   final bool isLoading;
   final bool isScanning;
+  final bool isRefreshingCloudIndex;
   final MediaLibraryScanProgress progress;
   final List<MediaLibraryScanLog> scanLogs;
   final String searchQuery;
@@ -53,6 +54,7 @@ class MediaLibraryState {
     this.items = const [],
     this.isLoading = false,
     this.isScanning = false,
+    this.isRefreshingCloudIndex = false,
     this.progress = const MediaLibraryScanProgress(),
     this.scanLogs = const [],
     this.searchQuery = '',
@@ -87,6 +89,7 @@ class MediaLibraryState {
     List<MediaLibraryItem>? items,
     bool? isLoading,
     bool? isScanning,
+    bool? isRefreshingCloudIndex,
     MediaLibraryScanProgress? progress,
     List<MediaLibraryScanLog>? scanLogs,
     String? searchQuery,
@@ -103,6 +106,8 @@ class MediaLibraryState {
       items: items ?? this.items,
       isLoading: isLoading ?? this.isLoading,
       isScanning: isScanning ?? this.isScanning,
+      isRefreshingCloudIndex:
+          isRefreshingCloudIndex ?? this.isRefreshingCloudIndex,
       progress: progress ?? this.progress,
       scanLogs: scanLogs ?? this.scanLogs,
       searchQuery: searchQuery ?? this.searchQuery,
@@ -586,6 +591,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
     }
     _refreshingCloudIndex = true;
+    state = state.copyWith(isRefreshingCloudIndex: true);
     try {
       AppLogger.info('CloudIndex', '开始刷新全盘文件索引');
       final files = await _allGlobalRemoteFiles();
@@ -605,6 +611,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       _appendScanLog('[云盘索引] 刷新失败：$error', isError: true);
     } finally {
       _refreshingCloudIndex = false;
+      state = state.copyWith(isRefreshingCloudIndex: false);
       _scheduleCloudIndexRefresh(minutes);
     }
   }
