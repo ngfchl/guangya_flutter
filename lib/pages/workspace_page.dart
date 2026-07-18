@@ -599,31 +599,21 @@ class _TopBar extends StatelessWidget {
                 _SegmentButton(
                   icon: Icons.folder_rounded,
                   label: '光鸭云盘',
-                  compact: false,
+                  compact: true,
                   selected: mode == WorkspaceMode.cloud,
                   onTap: () => onModeChanged(WorkspaceMode.cloud),
                 ),
                 _SegmentButton(
                   icon: Icons.movie_rounded,
                   label: '光鸭影视',
-                  compact: false,
+                  compact: true,
                   selected: mode == WorkspaceMode.media,
                   onTap: () => onModeChanged(WorkspaceMode.media),
                 ),
-                ShadTooltip(
-                  builder: (_) => const Text('设置'),
-                  child: SizedBox(
-                    width: 34,
-                    height: 32,
-                    child: GestureDetector(
-                      onTap: onSettings,
-                      child: Icon(
-                        Icons.settings_rounded,
-                        size: 17,
-                        color: cs.mutedForeground,
-                      ),
-                    ),
-                  ),
+                _TopBarIconButton(
+                  tooltip: '设置',
+                  icon: Icons.settings_rounded,
+                  onTap: onSettings,
                 ),
               ],
             ),
@@ -705,46 +695,54 @@ class _SegmentButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        width: compact ? 38 : 126,
-        height: compact ? 38 : 32,
-        decoration: BoxDecoration(
-          color: selected ? cs.secondary : Colors.transparent,
+    return ShadTooltip(
+      builder: (_) => Text(label),
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: label,
+        child: InkWell(
           borderRadius: BorderRadius.circular(10),
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: cs.border.withValues(alpha: 0.7),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
-                  ),
-                ]
-              : null,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 15,
-              color: selected ? cs.foreground : cs.mutedForeground,
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            width: compact ? 38 : 126,
+            height: compact ? 38 : 32,
+            decoration: BoxDecoration(
+              color: selected ? cs.secondary : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: cs.border.withValues(alpha: 0.7),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ]
+                  : null,
             ),
-            if (!compact) ...[
-              const SizedBox(width: 7),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 15,
                   color: selected ? cs.foreground : cs.mutedForeground,
                 ),
-              ),
-            ],
-          ],
+                if (!compact) ...[
+                  const SizedBox(width: 7),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                      color: selected ? cs.foreground : cs.mutedForeground,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1519,12 +1517,20 @@ class _CloudToolbar extends ConsumerWidget {
           ],
         ),
         const SizedBox(width: 8),
-        _ToolbarButton(
-          icon: Icons.upload_rounded,
-          label: '上传',
-          primary: true,
-          compact: compact,
-          onTap: () => _pickAndUpload(ref),
+        ShadPopover(
+          visible: state.uploadProgress?.isActive == true,
+          closeOnTapOutside: false,
+          popover: (_) =>
+              _UploadProgressPopover(progress: state.uploadProgress),
+          child: _ToolbarButton(
+            icon: Icons.upload_rounded,
+            label: '上传',
+            primary: true,
+            compact: compact,
+            onTap: state.uploadProgress?.isActive == true
+                ? null
+                : () => _pickAndUpload(ref),
+          ),
         ),
         const SizedBox(width: 8),
         _ToolbarControlGroup(
@@ -1677,7 +1683,7 @@ class _FileViewButtons extends StatelessWidget {
 class _ToolbarButton extends StatelessWidget {
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final bool primary;
   final bool grouped;
   final bool selected;
@@ -1696,6 +1702,7 @@ class _ToolbarButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final disabled = onTap == null;
     return ShadTooltip(
       builder: (_) => Text(label),
       child: Padding(
@@ -1713,7 +1720,7 @@ class _ToolbarButton extends StatelessWidget {
             ),
             decoration: BoxDecoration(
               color: primary
-                  ? cs.primary
+                  ? cs.primary.withValues(alpha: disabled ? 0.55 : 1)
                   : selected
                   ? cs.primary.withValues(alpha: 0.14)
                   : grouped
@@ -1759,6 +1766,99 @@ class _ToolbarButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _UploadProgressPopover extends StatelessWidget {
+  final UploadProgress? progress;
+
+  const _UploadProgressPopover({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    final value = progress;
+    if (value == null) return const SizedBox.shrink();
+    final cs = ShadTheme.of(context).colorScheme;
+    final percentage = (value.fraction * 100).round();
+    return Semantics(
+      label: '上传进度',
+      value: '已完成 ${value.processedFiles} / ${value.totalFiles}，$percentage%',
+      child: SizedBox(
+        width: 292,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.upload_rounded, size: 17, color: cs.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '正在上传',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: cs.foreground,
+                    ),
+                  ),
+                ),
+                Text(
+                  '$percentage%',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: cs.primary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ShadProgress(
+              value: value.fraction,
+              minHeight: 8,
+              semanticsLabel: '上传进度',
+              semanticsValue: '$percentage%',
+            ),
+            const SizedBox(height: 9),
+            Text(
+              value.currentFileName.isEmpty
+                  ? '正在整理上传结果'
+                  : value.currentFileName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: cs.foreground),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '已完成 ${value.completedFiles} / ${value.totalFiles} · ${_formatUploadBytes(value.transferredBytes)} / ${_formatUploadBytes(value.totalBytes)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+            ),
+            if (value.failedFiles > 0) ...[
+              const SizedBox(height: 4),
+              Text(
+                '${value.failedFiles} 个文件上传失败，队列会继续处理其余文件。',
+                style: TextStyle(fontSize: 11, color: cs.destructive),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatUploadBytes(int bytes) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    var value = bytes.toDouble();
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    final precision = unit == 0 ? 0 : (value >= 100 ? 0 : 1);
+    return '${value.toStringAsFixed(precision)} ${units[unit]}';
   }
 }
 
@@ -3513,12 +3613,9 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
       _error = null;
     });
     try {
-      final api = ref.read(authProvider.notifier).api;
-      for (final file in files) {
-        if (await file.exists()) {
-          await api.fileUpload(file, parentID: parentID);
-        }
-      }
+      await ref
+          .read(fileProvider.notifier)
+          .uploadLocalFiles(files, parentID: parentID);
       await _load(parentID: _currentParentID);
     } catch (e) {
       setState(() => _error = e.toString());

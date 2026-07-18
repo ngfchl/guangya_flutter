@@ -659,12 +659,14 @@ class GuangyaAPI {
     String? parentID,
     String contentType = 'application/octet-stream',
     int chunkSize = 5 * 1024 * 1024,
+    void Function(int sent, int total)? onProgress,
   }) async {
     final bytes = await file.readAsBytes();
     final name = file.uri.pathSegments.isEmpty
         ? file.path.split(Platform.pathSeparator).last
         : Uri.decodeComponent(file.uri.pathSegments.last);
     final size = bytes.length;
+    onProgress?.call(0, size);
 
     Map<String, dynamic> token;
     if (size < 1024 * 1024) {
@@ -676,8 +678,13 @@ class GuangyaAPI {
         md5: md5Base64,
       );
       final taskID = _findStringDeep(token, ['taskId', 'task_id']);
-      if (taskID == null) return token;
-      return uploadInfo(taskID);
+      if (taskID == null) {
+        onProgress?.call(size, size);
+        return token;
+      }
+      final result = await uploadInfo(taskID);
+      onProgress?.call(size, size);
+      return result;
     }
 
     token = await uploadToken(name: name, fileSize: size, parentID: parentID);
@@ -688,7 +695,9 @@ class GuangyaAPI {
     final canFlash = await checkCanFlashUpload(taskID, gcid);
     if (_findBoolDeep(canFlash, ['canFlashUpload', 'can_flash_upload']) ==
         true) {
-      return uploadInfo(taskID);
+      final result = await uploadInfo(taskID);
+      onProgress?.call(size, size);
+      return result;
     }
 
     final tokenData = _findMapDeep(token, ['data']) ?? token;
@@ -697,8 +706,11 @@ class GuangyaAPI {
       tokenData: tokenData,
       contentType: contentType,
       chunkSize: chunkSize,
+      onProgress: onProgress,
     );
-    return uploadInfo(taskID);
+    final result = await uploadInfo(taskID);
+    onProgress?.call(size, size);
+    return result;
   }
 
   Future<String> _cdnUpload(
@@ -706,6 +718,7 @@ class GuangyaAPI {
     required Map<String, dynamic> tokenData,
     required String contentType,
     required int chunkSize,
+    void Function(int sent, int total)? onProgress,
   }) async {
     final creds =
         _findMapDeep(tokenData, ['creds']) ?? const <String, dynamic>{};
@@ -765,6 +778,7 @@ class GuangyaAPI {
         MapEntry(number, response.headers['etag']?.replaceAll('"', '') ?? ''),
       );
       offset = end;
+      onProgress?.call(offset, bytes.length);
       number += 1;
     }
 

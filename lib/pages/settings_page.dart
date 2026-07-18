@@ -351,7 +351,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     TextEditingController controller, {
     required String placeholder,
   }) => SizedBox(
-    width: 280,
+    width: double.infinity,
     child: ShadInput(controller: controller, placeholder: Text(placeholder)),
   );
 
@@ -359,7 +359,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     TextEditingController controller, {
     String? placeholder,
   }) => SizedBox(
-    width: 116,
+    width: double.infinity,
     child: ShadInput(
       controller: controller,
       placeholder: placeholder == null ? null : Text(placeholder),
@@ -475,37 +475,47 @@ class _SettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 30,
-              height: 30,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: cs.primary.withValues(alpha: 0.11),
-                borderRadius: BorderRadius.circular(7),
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cs.muted.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: cs.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.11),
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Icon(icon, size: 16, color: cs.primary),
               ),
-              child: Icon(icon, size: 16, color: cs.primary),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: cs.foreground,
+              const SizedBox(width: 10),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: cs.foreground,
+                ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        const ShadSeparator.horizontal(),
-        const SizedBox(height: 4),
-        child,
-      ],
+            ],
+          ),
+          const SizedBox(height: 12),
+          const ShadSeparator.horizontal(),
+          const SizedBox(height: 4),
+          child,
+        ],
+      ),
     );
   }
 }
@@ -532,22 +542,16 @@ class _SettingsRow extends StatelessWidget {
         Text(label, style: TextStyle(fontSize: 13, color: cs.foreground)),
       ],
     );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 470) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [labelWidget, const SizedBox(height: 8), child],
-            ),
-          );
-        }
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Row(children: [labelWidget, const Spacer(), child]),
-        );
-      },
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          labelWidget,
+          const SizedBox(height: 8),
+          SizedBox(width: double.infinity, child: child),
+        ],
+      ),
     );
   }
 }

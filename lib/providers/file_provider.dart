@@ -60,6 +60,36 @@ extension FileSortExt on FileSort {
 
 enum SortDirection { ascending, descending }
 
+class UploadProgress {
+  final int totalFiles;
+  final int completedFiles;
+  final int failedFiles;
+  final int totalBytes;
+  final int transferredBytes;
+  final String currentFileName;
+  final bool isActive;
+
+  const UploadProgress({
+    required this.totalFiles,
+    required this.completedFiles,
+    required this.failedFiles,
+    required this.totalBytes,
+    required this.transferredBytes,
+    required this.currentFileName,
+    required this.isActive,
+  });
+
+  int get processedFiles => completedFiles + failedFiles;
+
+  double get fraction {
+    if (totalBytes > 0) {
+      return (transferredBytes / totalBytes).clamp(0.0, 1.0);
+    }
+    if (totalFiles == 0) return 0;
+    return (processedFiles / totalFiles).clamp(0.0, 1.0);
+  }
+}
+
 enum WorkspaceSection {
   files('全部', 'folder'),
   recentViewed('最近查看', 'clock'),
@@ -93,6 +123,7 @@ class FileState {
   final Set<String> selectedIDs;
   final List<CloudFile>? clipboard;
   final bool clipboardIsMove;
+  final UploadProgress? uploadProgress;
 
   const FileState({
     this.section = WorkspaceSection.files,
@@ -109,6 +140,7 @@ class FileState {
     this.selectedIDs = const {},
     this.clipboard,
     this.clipboardIsMove = false,
+    this.uploadProgress,
   });
 
   bool get hasSelection => selectedIDs.isNotEmpty;
@@ -132,6 +164,8 @@ class FileState {
     List<CloudFile>? clipboard,
     bool clearClipboard = false,
     bool? clipboardIsMove,
+    UploadProgress? uploadProgress,
+    bool clearUploadProgress = false,
   }) {
     return FileState(
       section: section ?? this.section,
@@ -148,6 +182,9 @@ class FileState {
       selectedIDs: selectedIDs ?? this.selectedIDs,
       clipboard: clearClipboard ? null : (clipboard ?? this.clipboard),
       clipboardIsMove: clipboardIsMove ?? this.clipboardIsMove,
+      uploadProgress: clearUploadProgress
+          ? null
+          : (uploadProgress ?? this.uploadProgress),
     );
   }
 }
@@ -1048,19 +1085,99 @@ class FileNotifier extends StateNotifier<FileState> {
   Future<void> uploadLocalFiles(List<File> files, {String? parentID}) async {
     if (_api == null || files.isEmpty) return;
     final targetParentID = parentID ?? _currentParentID;
-    state = state.copyWith(statusMessage: '正在上传 ${files.length} 个文件…');
+    final uploadFiles = <File>[];
+    var totalBytes = 0;
+    for (final file in files) {
+      if (!await file.exists()) continue;
+      uploadFiles.add(file);
+      totalBytes += await file.length();
+    }
+    if (uploadFiles.isEmpty) {
+      state = state.copyWith(errorMessage: '没有可上传的本地文件');
+      return;
+    }
+
+    UploadProgress progress({
+      required int completed,
+      required int failed,
+      required int transferred,
+      required String currentName,
+      required bool active,
+    }) => UploadProgress(
+      totalFiles: uploadFiles.length,
+      completedFiles: completed,
+      failedFiles: failed,
+      totalBytes: totalBytes,
+      transferredBytes: transferred,
+      currentFileName: currentName,
+      isActive: active,
+    );
+
+    state = state.copyWith(
+      statusMessage: '正在上传 ${uploadFiles.length} 个文件…',
+      uploadProgress: progress(
+        completed: 0,
+        failed: 0,
+        transferred: 0,
+        currentName: uploadFiles.first.uri.pathSegments.last,
+        active: true,
+      ),
+    );
     var completed = 0;
-    try {
-      for (final file in files) {
-        if (!await file.exists()) continue;
-        state = state.copyWith(
-          statusMessage:
-              '正在上传 ${completed + 1}/${files.length}：${file.uri.pathSegments.last}',
+    var failed = 0;
+    var completedBytes = 0;
+    for (final file in uploadFiles) {
+      final fileSize = await file.length();
+      final fileName = file.uri.pathSegments.last;
+      state = state.copyWith(
+        statusMessage:
+            '正在上传 ${completed + failed + 1}/${uploadFiles.length}：$fileName',
+        uploadProgress: progress(
+          completed: completed,
+          failed: failed,
+          transferred: completedBytes,
+          currentName: fileName,
+          active: true,
+        ),
+      );
+      try {
+        await _api!.fileUpload(
+          file,
+          parentID: targetParentID,
+          onProgress: (sent, total) {
+            final currentTransferred =
+                completedBytes + sent.clamp(0, total == 0 ? 0 : total).toInt();
+            state = state.copyWith(
+              uploadProgress: progress(
+                completed: completed,
+                failed: failed,
+                transferred: currentTransferred,
+                currentName: fileName,
+                active: true,
+              ),
+            );
+          },
         );
-        await _api!.fileUpload(file, parentID: targetParentID);
         completed += 1;
+        completedBytes += fileSize;
+      } catch (_) {
+        failed += 1;
+        completedBytes += fileSize;
       }
-      state = state.copyWith(statusMessage: '已上传 $completed 个文件');
+    }
+    state = state.copyWith(
+      statusMessage: failed == 0
+          ? '已上传 $completed 个文件'
+          : '已上传 $completed 个文件，失败 $failed 个',
+      uploadProgress: progress(
+        completed: completed,
+        failed: failed,
+        transferred: completedBytes,
+        currentName: '',
+        active: false,
+      ),
+    );
+    try {
       await _invalidateFolderCaches(targetParentID);
       await loadFiles(parentID: _currentParentID);
     } catch (e) {
