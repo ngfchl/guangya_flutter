@@ -37,6 +37,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   String? _tmdbError;
   List<Map<String, dynamic>> _tmdbResults = [];
   bool _backupBusy = false;
+  _MediaWork? _detailWork;
   final _apiKeyController = TextEditingController();
   final _searchController = TextEditingController();
 
@@ -350,11 +351,26 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     if (_tmdbSearching || _tmdbResults.isNotEmpty || _tmdbError != null) {
       return _tmdbResultPanel(context);
     }
-    final items = state.visibleItems;
+    final works = _MediaWork.fromItems(state.visibleItems);
     if (state.selectedLibrary == null) {
       return _mainEmpty(context, '还没有媒体库', '从云盘根目录或当前目录创建一个媒体库');
     }
-    final content = items.isEmpty
+    if (_detailWork != null) {
+      final current = works
+          .where((work) => work.key == _detailWork!.key)
+          .firstOrNull;
+      return _MediaDetailPanel(
+        work: current ?? _detailWork!,
+        onBack: () => setState(() => _detailWork = null),
+        onDownload: (item) =>
+            ref.read(fileProvider.notifier).downloadFile(item.file),
+        onRescan: state.isScanning
+            ? null
+            : () =>
+                  ref.read(mediaLibraryProvider.notifier).scanSelectedLibrary(),
+      );
+    }
+    final content = works.isEmpty
         ? _mainEmpty(
             context,
             state.isScanning ? '正在扫描媒体库' : '没有扫描结果',
@@ -362,17 +378,28 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           )
         : LayoutBuilder(
             builder: (context, constraints) {
-              final columns = (constraints.maxWidth / 220).floor().clamp(2, 6);
+              final columns = (constraints.maxWidth / 154).floor().clamp(2, 7);
               return GridView.builder(
+                padding: const EdgeInsets.only(bottom: 10),
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: columns,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  childAspectRatio: 1.8,
+                  mainAxisSpacing: 18,
+                  crossAxisSpacing: 14,
+                  childAspectRatio: 0.52,
                 ),
-                itemCount: items.length,
-                itemBuilder: (context, index) =>
-                    _MediaItemTile(item: items[index]),
+                itemCount: works.length,
+                itemBuilder: (context, index) => _MediaPosterTile(
+                  work: works[index],
+                  onOpen: () => setState(() => _detailWork = works[index]),
+                  onDownload: () => ref
+                      .read(fileProvider.notifier)
+                      .downloadFile(works[index].primary.file),
+                  onRescan: state.isScanning
+                      ? null
+                      : () => ref
+                            .read(mediaLibraryProvider.notifier)
+                            .scanSelectedLibrary(),
+                ),
               );
             },
           );
@@ -1223,35 +1250,312 @@ class _LibraryRow extends StatelessWidget {
   }
 }
 
-class _MediaItemTile extends ConsumerWidget {
-  final MediaLibraryItem item;
+class _MediaWork {
+  final String key;
+  final MediaLibraryItem primary;
+  final List<MediaLibraryItem> resources;
 
-  const _MediaItemTile({required this.item});
+  const _MediaWork({
+    required this.key,
+    required this.primary,
+    required this.resources,
+  });
+
+  static List<_MediaWork> fromItems(Iterable<MediaLibraryItem> items) {
+    final grouped = <String, List<MediaLibraryItem>>{};
+    for (final item in items) {
+      final title = item.title.toLowerCase().replaceAll(
+        RegExp(r'[^a-z0-9\u4e00-\u9fff]'),
+        '',
+      );
+      final kind = item.mediaKind?.name ?? 'unknown';
+      final key = item.tmdbID == null
+          ? '$kind:$title:${item.year}'
+          : '$kind:tmdb:${item.tmdbID}';
+      grouped.putIfAbsent(key, () => []).add(item);
+    }
+    return grouped.entries.map((entry) {
+      final resources = entry.value
+        ..sort(
+          (a, b) =>
+              a.file.name.toLowerCase().compareTo(b.file.name.toLowerCase()),
+        );
+      final primary = resources.reduce((best, candidate) {
+        final bestScore =
+            (best.hasChineseAudio ? 2 : 0) +
+            (best.hasChineseSubtitle ? 1 : 0) +
+            (best.posterPath?.isNotEmpty == true ? 1 : 0);
+        final candidateScore =
+            (candidate.hasChineseAudio ? 2 : 0) +
+            (candidate.hasChineseSubtitle ? 1 : 0) +
+            (candidate.posterPath?.isNotEmpty == true ? 1 : 0);
+        return candidateScore > bestScore ? candidate : best;
+      });
+      return _MediaWork(key: entry.key, primary: primary, resources: resources);
+    }).toList()..sort(
+      (a, b) => a.primary.title.toLowerCase().compareTo(
+        b.primary.title.toLowerCase(),
+      ),
+    );
+  }
+}
+
+class _MediaPosterTile extends ConsumerWidget {
+  final _MediaWork work;
+  final VoidCallback onOpen;
+  final VoidCallback onDownload;
+  final VoidCallback? onRescan;
+
+  const _MediaPosterTile({
+    required this.work,
+    required this.onOpen,
+    required this.onDownload,
+    this.onRescan,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = ShadTheme.of(context).colorScheme;
-    final posterURL = item.posterPath == null || item.posterPath!.isEmpty
-        ? null
-        : 'https://image.tmdb.org/t/p/w342${item.posterPath}';
+    final item = work.primary;
     final isSeries = item.mediaKind == TMDBMediaKind.tv;
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: cs.card,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: cs.border),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 54,
-            height: 76,
-            decoration: BoxDecoration(
-              color: cs.muted,
-              borderRadius: BorderRadius.circular(6),
+    final posterURL = item.posterPath?.isNotEmpty == true
+        ? 'https://image.tmdb.org/t/p/w342${item.posterPath}'
+        : null;
+    return ShadContextMenuRegion(
+      items: [
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.info, size: 16),
+          onPressed: onOpen,
+          child: const Text('查看详情'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.download, size: 16),
+          onPressed: onDownload,
+          child: const Text('打开资源'),
+        ),
+        const Divider(height: 8),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.refreshCw, size: 16),
+          onPressed: onRescan,
+          child: const Text('重新扫描媒体库'),
+        ),
+      ],
+      child: Semantics(
+        button: true,
+        label: '${item.title}，${work.resources.length} 个资源版本',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onOpen,
+            borderRadius: BorderRadius.circular(6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          color: cs.muted,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: cs.border),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: FutureBuilder<Uint8List?>(
+                          future: ref
+                              .read(mediaLibraryProvider.notifier)
+                              .posterBytes(item),
+                          builder: (context, snapshot) {
+                            if (snapshot.data != null) {
+                              return Image.memory(
+                                snapshot.data!,
+                                fit: BoxFit.cover,
+                              );
+                            }
+                            if (posterURL != null) {
+                              return Image.network(
+                                posterURL,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) =>
+                                    _posterFallback(cs, isSeries),
+                              );
+                            }
+                            return _posterFallback(cs, isSeries);
+                          },
+                        ),
+                      ),
+                      if (work.resources.length > 1)
+                        Positioned(
+                          right: 7,
+                          bottom: 7,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.72),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              isSeries
+                                  ? '${work.resources.length} 集'
+                                  : '${work.resources.length} 版本',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  item.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: cs.foreground,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${item.year.isEmpty ? '未知年份' : item.year} · ${isSeries ? '剧集' : '电影'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                ),
+              ],
             ),
-            clipBehavior: Clip.antiAlias,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _posterFallback(ShadColorScheme cs, bool isSeries) => Center(
+    child: Icon(
+      isSeries ? Icons.tv_rounded : Icons.movie_rounded,
+      color: cs.mutedForeground,
+      size: 34,
+    ),
+  );
+}
+
+class _MediaDetailPanel extends ConsumerStatefulWidget {
+  final _MediaWork work;
+  final VoidCallback onBack;
+  final ValueChanged<MediaLibraryItem> onDownload;
+  final VoidCallback? onRescan;
+
+  const _MediaDetailPanel({
+    required this.work,
+    required this.onBack,
+    required this.onDownload,
+    this.onRescan,
+  });
+
+  @override
+  ConsumerState<_MediaDetailPanel> createState() => _MediaDetailPanelState();
+}
+
+class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
+  late MediaLibraryItem _resource = widget.work.primary;
+
+  @override
+  void didUpdateWidget(covariant _MediaDetailPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.work.resources.any((item) => item.id == _resource.id)) {
+      _resource = widget.work.primary;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final item = widget.work.primary;
+    final isSeries = item.mediaKind == TMDBMediaKind.tv;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: widget.onBack,
+              leading: const Icon(Icons.arrow_back_rounded, size: 16),
+              child: const Text('返回海报墙'),
+            ),
+            const Spacer(),
+            ShadButton.outline(
+              onPressed: widget.onRescan,
+              leading: const Icon(Icons.refresh_rounded, size: 16),
+              child: const Text('重新扫描'),
+            ),
+            const SizedBox(width: 8),
+            ShadButton(
+              onPressed: () => widget.onDownload(_resource),
+              leading: const Icon(Icons.play_arrow_rounded, size: 16),
+              child: const Text('打开资源'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 700;
+              final information = _detailInformation(context, item, isSeries);
+              final resources = _resourceList(context, cs);
+              return SingleChildScrollView(
+                child: compact
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          information,
+                          const SizedBox(height: 18),
+                          resources,
+                        ],
+                      )
+                    : Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 3, child: information),
+                          const SizedBox(width: 28),
+                          SizedBox(width: 310, child: resources),
+                        ],
+                      ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _detailInformation(
+    BuildContext context,
+    MediaLibraryItem item,
+    bool isSeries,
+  ) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final posterURL = item.posterPath?.isNotEmpty == true
+        ? 'https://image.tmdb.org/t/p/w342${item.posterPath}'
+        : null;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 180,
+          height: 270,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
             child: FutureBuilder<Uint8List?>(
               future: ref.read(mediaLibraryProvider.notifier).posterBytes(item),
               builder: (context, snapshot) {
@@ -1262,68 +1566,189 @@ class _MediaItemTile extends ConsumerWidget {
                   return Image.network(
                     posterURL,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => Icon(
-                      isSeries ? Icons.tv_rounded : Icons.movie_rounded,
-                      size: 24,
-                      color: cs.mutedForeground,
-                    ),
+                    errorBuilder: (_, _, _) =>
+                        _detailPosterFallback(cs, isSeries),
                   );
                 }
-                return Icon(
-                  isSeries ? Icons.tv_rounded : Icons.movie_rounded,
-                  size: 24,
-                  color: cs.mutedForeground,
-                );
+                return _detailPosterFallback(cs, isSeries);
               },
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        item.year.isEmpty
-                            ? item.title
-                            : '${item.title} (${item.year})',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: cs.foreground,
-                        ),
-                      ),
-                    ),
-                    if (item.isMatched)
-                      ShadBadge(child: Text(isSeries ? '剧集' : '电影')),
-                  ],
+        ),
+        const SizedBox(width: 18),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                item.title,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: cs.foreground,
                 ),
-                const SizedBox(height: 4),
+              ),
+              if (item.originalTitle.isNotEmpty &&
+                  item.originalTitle != item.title) ...[
+                const SizedBox(height: 3),
                 Text(
-                  item.isMatched
-                      ? (item.overview.isEmpty ? 'TMDB 已识别' : item.overview)
-                      : '未识别，可在 TMDB 工具中重新匹配',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  item.file.cloudPath,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10, color: cs.mutedForeground),
+                  item.originalTitle,
+                  style: TextStyle(fontSize: 13, color: cs.mutedForeground),
                 ),
               ],
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  ShadBadge(child: Text(isSeries ? '剧集' : '电影')),
+                  if (item.year.isNotEmpty)
+                    ShadBadge.outline(child: Text(item.year)),
+                  if (item.hasChineseAudio)
+                    const ShadBadge.outline(child: Text('中文音轨')),
+                  if (item.hasChineseSubtitle)
+                    const ShadBadge.outline(child: Text('中文字幕')),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                item.overview.isEmpty ? '暂无影视简介。' : item.overview,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.55,
+                  color: cs.mutedForeground,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _metadataRow(context, 'TMDB', item.tmdbID?.toString() ?? '未匹配'),
+              _metadataRow(context, '资源数', '${widget.work.resources.length}'),
+              _metadataRow(context, '当前文件', _resource.file.name),
+              _metadataRow(context, '文件大小', _resource.file.formattedSize),
+              _metadataRow(context, '云盘位置', _resource.file.cloudPath),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _detailPosterFallback(ShadColorScheme cs, bool isSeries) => Container(
+    color: cs.muted,
+    child: Center(
+      child: Icon(
+        isSeries ? Icons.tv_rounded : Icons.movie_rounded,
+        color: cs.mutedForeground,
+        size: 42,
+      ),
+    ),
+  );
+
+  Widget _metadataRow(BuildContext context, String label, String value) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 64,
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(fontSize: 12, color: cs.foreground),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _resourceList(BuildContext context, ShadColorScheme cs) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          widget.work.resources.length > 1
+              ? '资源版本 (${widget.work.resources.length})'
+              : '媒体资源',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: cs.foreground,
+          ),
+        ),
+        const SizedBox(height: 8),
+        ...widget.work.resources.map((resource) {
+          final selected = resource.id == _resource.id;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => setState(() => _resource = resource),
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? cs.primary.withValues(alpha: 0.10)
+                        : cs.card,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: selected ? cs.primary : cs.border,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              resource.file.name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: cs.foreground,
+                              ),
+                            ),
+                          ),
+                          if (selected)
+                            Icon(
+                              Icons.check_circle_rounded,
+                              size: 16,
+                              color: cs.primary,
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${resource.file.formattedSize} · ${resource.file.modifiedAt}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      ],
     );
   }
 }
