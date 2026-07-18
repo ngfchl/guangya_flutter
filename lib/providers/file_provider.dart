@@ -137,6 +137,7 @@ class FileState {
 
 class FileNotifier extends StateNotifier<FileState> {
   GuangyaAPI? _api;
+  var _detailGeneration = 0;
 
   FileNotifier() : super(const FileState());
 
@@ -159,12 +160,14 @@ class FileNotifier extends StateNotifier<FileState> {
 
   Future<void> loadFiles({String? parentID}) async {
     if (_api == null) return;
+    final generation = ++_detailGeneration;
     final resolvedParentID = parentID ?? _currentParentID;
     final cacheKey =
         '${state.section.name}:${resolvedParentID ?? 'root'}:${state.currentPage}:${state.pageSize}';
     final cached = _readCachedFiles(cacheKey);
     if (cached != null) {
       state = state.copyWith(files: cached, clearError: true);
+      unawaited(_enrichFolderSizes(cached, generation));
       return;
     }
     state = state.copyWith(isLoading: true, clearError: true);
@@ -175,6 +178,7 @@ class FileNotifier extends StateNotifier<FileState> {
       final totalPages = _extractTotalPages(result, extracted.length);
       state = state.copyWith(files: extracted, totalPages: totalPages);
       await _writeCachedFiles(cacheKey, extracted);
+      unawaited(_enrichFolderSizes(extracted, generation));
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
     } finally {
@@ -220,6 +224,124 @@ class FileNotifier extends StateNotifier<FileState> {
     };
     if (cache.length > 80) cache.remove(cache.keys.first);
     await StorageManager.set(StorageKeys.fileListCache, cache);
+  }
+
+  Future<void> _enrichFolderSizes(List<CloudFile> files, int generation) async {
+    if (_api == null || files.isEmpty) return;
+    final cache = _readMetadataCache();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final ttl = Duration(
+      minutes:
+          (int.tryParse(
+                    StorageManager.get<String>(
+                          StorageKeys.fileCacheTTLMinutes,
+                        ) ??
+                        '3',
+                  ) ??
+                  3)
+              .clamp(1, 60),
+    ).inMilliseconds;
+    final pending = <CloudFile>[];
+    final known = <String, int>{};
+    for (final file in files.where((file) => file.isDirectory)) {
+      final entry = cache[file.id];
+      final cachedAt = int.tryParse(entry?['cachedAt']?.toString() ?? '');
+      final cachedSize = int.tryParse(entry?['size']?.toString() ?? '');
+      if (cachedAt != null && cachedSize != null && now - cachedAt <= ttl) {
+        known[file.id] = cachedSize;
+      } else {
+        pending.add(file);
+      }
+    }
+
+    void apply(Map<String, int> sizes) {
+      if (generation != _detailGeneration || sizes.isEmpty) return;
+      final updated = state.files
+          .map(
+            (file) => sizes.containsKey(file.id)
+                ? file.copyWith(size: sizes[file.id])
+                : file,
+          )
+          .toList();
+      state = state.copyWith(files: updated);
+    }
+
+    apply(known);
+    if (pending.isEmpty) return;
+
+    final queue = List<CloudFile>.from(pending);
+    const concurrency = 6;
+    final resolved = <String, int>{};
+    await Future.wait(
+      List.generate(concurrency, (_) async {
+        while (queue.isNotEmpty) {
+          final file = queue.removeLast();
+          try {
+            final detail = await _api!.fsDetail(file.id);
+            final detailFile = _extractFiles(detail)
+                .cast<CloudFile?>()
+                .firstWhere(
+                  (candidate) => candidate?.id == file.id,
+                  orElse: () => null,
+                );
+            final size =
+                detailFile?.size ??
+                _findIntDeep(detail, const [
+                  'size',
+                  'fileSize',
+                  'resSize',
+                  'totalSize',
+                  'dirSize',
+                  'folderSize',
+                ]);
+            if (size == null) continue;
+            cache[file.id] = {'size': size, 'cachedAt': now};
+            resolved[file.id] = size;
+            apply({file.id: size});
+          } catch (_) {
+            // A missing detail must not block the rest of the visible page.
+          }
+        }
+      }),
+    );
+    if (resolved.isNotEmpty) {
+      await StorageManager.set(StorageKeys.fileMetadataCache, cache);
+    }
+  }
+
+  Map<String, Map<String, dynamic>> _readMetadataCache() {
+    final raw = StorageManager.get<dynamic>(StorageKeys.fileMetadataCache);
+    if (raw is! Map) return <String, Map<String, dynamic>>{};
+    return raw.map(
+      (key, value) => MapEntry(
+        key.toString(),
+        value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{},
+      ),
+    );
+  }
+
+  int? _findIntDeep(Map<String, dynamic> value, List<String> keys) {
+    for (final entry in value.entries) {
+      if (keys.contains(entry.key)) {
+        final parsed = int.tryParse(entry.value?.toString() ?? '');
+        if (parsed != null) return parsed;
+      }
+      if (entry.value is Map) {
+        final found = _findIntDeep(
+          Map<String, dynamic>.from(entry.value),
+          keys,
+        );
+        if (found != null) return found;
+      } else if (entry.value is List) {
+        for (final child in entry.value as List) {
+          if (child is Map) {
+            final found = _findIntDeep(Map<String, dynamic>.from(child), keys);
+            if (found != null) return found;
+          }
+        }
+      }
+    }
+    return null;
   }
 
   Future<Map<String, dynamic>> _fetchFiles(String? parentID) async {

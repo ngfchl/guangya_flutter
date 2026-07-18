@@ -93,6 +93,33 @@ class CloudFile {
     return _formatBytes(size!);
   }
 
+  CloudFile copyWith({
+    String? id,
+    String? name,
+    bool? isDirectory,
+    int? size,
+    bool clearSize = false,
+    String? gcid,
+    int? subDirectoryCount,
+    int? subFileCount,
+    String? modifiedAt,
+    String? cloudPath,
+    int? fileType,
+  }) {
+    return CloudFile(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      isDirectory: isDirectory ?? this.isDirectory,
+      size: clearSize ? null : (size ?? this.size),
+      gcid: gcid ?? this.gcid,
+      subDirectoryCount: subDirectoryCount ?? this.subDirectoryCount,
+      subFileCount: subFileCount ?? this.subFileCount,
+      modifiedAt: modifiedAt ?? this.modifiedAt,
+      cloudPath: cloudPath ?? this.cloudPath,
+      fileType: fileType ?? this.fileType,
+    );
+  }
+
   static String _formatBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';

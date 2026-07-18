@@ -168,19 +168,18 @@ class FileListTile extends StatelessWidget {
                 ),
               ),
 
-              // File size
-              if (!file.isDirectory)
-                SizedBox(
-                  width: 80,
-                  child: Text(
-                    file.formattedSize,
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: theme.colorScheme.mutedForeground,
-                    ),
+              // Folder sizes are enriched in the background just like files.
+              SizedBox(
+                width: 80,
+                child: Text(
+                  file.formattedSize,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: theme.colorScheme.mutedForeground,
                   ),
                 ),
+              ),
 
               const SizedBox(width: 12),
 

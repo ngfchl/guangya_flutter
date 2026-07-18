@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -8,6 +9,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../app/app_theme.dart';
+import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
@@ -15,6 +17,7 @@ import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/breadcrumb_bar.dart';
 import '../widgets/file_list_tile.dart';
+import '../widgets/file_icon.dart';
 import '../widgets/side_panel.dart';
 import '../widgets/sort_menu.dart';
 import 'media_library_page.dart';
@@ -25,6 +28,8 @@ import 'workspace_tools_page.dart';
 enum WorkspaceMode { cloud, media }
 
 enum _PaneLayoutMode { single, dual }
+
+enum _FileViewMode { list, columns }
 
 enum _PaneIdentity { primary, secondary }
 
@@ -789,6 +794,7 @@ class _CloudWorkspace extends ConsumerStatefulWidget {
 
 class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
   _PaneLayoutMode _paneMode = _PaneLayoutMode.dual;
+  _FileViewMode _primaryViewMode = _FileViewMode.list;
 
   @override
   Widget build(BuildContext context) {
@@ -819,16 +825,29 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                                     child: _PrimaryFilePane(
                                       title: '左侧面板',
                                       state: state,
+                                      viewMode: _primaryViewMode,
+                                      onViewModeChanged: (mode) => setState(
+                                        () => _primaryViewMode = mode,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 10),
                                   const Expanded(child: _SecondaryFilePane()),
                                 ],
                               )
-                            : _PrimaryFilePane(title: '文件列表', state: state)
+                            : _PrimaryFilePane(
+                                title: '文件列表',
+                                state: state,
+                                viewMode: _primaryViewMode,
+                                onViewModeChanged: (mode) =>
+                                    setState(() => _primaryViewMode = mode),
+                              )
                       : _PrimaryFilePane(
                           title: state.section.label,
                           state: state,
+                          viewMode: _primaryViewMode,
+                          onViewModeChanged: (mode) =>
+                              setState(() => _primaryViewMode = mode),
                         ),
                 ),
               ],
@@ -1036,8 +1055,15 @@ class _ToolbarButton extends StatelessWidget {
 class _PrimaryFilePane extends ConsumerWidget {
   final String title;
   final FileState state;
+  final _FileViewMode viewMode;
+  final ValueChanged<_FileViewMode> onViewModeChanged;
 
-  const _PrimaryFilePane({required this.title, required this.state});
+  const _PrimaryFilePane({
+    required this.title,
+    required this.state,
+    required this.viewMode,
+    required this.onViewModeChanged,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1068,11 +1094,11 @@ class _PrimaryFilePane extends ConsumerWidget {
           ? null
           : notifier.nextPage,
       onPageSizeChanged: notifier.setPageSize,
+      trailing: _PaneViewToggle(value: viewMode, onChanged: onViewModeChanged),
       child: RefreshIndicator(
         onRefresh: () => notifier.loadFiles(),
-        child: ListView.builder(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.zero,
+        child: _FilePaneCollection(
+          viewMode: viewMode,
           itemCount: files.length,
           itemBuilder: (context, index) {
             final file = files[index];
@@ -1100,13 +1126,171 @@ class _PrimaryFilePane extends ConsumerWidget {
                   ? notifier.restoreFiles([file])
                   : notifier.deleteFiles([file]),
             );
-            return Draggable<_DraggedCloudFiles>(
+            final item = Draggable<_DraggedCloudFiles>(
               data: _DraggedCloudFiles([file], _PaneIdentity.primary),
               feedback: _DragFeedback(label: file.name),
               childWhenDragging: Opacity(opacity: 0.35, child: tile),
               child: tile,
             );
+            if (viewMode == _FileViewMode.list) return item;
+            return Draggable<_DraggedCloudFiles>(
+              data: _DraggedCloudFiles([file], _PaneIdentity.primary),
+              feedback: _DragFeedback(label: file.name),
+              childWhenDragging: Opacity(
+                opacity: 0.35,
+                child: _FileGridCard(
+                  file: file,
+                  isSelected: selected,
+                  onSelect: () {
+                    if (file.isDirectory && !selected) {
+                      notifier.navigateToFolder(file);
+                    } else {
+                      notifier.toggleSelection(file.id);
+                    }
+                  },
+                  onOpen: file.isDirectory
+                      ? () => notifier.navigateToFolder(file)
+                      : () => notifier.downloadFile(file),
+                ),
+              ),
+              child: _FileGridCard(
+                file: file,
+                isSelected: selected,
+                onSelect: () {
+                  if (file.isDirectory && !selected) {
+                    notifier.navigateToFolder(file);
+                  } else {
+                    notifier.toggleSelection(file.id);
+                  }
+                },
+                onOpen: file.isDirectory
+                    ? () => notifier.navigateToFolder(file)
+                    : () => notifier.downloadFile(file),
+              ),
+            );
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _PaneViewToggle extends StatelessWidget {
+  final _FileViewMode value;
+  final ValueChanged<_FileViewMode> onChanged;
+
+  const _PaneViewToggle({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final columns = value == _FileViewMode.columns;
+    return _PaneIconButton(
+      icon: columns ? Icons.view_list_rounded : Icons.grid_view_rounded,
+      tooltip: columns ? '切换列表模式' : '切换分栏模式',
+      onTap: () =>
+          onChanged(columns ? _FileViewMode.list : _FileViewMode.columns),
+    );
+  }
+}
+
+class _FilePaneCollection extends StatelessWidget {
+  final _FileViewMode viewMode;
+  final int itemCount;
+  final IndexedWidgetBuilder itemBuilder;
+
+  const _FilePaneCollection({
+    required this.viewMode,
+    required this.itemCount,
+    required this.itemBuilder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (viewMode == _FileViewMode.list) {
+      return ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.zero,
+        itemCount: itemCount,
+        itemBuilder: itemBuilder,
+      );
+    }
+    return GridView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(10),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 168,
+        mainAxisExtent: 132,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+      ),
+      itemCount: itemCount,
+      itemBuilder: itemBuilder,
+    );
+  }
+}
+
+class _FileGridCard extends StatelessWidget {
+  final CloudFile file;
+  final bool isSelected;
+  final VoidCallback onSelect;
+  final VoidCallback onOpen;
+
+  const _FileGridCard({
+    required this.file,
+    required this.onSelect,
+    required this.onOpen,
+    this.isSelected = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      label:
+          '${file.name}，${file.isDirectory ? '文件夹' : file.typeName}，${file.formattedSize}',
+      child: GestureDetector(
+        onTap: onSelect,
+        onDoubleTap: onOpen,
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? cs.primary.withValues(alpha: 0.12)
+                : Colors.white.withValues(alpha: 0.34),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected
+                  ? cs.primary.withValues(alpha: 0.65)
+                  : cs.border.withValues(alpha: 0.58),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: 38, height: 38, child: FileIcon(file: file)),
+              const Spacer(),
+              Text(
+                file.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: cs.foreground,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                file.isDirectory && file.subFileCount != null
+                    ? '${file.formattedSize} · ${file.subFileCount} 项'
+                    : file.formattedSize,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1128,6 +1312,8 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
   var _page = 0;
   var _pageSize = 50;
   var _totalPages = 1;
+  var _viewMode = _FileViewMode.list;
+  var _detailGeneration = 0;
 
   @override
   void initState() {
@@ -1136,6 +1322,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
   }
 
   Future<void> _load({String? parentID}) async {
+    final generation = ++_detailGeneration;
     setState(() {
       _loading = true;
       _error = null;
@@ -1152,11 +1339,93 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
         _files = files;
         _totalPages = _extractTotalPages(result, files.length);
       });
+      unawaited(_enrichFolderSizes(files, generation));
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _enrichFolderSizes(List<CloudFile> files, int generation) async {
+    final cache = _readFolderSizeCache();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final ttl = Duration(
+      minutes:
+          (int.tryParse(
+                    StorageManager.get<String>(
+                          StorageKeys.fileCacheTTLMinutes,
+                        ) ??
+                        '3',
+                  ) ??
+                  3)
+              .clamp(1, 60),
+    ).inMilliseconds;
+    final queue = <CloudFile>[];
+    final cached = <String, int>{};
+    for (final file in files.where((file) => file.isDirectory)) {
+      final entry = cache[file.id];
+      final cachedAt = int.tryParse(entry?['cachedAt']?.toString() ?? '');
+      final size = int.tryParse(entry?['size']?.toString() ?? '');
+      if (cachedAt != null && size != null && now - cachedAt <= ttl) {
+        cached[file.id] = size;
+      } else {
+        queue.add(file);
+      }
+    }
+
+    void apply(Map<String, int> sizes) {
+      if (!mounted || generation != _detailGeneration || sizes.isEmpty) return;
+      setState(() {
+        _files = _files
+            .map(
+              (file) => sizes.containsKey(file.id)
+                  ? file.copyWith(size: sizes[file.id])
+                  : file,
+            )
+            .toList();
+      });
+    }
+
+    apply(cached);
+    if (queue.isEmpty) return;
+    final api = ref.read(authProvider.notifier).api;
+    final resolved = <String, int>{};
+    await Future.wait(
+      List.generate(6, (_) async {
+        while (queue.isNotEmpty) {
+          final folder = queue.removeLast();
+          try {
+            final detail = await api.fsDetail(folder.id);
+            final size = _extractFiles(detail)
+                .where((file) => file.id == folder.id)
+                .map((file) => file.size)
+                .whereType<int>()
+                .firstOrNull;
+            if (size == null) continue;
+            cache[folder.id] = {'size': size, 'cachedAt': now};
+            resolved[folder.id] = size;
+            apply({folder.id: size});
+          } catch (_) {
+            // Continue enriching the visible folders after an individual failure.
+          }
+        }
+      }),
+    );
+    if (resolved.isNotEmpty) {
+      await StorageManager.set(StorageKeys.fileMetadataCache, cache);
+    }
+  }
+
+  Map<String, Map<String, dynamic>> _readFolderSizeCache() {
+    final raw = StorageManager.get<dynamic>(StorageKeys.fileMetadataCache);
+    if (raw is! Map) return <String, Map<String, dynamic>>{};
+    return raw.map(
+      (key, value) => MapEntry(
+        key.toString(),
+        value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{},
+      ),
+    );
   }
 
   String? get _currentParentID => _path.isEmpty ? null : _path.last.id;
@@ -1257,11 +1526,14 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
         });
         _load(parentID: _currentParentID);
       },
+      trailing: _PaneViewToggle(
+        value: _viewMode,
+        onChanged: (mode) => setState(() => _viewMode = mode),
+      ),
       child: RefreshIndicator(
         onRefresh: () => _load(parentID: _currentParentID),
-        child: ListView.builder(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.zero,
+        child: _FilePaneCollection(
+          viewMode: _viewMode,
           itemCount: _files.length,
           itemBuilder: (context, index) {
             final file = _files[index];
@@ -1300,11 +1572,36 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               onDelete: () =>
                   ref.read(fileProvider.notifier).deleteFiles([file]),
             );
+            if (_viewMode == _FileViewMode.list) {
+              return Draggable<_DraggedCloudFiles>(
+                data: _DraggedCloudFiles([file], _PaneIdentity.secondary),
+                feedback: _DragFeedback(label: file.name),
+                childWhenDragging: Opacity(opacity: 0.35, child: row),
+                child: row,
+              );
+            }
+            void open() {
+              if (file.isDirectory) {
+                setState(() {
+                  _path.add(file);
+                  _page = 0;
+                });
+                _load(parentID: file.id);
+              } else {
+                ref.read(fileProvider.notifier).downloadFile(file);
+              }
+            }
+
+            final card = _FileGridCard(
+              file: file,
+              onSelect: open,
+              onOpen: open,
+            );
             return Draggable<_DraggedCloudFiles>(
               data: _DraggedCloudFiles([file], _PaneIdentity.secondary),
               feedback: _DragFeedback(label: file.name),
-              childWhenDragging: Opacity(opacity: 0.35, child: row),
-              child: row,
+              childWhenDragging: Opacity(opacity: 0.35, child: card),
+              child: card,
             );
           },
         ),
@@ -1526,6 +1823,7 @@ class _PaneIconButton extends StatelessWidget {
 
 class _FilePaneFrame extends StatelessWidget {
   final String title;
+  final Widget? trailing;
   final int itemCount;
   final bool isLoading;
   final String? errorMessage;
@@ -1550,6 +1848,7 @@ class _FilePaneFrame extends StatelessWidget {
 
   const _FilePaneFrame({
     required this.title,
+    this.trailing,
     required this.itemCount,
     required this.isLoading,
     required this.errorMessage,
@@ -1604,6 +1903,8 @@ class _FilePaneFrame extends StatelessWidget {
                     '$itemCount 项',
                     style: TextStyle(fontSize: 11, color: cs.mutedForeground),
                   ),
+                  const Spacer(),
+                  if (trailing case final Widget trailing) trailing,
                 ],
               ),
             ),
