@@ -1120,7 +1120,7 @@ class _PrimaryFilePane extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (viewMode == _FileViewMode.columns) {
-      return _PrimaryColumnBrowser(
+      return _ColumnFileBrowser(
         title: title,
         initialPath: state.folderPath,
         initialFiles: state.files,
@@ -1333,25 +1333,34 @@ class _ColumnListing {
   }
 }
 
-class _PrimaryColumnBrowser extends ConsumerStatefulWidget {
+class _ColumnFileBrowser extends ConsumerStatefulWidget {
   final String title;
   final List<CloudFile> initialPath;
   final List<CloudFile> initialFiles;
   final ValueChanged<_FileViewMode> onViewModeChanged;
+  final _PaneIdentity source;
+  final Future<void> Function(List<CloudFile> files, String? parentID)?
+  onMoveCloudFiles;
+  final Future<void> Function(List<File> files, String? parentID)?
+  onUploadLocalFiles;
+  final ValueChanged<List<CloudFile>>? onPathChanged;
 
-  const _PrimaryColumnBrowser({
+  const _ColumnFileBrowser({
     required this.title,
     required this.initialPath,
     required this.initialFiles,
     required this.onViewModeChanged,
+    this.source = _PaneIdentity.primary,
+    this.onMoveCloudFiles,
+    this.onUploadLocalFiles,
+    this.onPathChanged,
   });
 
   @override
-  ConsumerState<_PrimaryColumnBrowser> createState() =>
-      _PrimaryColumnBrowserState();
+  ConsumerState<_ColumnFileBrowser> createState() => _ColumnFileBrowserState();
 }
 
-class _PrimaryColumnBrowserState extends ConsumerState<_PrimaryColumnBrowser> {
+class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
   List<_ColumnListing> _columns = const [];
   List<CloudFile> _path = const [];
   var _generation = 0;
@@ -1363,9 +1372,9 @@ class _PrimaryColumnBrowserState extends ConsumerState<_PrimaryColumnBrowser> {
   }
 
   @override
-  void didUpdateWidget(covariant _PrimaryColumnBrowser oldWidget) {
+  void didUpdateWidget(covariant _ColumnFileBrowser oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!_samePath(oldWidget.initialPath, widget.initialPath)) {
+    if (!_samePath(_path, widget.initialPath)) {
       _restorePath(widget.initialPath, initialFiles: widget.initialFiles);
     }
   }
@@ -1483,7 +1492,7 @@ class _PrimaryColumnBrowserState extends ConsumerState<_PrimaryColumnBrowser> {
       _columns = columns;
     });
     unawaited(_loadColumn(index + 1, generation: generation));
-    unawaited(ref.read(fileProvider.notifier).navigateToFolderPath(path));
+    _notifyPathChanged(path);
   }
 
   void _navigateBreadcrumb(int index) {
@@ -1491,6 +1500,15 @@ class _PrimaryColumnBrowserState extends ConsumerState<_PrimaryColumnBrowser> {
         ? const <CloudFile>[]
         : _path.take(index + 1).toList();
     unawaited(_restorePath(path));
+    _notifyPathChanged(path);
+  }
+
+  void _notifyPathChanged(List<CloudFile> path) {
+    final onPathChanged = widget.onPathChanged;
+    if (onPathChanged != null) {
+      onPathChanged(path);
+      return;
+    }
     unawaited(ref.read(fileProvider.notifier).navigateToFolderPath(path));
   }
 
@@ -1499,9 +1517,14 @@ class _PrimaryColumnBrowserState extends ConsumerState<_PrimaryColumnBrowser> {
     String? parentID,
     int index,
   ) async {
-    await ref
-        .read(fileProvider.notifier)
-        .moveFilesTo(files, parentID: parentID);
+    final onMoveCloudFiles = widget.onMoveCloudFiles;
+    if (onMoveCloudFiles != null) {
+      await onMoveCloudFiles(files, parentID);
+    } else {
+      await ref
+          .read(fileProvider.notifier)
+          .moveFilesTo(files, parentID: parentID);
+    }
     if (mounted) await _loadColumn(index);
   }
 
@@ -1510,9 +1533,14 @@ class _PrimaryColumnBrowserState extends ConsumerState<_PrimaryColumnBrowser> {
     String? parentID,
     int index,
   ) async {
-    await ref
-        .read(fileProvider.notifier)
-        .uploadLocalFiles(files, parentID: parentID);
+    final onUploadLocalFiles = widget.onUploadLocalFiles;
+    if (onUploadLocalFiles != null) {
+      await onUploadLocalFiles(files, parentID);
+    } else {
+      await ref
+          .read(fileProvider.notifier)
+          .uploadLocalFiles(files, parentID: parentID);
+    }
     if (mounted) await _loadColumn(index);
   }
 
@@ -1554,7 +1582,7 @@ class _PrimaryColumnBrowserState extends ConsumerState<_PrimaryColumnBrowser> {
                   _FinderColumn(
                     key: ValueKey('${_columns[index].parentID}-$index'),
                     column: _columns[index],
-                    source: _PaneIdentity.primary,
+                    source: widget.source,
                     onOpenFolder: (folder) => _openFolder(index, folder),
                     onOpenFile: (file) => _openCloudFile(context, ref, file),
                     onMoveCloudFiles: (files, parentID) =>
@@ -2092,6 +2120,30 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
 
   @override
   Widget build(BuildContext context) {
+    if (_viewMode == _FileViewMode.columns) {
+      return _ColumnFileBrowser(
+        title: _path.isEmpty ? '右侧面板' : _path.last.name,
+        initialPath: _path,
+        initialFiles: _files,
+        source: _PaneIdentity.secondary,
+        onViewModeChanged: (mode) {
+          setState(() => _viewMode = mode);
+          if (mode != _FileViewMode.columns) {
+            unawaited(_load(parentID: _currentParentID));
+          }
+        },
+        onMoveCloudFiles: _moveCloudFiles,
+        onUploadLocalFiles: _uploadLocalFiles,
+        onPathChanged: (path) {
+          setState(() {
+            _path
+              ..clear()
+              ..addAll(path);
+            _page = 0;
+          });
+        },
+      );
+    }
     return _FilePaneFrame(
       title: _path.isEmpty ? '右侧面板' : _path.last.name,
       itemCount: _files.length,
