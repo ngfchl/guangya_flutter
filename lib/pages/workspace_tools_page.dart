@@ -349,11 +349,22 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   String _status = '';
   BatchRenameItemType _itemType = BatchRenameItemType.all;
   final _selectedIDs = <String>{};
+  late List<CloudFile> _candidates;
+  late String? _sourceID;
+  late String _sourceLabel;
+  var _recursive = false;
+  var _loadingCandidates = false;
   late List<BatchRenameRule> _rules;
 
   @override
   void initState() {
     super.initState();
+    final state = ref.read(fileProvider);
+    _candidates = state.files;
+    _sourceID = state.folderPath.isEmpty ? null : state.folderPath.last.id;
+    _sourceLabel = state.folderPath.isEmpty
+        ? '云盘根目录'
+        : state.folderPath.map((folder) => folder.name).join(' / ');
     _rules = [
       const BatchRenameRule(id: 'rule-0', kind: BatchRenameRuleKind.replace),
     ];
@@ -379,6 +390,87 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
       next[destination] = rule;
       _rules = next;
     });
+  }
+
+  Future<void> _pickSource() async {
+    final selection = await showShadDialog<_BatchRenameFolderSelection>(
+      context: context,
+      builder: (_) => _BatchRenameFolderPicker(initialID: _sourceID),
+    );
+    if (selection == null || !mounted) return;
+    setState(() {
+      _sourceID = selection.id;
+      _sourceLabel = selection.label;
+    });
+    await _loadCandidates();
+  }
+
+  Future<void> _loadCandidates() async {
+    if (_loadingCandidates) return;
+    setState(() {
+      _loadingCandidates = true;
+      _status = '';
+    });
+    try {
+      final api = ref.read(authProvider.notifier).api;
+      final result = <CloudFile>[];
+      final visitedFolders = <String>{};
+      final queue = <_BatchRenameDirectoryNode>[
+        _BatchRenameDirectoryNode(_sourceID, ''),
+      ];
+      while (queue.isNotEmpty) {
+        final node = queue.removeLast();
+        final response = await api.fsFiles(parentID: node.id, pageSize: 1000);
+        final children = _extractCandidates(response);
+        for (final child in children) {
+          final path = node.path.isEmpty
+              ? child.name
+              : '${node.path}/${child.name}';
+          final candidate = child.copyWith(cloudPath: path);
+          result.add(candidate);
+          if (_recursive &&
+              candidate.isDirectory &&
+              visitedFolders.add(candidate.id)) {
+            queue.add(_BatchRenameDirectoryNode(candidate.id, path));
+          }
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _candidates = {
+          for (final file in result) file.id: file,
+        }.values.toList();
+        _selectedIDs
+          ..clear()
+          ..addAll(_candidates.map((file) => file.id));
+        _status = '已读取 ${_candidates.length} 项';
+      });
+    } catch (error) {
+      if (mounted) setState(() => _status = error.toString());
+    } finally {
+      if (mounted) setState(() => _loadingCandidates = false);
+    }
+  }
+
+  List<CloudFile> _extractCandidates(Map<String, dynamic> value) {
+    final files = <CloudFile>[];
+    void visit(dynamic node) {
+      if (node is Map) {
+        try {
+          files.add(CloudFile.fromJson(Map<String, dynamic>.from(node)));
+        } catch (_) {}
+        for (final child in node.values) {
+          visit(child);
+        }
+      } else if (node is List) {
+        for (final child in node) {
+          visit(child);
+        }
+      }
+    }
+
+    visit(value);
+    return {for (final file in files) file.id: file}.values.toList();
   }
 
   Future<void> _confirmAndApply(List<BatchRenamePreview> previews) async {
@@ -450,7 +542,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
 
   @override
   Widget build(BuildContext context) {
-    final files = ref.watch(fileProvider).files;
+    final files = _candidates;
     final allPreviews = buildRenamePreviews(
       files,
       _rules,
@@ -476,7 +568,8 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
       children: [
         _ToolSection(
           title: '数据源',
-          description: '当前目录 ${files.length} 项；筛选后显示 ${previews.length} 项。',
+          description:
+              '$_sourceLabel，已读取 ${files.length} 项；筛选后显示 ${previews.length} 项。',
           child: Padding(
             padding: const EdgeInsets.only(top: 12),
             child: Wrap(
@@ -515,6 +608,31 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                   label: const Text('保留扩展名'),
                   onChanged: (value) =>
                       setState(() => _preserveExtension = value),
+                ),
+                ShadCheckbox(
+                  value: _recursive,
+                  label: const Text('包含子文件夹'),
+                  onChanged: _loadingCandidates
+                      ? null
+                      : (value) async {
+                          setState(() => _recursive = value);
+                          await _loadCandidates();
+                        },
+                ),
+                ShadButton.outline(
+                  onPressed: _loadingCandidates ? null : _pickSource,
+                  leading: const Icon(Icons.folder_open_rounded, size: 16),
+                  child: const Text('选择目录'),
+                ),
+                ShadButton.ghost(
+                  onPressed: _loadingCandidates ? null : _loadCandidates,
+                  leading: Icon(
+                    _loadingCandidates
+                        ? Icons.hourglass_top_rounded
+                        : Icons.refresh_rounded,
+                    size: 16,
+                  ),
+                  child: Text(_loadingCandidates ? '读取中' : '重新读取'),
                 ),
               ],
             ),
@@ -709,6 +827,182 @@ String _rulePatternPlaceholder(BatchRenameRuleKind value) => switch (value) {
   BatchRenameRuleKind.prefix => '前缀',
   BatchRenameRuleKind.suffix => '后缀',
 };
+
+class _BatchRenameDirectoryNode {
+  final String? id;
+  final String path;
+
+  const _BatchRenameDirectoryNode(this.id, this.path);
+}
+
+class _BatchRenameFolderSelection {
+  final String? id;
+  final String label;
+
+  const _BatchRenameFolderSelection(this.id, this.label);
+}
+
+class _BatchRenameFolderPicker extends ConsumerStatefulWidget {
+  final String? initialID;
+
+  const _BatchRenameFolderPicker({required this.initialID});
+
+  @override
+  ConsumerState<_BatchRenameFolderPicker> createState() =>
+      _BatchRenameFolderPickerState();
+}
+
+class _BatchRenameFolderPickerState
+    extends ConsumerState<_BatchRenameFolderPicker> {
+  final _path = <CloudFile>[];
+  var _folders = <CloudFile>[];
+  var _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  String? get _parentID => _path.isEmpty ? null : _path.last.id;
+  String get _label =>
+      _path.isEmpty ? '云盘根目录' : _path.map((folder) => folder.name).join(' / ');
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final response = await ref
+          .read(authProvider.notifier)
+          .api
+          .fsFiles(parentID: _parentID, pageSize: 1000);
+      if (!mounted) return;
+      setState(() {
+        _folders = _extractFolders(
+          response,
+        )..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  List<CloudFile> _extractFolders(Map<String, dynamic> value) {
+    final folders = <CloudFile>[];
+    void visit(dynamic node) {
+      if (node is Map) {
+        try {
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(node));
+          if (file.isDirectory) folders.add(file);
+        } catch (_) {}
+        for (final child in node.values) {
+          visit(child);
+        }
+      } else if (node is List) {
+        for (final child in node) {
+          visit(child);
+        }
+      }
+    }
+
+    visit(value);
+    return {for (final folder in folders) folder.id: folder}.values.toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadDialog(
+      title: const Text('选择重命名目录'),
+      description: Text('当前：$_label'),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        ShadButton(
+          onPressed: () => Navigator.of(
+            context,
+          ).pop(_BatchRenameFolderSelection(_parentID, _label)),
+          leading: const Icon(Icons.check_rounded, size: 16),
+          child: const Text('使用此目录'),
+        ),
+      ],
+      child: SizedBox(
+        width: 540,
+        height: 360,
+        child: Column(
+          children: [
+            Row(
+              children: [
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: _path.isEmpty
+                      ? null
+                      : () {
+                          setState(() => _path.removeLast());
+                          _load();
+                        },
+                  leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                  child: const Text('返回上级'),
+                ),
+                const Spacer(),
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: _loading ? null : _load,
+                  child: const Icon(Icons.refresh_rounded, size: 16),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: _loading
+                  ? const Center(child: ShadProgress())
+                  : _error != null
+                  ? Center(
+                      child: Text(
+                        _error!,
+                        style: TextStyle(color: cs.destructive),
+                      ),
+                    )
+                  : _folders.isEmpty
+                  ? Center(
+                      child: Text(
+                        '没有子文件夹',
+                        style: TextStyle(color: cs.mutedForeground),
+                      ),
+                    )
+                  : ListView.separated(
+                      itemCount: _folders.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final folder = _folders[index];
+                        return ListTile(
+                          leading: Icon(
+                            Icons.folder_rounded,
+                            color: cs.primary,
+                          ),
+                          title: Text(folder.name),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                          onTap: () {
+                            setState(() => _path.add(folder));
+                            _load();
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _BatchRenameRuleRow extends StatelessWidget {
   final BatchRenameRule rule;
