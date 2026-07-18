@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:window_manager/window_manager.dart';
@@ -39,6 +40,57 @@ class _DraggedCloudFiles {
   final _PaneIdentity source;
 
   const _DraggedCloudFiles(this.files, this.source);
+}
+
+bool _hasPressedKey(LogicalKeyboardKey key) =>
+    HardwareKeyboard.instance.logicalKeysPressed.contains(key);
+
+void _selectDesktopFile(FileNotifier notifier, CloudFile file) {
+  notifier.selectWithModifiers(
+    file.id,
+    command:
+        _hasPressedKey(LogicalKeyboardKey.metaLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.metaRight) ||
+        _hasPressedKey(LogicalKeyboardKey.controlLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.controlRight),
+    shift:
+        _hasPressedKey(LogicalKeyboardKey.shiftLeft) ||
+        _hasPressedKey(LogicalKeyboardKey.shiftRight),
+  );
+}
+
+class _FolderMoveTarget extends StatelessWidget {
+  final CloudFile file;
+  final Future<void> Function(List<CloudFile> files, String? parentID) onMove;
+  final Widget child;
+
+  const _FolderMoveTarget({
+    required this.file,
+    required this.onMove,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!file.isDirectory) return child;
+    return DragTarget<_DraggedCloudFiles>(
+      onWillAcceptWithDetails: (details) =>
+          !details.data.files.any((source) => source.id == file.id),
+      onAcceptWithDetails: (details) => onMove(details.data.files, file.id),
+      builder: (context, candidates, _) => DecoratedBox(
+        decoration: BoxDecoration(
+          border: candidates.isEmpty
+              ? null
+              : Border.all(
+                  color: ShadTheme.of(context).colorScheme.primary,
+                  width: 2,
+                ),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: child,
+      ),
+    );
+  }
 }
 
 void _openCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
@@ -1308,13 +1360,7 @@ class _PrimaryFilePane extends ConsumerWidget {
             final tile = FileListTile(
               file: file,
               isSelected: selected,
-              onSelect: () {
-                if (file.isDirectory && !selected) {
-                  notifier.navigateToFolder(file);
-                } else {
-                  notifier.toggleSelection(file.id);
-                }
-              },
+              onSelect: () => _selectDesktopFile(notifier, file),
               onOpen: file.isDirectory
                   ? () => notifier.navigateToFolder(file)
                   : () => _openCloudFile(context, ref, file),
@@ -1330,48 +1376,60 @@ class _PrimaryFilePane extends ConsumerWidget {
                   : notifier.deleteFiles([file]),
             );
             final item = Draggable<_DraggedCloudFiles>(
-              data: _DraggedCloudFiles([file], _PaneIdentity.primary),
+              data: _DraggedCloudFiles(
+                selected
+                    ? files
+                          .where((item) => state.selectedIDs.contains(item.id))
+                          .toList()
+                    : [file],
+                _PaneIdentity.primary,
+              ),
               feedback: _DragFeedback(label: file.name),
               childWhenDragging: Opacity(opacity: 0.35, child: tile),
-              child: tile,
+              child: _FolderMoveTarget(
+                file: file,
+                onMove: (sources, parentID) =>
+                    notifier.moveFilesTo(sources, parentID: parentID),
+                child: tile,
+              ),
             );
             if (viewMode == _FileViewMode.list) return item;
             return Draggable<_DraggedCloudFiles>(
-              data: _DraggedCloudFiles([file], _PaneIdentity.primary),
+              data: _DraggedCloudFiles(
+                selected
+                    ? files
+                          .where((item) => state.selectedIDs.contains(item.id))
+                          .toList()
+                    : [file],
+                _PaneIdentity.primary,
+              ),
               feedback: _DragFeedback(label: file.name),
               childWhenDragging: Opacity(
                 opacity: 0.35,
                 child: _FileGridCard(
                   file: file,
                   isSelected: selected,
-                  onSelect: () {
-                    if (file.isDirectory && !selected) {
-                      notifier.navigateToFolder(file);
-                    } else {
-                      notifier.toggleSelection(file.id);
-                    }
-                  },
+                  onSelect: () => _selectDesktopFile(notifier, file),
                   onOpen: file.isDirectory
                       ? () => notifier.navigateToFolder(file)
                       : () => _openCloudFile(context, ref, file),
                 ),
               ),
-              child: _FastTransferContextMenu(
+              child: _FolderMoveTarget(
                 file: file,
-                onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
-                child: _FileGridCard(
+                onMove: (sources, parentID) =>
+                    notifier.moveFilesTo(sources, parentID: parentID),
+                child: _FastTransferContextMenu(
                   file: file,
-                  isSelected: selected,
-                  onSelect: () {
-                    if (file.isDirectory && !selected) {
-                      notifier.navigateToFolder(file);
-                    } else {
-                      notifier.toggleSelection(file.id);
-                    }
-                  },
-                  onOpen: file.isDirectory
-                      ? () => notifier.navigateToFolder(file)
-                      : () => _openCloudFile(context, ref, file),
+                  onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
+                  child: _FileGridCard(
+                    file: file,
+                    isSelected: selected,
+                    onSelect: () => _selectDesktopFile(notifier, file),
+                    onOpen: file.isDirectory
+                        ? () => notifier.navigateToFolder(file)
+                        : () => _openCloudFile(context, ref, file),
+                  ),
                 ),
               ),
             );

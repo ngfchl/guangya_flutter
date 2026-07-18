@@ -155,6 +155,7 @@ class FileState {
 class FileNotifier extends StateNotifier<FileState> {
   GuangyaAPI? _api;
   var _detailGeneration = 0;
+  String? _selectionAnchorID;
 
   FileNotifier() : super(const FileState());
 
@@ -489,6 +490,44 @@ class FileNotifier extends StateNotifier<FileState> {
       newSelected.add(id);
     }
     state = state.copyWith(selectedIDs: newSelected);
+  }
+
+  void selectWithModifiers(
+    String id, {
+    required bool command,
+    required bool shift,
+  }) {
+    final index = state.files.indexWhere((file) => file.id == id);
+    if (index < 0) return;
+    final selected = Set<String>.from(state.selectedIDs);
+    if (shift && _selectionAnchorID != null) {
+      final anchor = state.files.indexWhere(
+        (file) => file.id == _selectionAnchorID,
+      );
+      if (anchor >= 0) {
+        final start = anchor < index ? anchor : index;
+        final end = anchor > index ? anchor : index;
+        final range = state.files
+            .sublist(start, end + 1)
+            .map((file) => file.id);
+        if (command) {
+          selected.addAll(range);
+        } else {
+          selected
+            ..clear()
+            ..addAll(range);
+        }
+      }
+    } else if (command) {
+      selected.contains(id) ? selected.remove(id) : selected.add(id);
+      _selectionAnchorID = id;
+    } else {
+      selected
+        ..clear()
+        ..add(id);
+      _selectionAnchorID = id;
+    }
+    state = state.copyWith(selectedIDs: selected);
   }
 
   void selectAll() {
