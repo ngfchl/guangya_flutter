@@ -2019,6 +2019,16 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     String? parentID,
     int index,
   ) async {
+    final refreshIndexes = <int>{index};
+    for (var columnIndex = 0; columnIndex < _columns.length; columnIndex++) {
+      final ids = _columns[columnIndex].files.map((file) => file.id).toSet();
+      if (files.any((file) => ids.contains(file.id))) {
+        refreshIndexes.add(columnIndex);
+      }
+      if (_columns[columnIndex].parentID == parentID) {
+        refreshIndexes.add(columnIndex);
+      }
+    }
     final onMoveCloudFiles = widget.onMoveCloudFiles;
     if (onMoveCloudFiles != null) {
       await onMoveCloudFiles(files, parentID);
@@ -2027,7 +2037,42 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
           .read(fileProvider.notifier)
           .moveFilesTo(files, parentID: parentID);
     }
-    if (mounted) await _loadColumn(index);
+    if (mounted) {
+      await Future.wait(refreshIndexes.map(_loadColumn));
+    }
+  }
+
+  Future<void> _renameColumnFile(CloudFile file) async {
+    final controller = TextEditingController(text: file.name);
+    final newName = await showShadDialog<String>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('重命名'),
+        description: Text(file.name),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          ShadButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('确认'),
+          ),
+        ],
+        child: ShadInput(controller: controller, autofocus: true),
+      ),
+    );
+    controller.dispose();
+    if (newName == null || newName.isEmpty || newName == file.name) return;
+    await ref.read(authProvider.notifier).api.fsRename(file.id, newName);
+    final affected = <int>{};
+    for (var index = 0; index < _columns.length; index++) {
+      if (_columns[index].files.any((item) => item.id == file.id)) {
+        affected.add(index);
+      }
+    }
+    if (mounted) await Future.wait(affected.map(_loadColumn));
   }
 
   Future<void> _uploadFiles(
@@ -2116,6 +2161,17 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
                       onSelectAll: () => _selectAllColumn(index),
                       onDeleteSelected: (files) =>
                           _deleteColumnFiles(index, files),
+                      onRename: _renameColumnFile,
+                      onCopy: (file) => ref
+                          .read(fileProvider.notifier)
+                          .copyToClipboard([file]),
+                      onCut: (file) => ref
+                          .read(fileProvider.notifier)
+                          .cutToClipboard([file]),
+                      onDownload: (file) =>
+                          ref.read(fileProvider.notifier).downloadFile(file),
+                      onShare: (file) =>
+                          ref.read(fileProvider.notifier).createShare(file),
                       onOpenFolder: (folder) => _openFolder(index, folder),
                       onOpenFile: (file) => _openCloudFile(context, ref, file),
                       onMoveCloudFiles: (files, parentID) =>
@@ -2162,6 +2218,11 @@ class _FinderColumn extends StatefulWidget {
   final ValueChanged<CloudFile> onSelect;
   final VoidCallback onSelectAll;
   final ValueChanged<List<CloudFile>> onDeleteSelected;
+  final Future<void> Function(CloudFile file) onRename;
+  final ValueChanged<CloudFile> onCopy;
+  final ValueChanged<CloudFile> onCut;
+  final ValueChanged<CloudFile> onDownload;
+  final ValueChanged<CloudFile> onShare;
   final ValueChanged<CloudFile> onOpenFolder;
   final ValueChanged<CloudFile> onOpenFile;
   final ValueChanged<CloudFile> onCopyFastTransfer;
@@ -2177,6 +2238,11 @@ class _FinderColumn extends StatefulWidget {
     required this.onSelect,
     required this.onSelectAll,
     required this.onDeleteSelected,
+    required this.onRename,
+    required this.onCopy,
+    required this.onCut,
+    required this.onDownload,
+    required this.onShare,
     required this.onOpenFolder,
     required this.onOpenFile,
     required this.onCopyFastTransfer,
@@ -2313,10 +2379,26 @@ class _FinderColumnState extends State<_FinderColumn> {
                                 final selected = column.selectedIDs.contains(
                                   file.id,
                                 );
-                                final row = _FastTransferContextMenu(
+                                final row = _FinderColumnContextMenu(
                                   file: file,
+                                  onOpen: () {
+                                    if (file.isDirectory) {
+                                      widget.onOpenFolder(file);
+                                    } else {
+                                      widget.onOpenFile(file);
+                                    }
+                                  },
+                                  onRename: () => widget.onRename(file),
+                                  onCopy: () => widget.onCopy(file),
+                                  onCut: () => widget.onCut(file),
+                                  onDownload: file.isDirectory
+                                      ? null
+                                      : () => widget.onDownload(file),
+                                  onShare: () => widget.onShare(file),
                                   onCopyFastTransfer: () =>
                                       widget.onCopyFastTransfer(file),
+                                  onDelete: () =>
+                                      widget.onDeleteSelected([file]),
                                   child: _FinderColumnItem(
                                     file: file,
                                     selected: selected,
@@ -2363,6 +2445,88 @@ class _FinderColumnState extends State<_FinderColumn> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _FinderColumnContextMenu extends StatelessWidget {
+  final CloudFile file;
+  final VoidCallback onOpen;
+  final VoidCallback onRename;
+  final VoidCallback onCopy;
+  final VoidCallback onCut;
+  final VoidCallback? onDownload;
+  final VoidCallback onShare;
+  final VoidCallback onCopyFastTransfer;
+  final VoidCallback onDelete;
+  final Widget child;
+
+  const _FinderColumnContextMenu({
+    required this.file,
+    required this.onOpen,
+    required this.onRename,
+    required this.onCopy,
+    required this.onCut,
+    required this.onDownload,
+    required this.onShare,
+    required this.onCopyFastTransfer,
+    required this.onDelete,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadContextMenuRegion(
+      constraints: const BoxConstraints(minWidth: 190),
+      items: [
+        ShadContextMenuItem.inset(
+          leading: Icon(
+            file.isDirectory ? LucideIcons.folderOpen : LucideIcons.eye,
+            size: 16,
+          ),
+          onPressed: onOpen,
+          child: Text(file.isDirectory ? '打开文件夹' : '打开'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.pencil, size: 16),
+          onPressed: onRename,
+          child: const Text('重命名'),
+        ),
+        const Divider(height: 8),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.copy, size: 16),
+          onPressed: onCopy,
+          child: const Text('复制'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.scissors, size: 16),
+          onPressed: onCut,
+          child: const Text('剪切'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.download, size: 16),
+          onPressed: onDownload,
+          child: const Text('下载'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.share2, size: 16),
+          onPressed: onShare,
+          child: const Text('分享'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.zap, size: 16),
+          onPressed: onCopyFastTransfer,
+          child: Text(file.isDirectory ? '复制目录秒传' : '复制秒传'),
+        ),
+        const Divider(height: 8),
+        ShadContextMenuItem.inset(
+          leading: Icon(LucideIcons.trash2, size: 16, color: cs.destructive),
+          onPressed: onDelete,
+          child: Text('删除', style: TextStyle(color: cs.destructive)),
+        ),
+      ],
+      child: child,
     );
   }
 }
