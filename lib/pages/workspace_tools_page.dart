@@ -1556,6 +1556,11 @@ class _BatchRenamePreviewRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final changed = preview.changed;
+    final rawPath = preview.file.cloudPath.trim();
+    final path = rawPath.isEmpty
+        ? preview.file.name
+        : (rawPath.startsWith('/') ? rawPath : '/$rawPath');
+    final gcid = preview.file.gcid?.trim();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       child: Row(
@@ -1593,6 +1598,23 @@ class _BatchRenamePreviewRow extends StatelessWidget {
                         : changed
                         ? cs.primary
                         : cs.mutedForeground,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SelectableText(
+                  '路径  $path',
+                  maxLines: 1,
+                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                ),
+                const SizedBox(height: 2),
+                SelectableText(
+                  'GCID  ${gcid?.isNotEmpty == true ? gcid : '未获取'}',
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: gcid?.isNotEmpty == true
+                        ? cs.mutedForeground
+                        : cs.destructive,
                   ),
                 ),
               ],
