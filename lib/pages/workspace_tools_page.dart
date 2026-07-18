@@ -6,6 +6,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
+import '../models/batch_rename.dart';
 import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
@@ -327,6 +328,15 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   final _replace = TextEditingController();
   bool _preserveExtension = true;
   bool _running = false;
+  late List<BatchRenameRule> _rules;
+
+  @override
+  void initState() {
+    super.initState();
+    _rules = [
+      BatchRenameRule(id: 'replace', kind: BatchRenameRuleKind.replace),
+    ];
+  }
 
   @override
   void dispose() {
@@ -336,13 +346,15 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   }
 
   String _newName(CloudFile file) {
-    final old = file.name;
-    if (!_preserveExtension || file.isDirectory) {
-      return old.replaceAll(_find.text, _replace.text);
-    }
-    final split = old.lastIndexOf('.');
-    if (split <= 0) return old.replaceAll(_find.text, _replace.text);
-    return '${old.substring(0, split).replaceAll(_find.text, _replace.text)}${old.substring(split)}';
+    final rule = _rules.first.copyWith(
+      pattern: _find.text,
+      replacement: _replace.text,
+    );
+    return buildRenamePreviews(
+      [file],
+      [rule],
+      preserveExtension: _preserveExtension,
+    ).first.newName;
   }
 
   Future<void> _apply(List<CloudFile> files) async {
@@ -363,7 +375,10 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final files = ref.watch(fileProvider).files;
-    final changed = files.where((file) => _newName(file) != file.name).toList();
+    final previews = buildRenamePreviews(files, [
+      _rules.first.copyWith(pattern: _find.text, replacement: _replace.text),
+    ], preserveExtension: _preserveExtension);
+    final changed = previews.where((item) => item.applicable).toList();
     return Padding(
       padding: const EdgeInsets.all(18),
       child: Column(
@@ -399,7 +414,10 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                   ),
                   const SizedBox(width: 12),
                   ShadButton(
-                    onPressed: _running ? null : () => _apply(files),
+                    onPressed: _running
+                        ? null
+                        : () =>
+                              _apply(changed.map((item) => item.file).toList()),
                     child: Text(_running ? '正在应用' : '应用 ${changed.length} 项'),
                   ),
                 ],
@@ -420,7 +438,8 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                     Divider(height: 1, color: cs.border),
                 itemBuilder: (context, index) {
                   final file = files[index];
-                  final next = _newName(file);
+                  final preview = previews[index];
+                  final next = preview.newName;
                   return ListTile(
                     dense: true,
                     leading: Icon(
@@ -431,9 +450,11 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                     ),
                     title: Text(file.name),
                     subtitle: Text(
-                      next,
+                      preview.error ?? next,
                       style: TextStyle(
-                        color: next == file.name
+                        color: preview.error != null
+                            ? cs.destructive
+                            : next == file.name
                             ? cs.mutedForeground
                             : cs.primary,
                       ),
