@@ -135,72 +135,75 @@ class _FileListTileState extends State<FileListTile> {
     final cs = theme.colorScheme;
     return ShadContextMenuRegion(
       items: [
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.folderOpen, size: 16),
-          trailing: const Icon(LucideIcons.chevronRight),
-          onPressed: widget.onOpen,
-          child: const Text('打开'),
-        ),
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.pencil, size: 16),
-          onPressed: _beginRename,
-          child: const Text('重命名'),
-        ),
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.copy, size: 16),
-          trailing: const Icon(LucideIcons.chevronRight),
-          onPressed: widget.onCopy,
-          child: const Text('复制'),
-        ),
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.scissors, size: 16),
-          trailing: const Icon(LucideIcons.chevronRight),
-          onPressed: widget.onCut,
-          child: const Text('剪切'),
-        ),
-        const Divider(height: 8),
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.download, size: 16),
-          trailing: const Icon(LucideIcons.chevronRight),
-          onPressed: widget.onDownload,
-          child: const Text('下载'),
-        ),
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.share2, size: 16),
-          trailing: const Icon(LucideIcons.chevronRight),
-          onPressed: widget.onShare,
-          child: const Text('分享'),
-        ),
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.zap, size: 16),
-          onPressed: widget.onCopyFastTransfer,
-          child: const Text('复制秒传'),
-        ),
-        const Divider(height: 8),
-        ShadContextMenuItem.inset(
-          leading: Icon(
-            widget.isRecycleItem ? LucideIcons.rotateCcw : LucideIcons.trash2,
-            size: 16,
-            color: widget.isRecycleItem
-                ? theme.colorScheme.primary
-                : theme.colorScheme.destructive,
+        if (widget.isRecycleItem)
+          ShadContextMenuItem.inset(
+            leading: Icon(
+              LucideIcons.rotateCcw,
+              size: 16,
+              color: theme.colorScheme.primary,
+            ),
+            onPressed: widget.onDelete,
+            child: Text(
+              '恢复',
+              style: TextStyle(color: theme.colorScheme.primary),
+            ),
+          )
+        else ...[
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.folderOpen, size: 16),
+            trailing: const Icon(LucideIcons.chevronRight),
+            onPressed: widget.onOpen,
+            child: const Text('打开'),
           ),
-          trailing: Icon(
-            LucideIcons.chevronRight,
-            color: widget.isRecycleItem
-                ? theme.colorScheme.primary
-                : theme.colorScheme.destructive,
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.pencil, size: 16),
+            onPressed: _beginRename,
+            child: const Text('重命名'),
           ),
-          onPressed: widget.onDelete,
-          child: Text(
-            widget.isRecycleItem ? '恢复' : '删除',
-            style: TextStyle(
-              color: widget.isRecycleItem
-                  ? theme.colorScheme.primary
-                  : theme.colorScheme.destructive,
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.copy, size: 16),
+            trailing: const Icon(LucideIcons.chevronRight),
+            onPressed: widget.onCopy,
+            child: const Text('复制'),
+          ),
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.scissors, size: 16),
+            trailing: const Icon(LucideIcons.chevronRight),
+            onPressed: widget.onCut,
+            child: const Text('剪切'),
+          ),
+          const Divider(height: 8),
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.download, size: 16),
+            trailing: const Icon(LucideIcons.chevronRight),
+            onPressed: widget.onDownload,
+            child: const Text('下载'),
+          ),
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.share2, size: 16),
+            trailing: const Icon(LucideIcons.chevronRight),
+            onPressed: widget.onShare,
+            child: const Text('分享'),
+          ),
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.zap, size: 16),
+            onPressed: widget.onCopyFastTransfer,
+            child: const Text('复制秒传'),
+          ),
+          const Divider(height: 8),
+          ShadContextMenuItem.inset(
+            leading: Icon(
+              LucideIcons.trash2,
+              size: 16,
+              color: theme.colorScheme.destructive,
+            ),
+            onPressed: widget.onDelete,
+            child: Text(
+              '删除',
+              style: TextStyle(color: theme.colorScheme.destructive),
             ),
           ),
-        ),
+        ],
       ],
       child: GestureDetector(
         onTap: _isRenaming ? null : widget.onSelect,
