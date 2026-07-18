@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/legacy.dart';
+import '../core/logging/app_logger.dart';
+import '../core/http/http_error.dart';
 import '../core/storage/storage_manager.dart';
 import '../api/guangya_api.dart';
 
@@ -75,12 +78,19 @@ class AuthState {
 
   String get memberLevel =>
       _findStringDeep(userInfo, ['vipName', 'memberName', 'memberLevelName']) ??
-      '普通会员';
+      _memberLevelFromAssets;
+
+  String get _memberLevelFromAssets {
+    final svipStatus = _findInt64Deep(userInfo, ['svipStatus']) ?? 0;
+    if (svipStatus > 0) return '超级会员';
+    final vipStatus = _findInt64Deep(userInfo, ['vipStatus']) ?? 0;
+    return vipStatus > 0 ? '会员' : '普通会员';
+  }
 
   int? get capacity =>
-      _findInt64Deep(userInfo, ['capacity', 'totalCapacity']);
+      _findInt64Deep(userInfo, ['totalSpaceSize', 'capacity', 'totalCapacity']);
   int? get usedCapacity =>
-      _findInt64Deep(userInfo, ['usedCapacity', 'usedSpace']);
+      _findInt64Deep(userInfo, ['usedSpaceSize', 'usedCapacity', 'usedSpace']);
 
   String get capacityText {
     if (capacity == null) return '空间信息暂不可用';
@@ -90,7 +100,9 @@ class AuthState {
   // ── Static helpers ─────────────────────────────────────────────
 
   static String? _findStringDeep(
-      Map<String, dynamic>? json, List<String> keys) {
+    Map<String, dynamic>? json,
+    List<String> keys,
+  ) {
     if (json == null) return null;
     for (final key in keys) {
       final v = json[key];
@@ -98,16 +110,17 @@ class AuthState {
     }
     for (final entry in json.entries) {
       if (entry.value is Map<String, dynamic>) {
-        final found =
-            _findStringDeep(entry.value as Map<String, dynamic>, keys);
+        final found = _findStringDeep(
+          entry.value as Map<String, dynamic>,
+          keys,
+        );
         if (found != null) return found;
       }
     }
     return null;
   }
 
-  static int? _findInt64Deep(
-      Map<String, dynamic>? json, List<String> keys) {
+  static int? _findInt64Deep(Map<String, dynamic>? json, List<String> keys) {
     if (json == null) return null;
     for (final key in keys) {
       final v = json[key];
@@ -122,7 +135,13 @@ class AuthState {
     if (bytes < 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    if (bytes < 1024 * 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    }
+    if (bytes < 1024 * 1024 * 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024 * 1024)).toStringAsFixed(1)} TB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024 * 1024 * 1024)).toStringAsFixed(1)} PB';
   }
 }
 
@@ -149,11 +168,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
     if (access.isNotEmpty || refresh != null) {
       try {
+        AppLogger.info('Auth', '正在恢复登录状态');
         await _api.refreshAccessToken();
         await _saveTokens();
         state = state.copyWith(isSignedIn: true);
         await loadAccount();
+        AppLogger.info('Auth', '登录状态恢复完成');
       } catch (_) {
+        AppLogger.warning('Auth', '登录状态恢复失败，已清除本地令牌');
         state = state.copyWith(isSignedIn: false);
         _api.clearTokens();
         await _clearTokens();
@@ -163,10 +185,33 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> loadAccount() async {
+    AppLogger.info('Auth', '正在获取账户资料与云盘空间信息');
+    final userInfoFuture = _api.userInfo();
+    final assetsFuture = _api.cloudAssets();
     try {
-      final userInfo = await _api.userInfo();
-      state = state.copyWith(userInfo: userInfo);
+      final userInfo = await userInfoFuture;
+      Map<String, dynamic> assets = const {};
+      try {
+        assets = await assetsFuture;
+      } catch (_) {
+        AppLogger.warning('Auth', '云盘空间信息暂时不可用');
+      }
+      state = state.copyWith(userInfo: {...userInfo, 'assets': assets});
+      AppLogger.info('Auth', '账户资料与云盘空间信息获取完成');
+    } on DioException catch (error) {
+      await assetsFuture.catchError((_) => <String, dynamic>{});
+      final status = error.response?.statusCode;
+      if (status == 404 || status == 501) {
+        AppLogger.warning('Auth', '账户信息接口暂不可用 ($status)，已保留登录态');
+        return;
+      }
+      final message = error.response?.data is Map
+          ? extractHttpMessage(error.response?.data) ?? error.type.name
+          : error.type.name;
+      AppLogger.error('Auth', '加载账户信息失败', error: message);
+      state = state.copyWith(errorMessage: message);
     } catch (e) {
+      AppLogger.error('Auth', '加载账户信息失败', error: e);
       state = state.copyWith(errorMessage: e.toString());
     }
   }
@@ -183,8 +228,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> sendVerificationCode() async {
     state = state.copyWith(clearError: true);
-    final cleanPhone =
-        state.phoneNumber.replaceAll(RegExp(r'[^\d]'), '');
+    final cleanPhone = state.phoneNumber.replaceAll(RegExp(r'[^\d]'), '');
     if (cleanPhone.length < 8) {
       state = state.copyWith(errorMessage: '请输入有效的手机号');
       return;
@@ -192,8 +236,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
     try {
       final initResult = await _api.loginSMSInit(cleanPhone);
-      final captcha =
-          AuthState._findStringDeep(initResult, ['captcha_token', 'captchaToken']);
+      final captcha = AuthState._findStringDeep(initResult, [
+        'captcha_token',
+        'captchaToken',
+      ]);
       if (captcha == null) {
         if (AuthState._findStringDeep(initResult, ['url', 'verify_url']) !=
             null) {
@@ -227,11 +273,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = state.copyWith(clearError: true);
     try {
       final verifyResult = await _api.loginSMSVerify(
-          state.verificationID, state.verificationCode);
-      final vToken = AuthState._findStringDeep(
-          verifyResult, ['verification_token', 'verificationToken']);
-      final code =
-          AuthState._findStringDeep(verifyResult, ['code']);
+        state.verificationID,
+        state.verificationCode,
+      );
+      final vToken = AuthState._findStringDeep(verifyResult, [
+        'verification_token',
+        'verificationToken',
+      ]);
+      final code = AuthState._findStringDeep(verifyResult, ['code']);
       if (vToken == null || code == null) throw Exception('验证码验证失败');
 
       await _api.loginSMSSignIn(
@@ -254,11 +303,24 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = state.copyWith(clearError: true);
     try {
       final result = await _api.loginQRInit();
-      final token = AuthState._findStringDeep(
-              result, ['device_code', 'deviceCode']) ??
+      final token =
+          AuthState._findStringDeep(result, ['device_code', 'deviceCode']) ??
           '';
-      final payload = AuthState._findStringDeep(
-              result, ['verification_uri_complete', 'verificationUriComplete', 'qr_url', 'qrUrl', 'url', 'verification_uri', 'verificationUri', 'qrcode', 'qrCode', 'code', 'qr_payload', 'qrPayload']) ??
+      final payload =
+          AuthState._findStringDeep(result, [
+            'verification_uri_complete',
+            'verificationUriComplete',
+            'qr_url',
+            'qrUrl',
+            'url',
+            'verification_uri',
+            'verificationUri',
+            'qrcode',
+            'qrCode',
+            'code',
+            'qr_payload',
+            'qrPayload',
+          ]) ??
           token;
       state = state.copyWith(
         qrPayload: payload,
@@ -273,24 +335,24 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   void _startQRPolling() {
     _qrPollingTimer?.cancel();
-    _qrPollingTimer =
-        Timer.periodic(const Duration(seconds: 5), (timer) async {
+    _qrPollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
       if (state.qrToken.isEmpty) {
         timer.cancel();
         return;
       }
       try {
         final result = await _api.loginQRPoll(state.qrToken);
-        final accessToken = AuthState._findStringDeep(
-            result, ['access_token', 'accessToken']);
+        final accessToken = AuthState._findStringDeep(result, [
+          'access_token',
+          'accessToken',
+        ]);
         if (accessToken != null) {
           timer.cancel();
           state = state.copyWith(isSignedIn: true);
           await _saveTokens();
           await loadAccount();
         } else {
-          final error =
-              AuthState._findStringDeep(result, ['error']);
+          final error = AuthState._findStringDeep(result, ['error']);
           String? newStatus;
           if (error == 'slow_down') {
             newStatus = '轮询过快，请稍候';
@@ -322,7 +384,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<void> _saveTokens() async {
     await StorageManager.set(StorageKeys.accessToken, _api.accessToken);
     if (_api.refreshTokenValue != null) {
-      await StorageManager.set(StorageKeys.refreshToken, _api.refreshTokenValue!);
+      await StorageManager.set(
+        StorageKeys.refreshToken,
+        _api.refreshTokenValue!,
+      );
     }
     if (_api.tokenExpiresAt != null) {
       await StorageManager.set(

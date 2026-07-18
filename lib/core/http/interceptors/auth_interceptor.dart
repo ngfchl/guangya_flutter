@@ -1,8 +1,7 @@
 import 'dart:async';
-import 'dart:developer';
-
 import 'package:dio/dio.dart';
 
+import '../../logging/app_logger.dart';
 import '../../config/app_config.dart';
 import '../../storage/storage_manager.dart';
 import '../http_error.dart';
@@ -59,10 +58,6 @@ class AuthInterceptor extends Interceptor {
 
     final status = err.response?.statusCode;
     final alreadyLoggedOut = status == 401 && _isAlreadyLoggedOut;
-
-    if (!alreadyLoggedOut) {
-      log('[Auth] error path=${err.requestOptions.path} status=$status');
-    }
 
     // 免认证路径的错误直接放行
     if (_isAuthExemptPath(err.requestOptions.path)) {
@@ -127,7 +122,7 @@ class AuthInterceptor extends Interceptor {
 
     // 开始刷新
     _isRefreshing = true;
-    log('[Auth] refreshing access token');
+    AppLogger.info('Auth', '登录凭据已过期，正在刷新');
 
     try {
       final dio = Dio(
@@ -158,7 +153,7 @@ class AuthInterceptor extends Interceptor {
         ),
       );
 
-      log('[Auth] access token refreshed');
+      AppLogger.info('Auth', '登录凭据刷新完成');
 
       final data = res.data;
       final newAccess = _findStringDeep(data, ['access_token', 'accessToken']);
@@ -202,7 +197,7 @@ class AuthInterceptor extends Interceptor {
       final response = await DioClient.dio.fetch(request);
       return handler.resolve(response);
     } catch (e) {
-      log('[Auth] token refresh failed: $e');
+      AppLogger.warning('Auth', '登录凭据刷新失败，将退出当前账号');
 
       for (var c in _waitQueue) {
         c.complete();
@@ -228,7 +223,7 @@ class AuthInterceptor extends Interceptor {
     if (_logoutScheduled) return;
     _logoutScheduled = true;
 
-    log('[Auth] logout scheduled');
+    AppLogger.info('Auth', '登录状态已失效，正在退出当前账号');
     await StorageManager.delete(StorageKeys.accessToken);
     await StorageManager.delete(StorageKeys.refreshToken);
     await StorageManager.delete(StorageKeys.tokenExpiresAt);

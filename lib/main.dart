@@ -35,8 +35,8 @@ void main() async {
   if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
     await windowManager.ensureInitialized();
     const options = WindowOptions(
-      size: Size(1280, 820),
-      minimumSize: Size(980, 640),
+      size: Size(1600, 900),
+      minimumSize: Size(1200, 800),
       center: true,
       backgroundColor: Colors.transparent,
       titleBarStyle: TitleBarStyle.hidden,

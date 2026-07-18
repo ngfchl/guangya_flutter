@@ -1,4 +1,5 @@
-import 'dart:developer';
+import 'dart:io';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 
@@ -28,10 +29,6 @@ class Http {
       headers: headers,
     );
 
-    final stopwatch = Stopwatch()..start();
-    final endpoint = useAccountDio ? 'account' : 'api';
-    log('[HTTP:$endpoint] -> $method $path');
-
     try {
       final res = await client.request(
         path,
@@ -40,23 +37,10 @@ class Http {
         cancelToken: cancelToken,
         options: mergedOptions,
       );
-      stopwatch.stop();
-
-      log(
-        '[HTTP:$endpoint] <- $method $path status=${res.statusCode} '
-        'elapsed=${stopwatch.elapsedMilliseconds}ms',
-      );
-
       return res.data as T;
     } on DioException catch (e) {
-      stopwatch.stop();
-      final status = e.response?.statusCode;
-      log(
-        '[HTTP:$endpoint] !! $method $path status=${status ?? '-'} '
-        'type=${e.type.name} elapsed=${stopwatch.elapsedMilliseconds}ms',
-      );
-
       // 将业务错误信息包装为 ApiException
+      final status = e.response?.statusCode;
       final errorMsg = e.error is String ? (e.error as String) : '';
       if (errorMsg.isNotEmpty) {
         throw ApiException(status: status, message: errorMsg);
@@ -64,10 +48,6 @@ class Http {
 
       rethrow;
     } catch (e) {
-      stopwatch.stop();
-      log(
-        '[HTTP:$endpoint] !! $method $path elapsed=${stopwatch.elapsedMilliseconds}ms',
-      );
       rethrow;
     }
   }
@@ -121,6 +101,7 @@ class Http {
     bool authenticated = false,
   }) async {
     final headers = <String, dynamic>{
+      ..._accountHeaders(),
       'did': _getDeviceID(),
       'dt': '4',
       ...?extraHeaders,
@@ -163,14 +144,48 @@ class Http {
   static void _checkTokenExpiry() {
     final expiresAt = StorageManager.get<int>(StorageKeys.tokenExpiresAt);
     if (expiresAt == null) return;
-    if (DateTime.now().millisecondsSinceEpoch > expiresAt) {
-      log('[HTTP] token expired, will refresh on next 401');
-    }
+    if (DateTime.now().millisecondsSinceEpoch > expiresAt) {}
   }
 
   static String _getDeviceID() {
     return StorageManager.get<String>(StorageKeys.deviceID) ??
         'flutter-${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  /// 账号网关会校验网页客户端的设备标识；与源客户端保持一致。
+  static Map<String, String> _accountHeaders() {
+    final deviceID = _getDeviceID();
+    return {
+      'x-client-id': 'aMe-8VSlkrbQXpUR',
+      'x-client-version': '0.0.1',
+      'x-device-id': deviceID,
+      'x-device-model': 'chrome%2F150.0.0.0',
+      'x-device-name': 'PC-Chrome',
+      'x-device-sign': 'wdi10.$deviceID${_randomHex(16)}',
+      'x-net-work-type': 'NONE',
+      'x-os-version': _webPlatformName(),
+      'x-platform-version': '1',
+      'x-protocol-version': '301',
+      'x-provider-name': 'NONE',
+      'x-sdk-version': '9.0.2',
+    };
+  }
+
+  static String _webPlatformName() {
+    if (Platform.isMacOS) return 'MacIntel';
+    if (Platform.isWindows) return 'Win32';
+    if (Platform.isLinux) return 'Linux x86_64';
+    if (Platform.isIOS) return 'iPhone';
+    if (Platform.isAndroid) return 'Linux armv8l';
+    return Platform.operatingSystem;
+  }
+
+  static String _randomHex(int bytes) {
+    final random = Random.secure();
+    return List.generate(
+      bytes,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
   }
 
   // ── Helpers ─────────────────────────────────────────────────────

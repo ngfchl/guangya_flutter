@@ -1,12 +1,13 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
+import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 
 import '../core/http/dio_client.dart';
 import '../core/http/http.dart';
+import '../core/logging/app_logger.dart';
 import '../core/http/http_error.dart';
 import '../core/config/app_config.dart';
 
@@ -153,7 +154,36 @@ class GuangyaAPI {
   }
 
   Future<Map<String, dynamic>> userInfo() async {
-    return Http.accountRequest('/v1/user/me', body: null, authenticated: true);
+    // The current account gateway exposes this REST resource as GET. Older
+    // deployments accepted POST, so retain it as a compatibility fallback.
+    try {
+      return await Http.accountRequest(
+        '/v1/user/me',
+        method: 'GET',
+        body: null,
+        authenticated: true,
+      );
+    } on DioException catch (error) {
+      final status = error.response?.statusCode;
+      if (status != 404 && status != 405 && status != 501) rethrow;
+      AppLogger.warning('Auth', '账户资料 GET 接口不可用（$status），正在尝试兼容请求');
+      return Http.accountRequest(
+        '/v1/user/me',
+        body: null,
+        authenticated: true,
+      );
+    }
+  }
+
+  /// 云盘总容量、已用容量、会员与直链流量信息。
+  Future<Map<String, dynamic>> cloudAssets() async {
+    final response = await Http.apiRequest('/assets/v1/get_assets');
+    final data = response['data'];
+    return data is Map<String, dynamic>
+        ? data
+        : data is Map
+        ? Map<String, dynamic>.from(data)
+        : const {};
   }
 
   // ── Cloud downloads ────────────────────────────────────────────────

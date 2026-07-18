@@ -1,6 +1,4 @@
 import 'dart:convert';
-import 'dart:developer';
-
 import 'package:dio/dio.dart';
 
 import '../http_error.dart';
@@ -70,27 +68,6 @@ class ResponseInterceptor extends Interceptor {
   void onError(DioException err, ErrorInterceptorHandler handler) {
     if (err.type == DioExceptionType.cancel) {
       return handler.next(err);
-    }
-
-    // 网络错误
-    if (err.type == DioExceptionType.connectionError ||
-        err.type == DioExceptionType.connectionTimeout ||
-        err.type == DioExceptionType.sendTimeout ||
-        err.type == DioExceptionType.receiveTimeout) {
-      if (!suppressErrorToast(err.requestOptions)) {
-        log(
-          '[HTTP] ${requestToastMessage(err.requestOptions, '请求超时或连接失败，请检查网络')}',
-        );
-      }
-      return handler.next(err);
-    }
-
-    // 其他错误
-    if (!suppressErrorToast(err.requestOptions)) {
-      final msg = err.response?.data is Map
-          ? extractHttpMessage(err.response?.data) ?? '请求失败'
-          : '请求失败';
-      log('[HTTP] ${requestToastMessage(err.requestOptions, msg)}');
     }
 
     return handler.next(err);

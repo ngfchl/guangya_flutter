@@ -546,7 +546,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   void cancelDetailSync() {
     _cancelDetailSync = true;
-    _appendScanLog('[同步识别][DEBUG] 已请求取消同步识别');
+    _appendScanLog('[同步识别][调试] 已请求取消同步识别');
   }
 
   Future<void> refreshGlobalCloudIndex({bool force = false}) async {
@@ -574,6 +574,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
     _refreshingCloudIndex = true;
     try {
+      AppLogger.info('CloudIndex', '开始刷新全盘文件索引');
       final files = await _allGlobalRemoteFiles();
       final folders = <String?, List<CloudFile>>{};
       for (final file in files) {
@@ -584,6 +585,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         StorageKeys.cloudIndexLastUpdatedAt,
         DateTime.now().millisecondsSinceEpoch.toString(),
       );
+      AppLogger.info('CloudIndex', '全盘文件索引刷新完成，共 ${files.length} 项');
       _appendScanLog('[云盘索引] 已刷新 ${files.length} 个文件与目录缓存');
     } catch (error) {
       _appendScanLog('[云盘索引] 刷新失败：$error', isError: true);
@@ -736,7 +738,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (_cancelDetailSync) break;
       try {
         _appendScanLog(
-          '[同步识别][DEBUG] 开始：${original.file.name} '
+          '[同步识别][调试] 开始：${original.file.name} '
           '(fileId=${original.id}, gcid=${original.file.gcid ?? '-'})',
         );
         final latestFile = await _resolveCurrentCloudFile(
@@ -747,7 +749,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           throw StateError('云盘中未找到该文件');
         }
         _appendScanLog(
-          '[同步识别][DEBUG] 云盘已同步：fileId ${original.id} -> '
+          '[同步识别][调试] 云盘已同步：文件 ID ${original.id} -> '
           '${latestFile.id}，名称=${latestFile.name}，gcid=${latestFile.gcid ?? '-'}',
         );
         synced.add(
@@ -763,7 +765,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       } catch (error) {
         failures.add('${original.file.name}: $error');
         _appendScanLog(
-          '[同步识别][DEBUG] 同步失败：${original.file.name}，$error',
+          '[同步识别][调试] 同步失败：${original.file.name}，$error',
           isError: true,
         );
       }
@@ -796,7 +798,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           directoryName: _parentDirectoryName(fallback.file.cloudPath),
         );
         _appendScanLog(
-          '[同步识别][DEBUG] 解析：${fallback.file.name} -> '
+          '[同步识别][调试] 解析：${fallback.file.name} -> '
           '标题=${parsed.title}，年份=${parsed.year ?? '-'}，'
           '类型=${fallback.mediaKind?.name ?? 'automatic'}',
         );
@@ -825,19 +827,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               MediaTMDBMatchRequest(items: [fallback], candidates: candidates),
             );
             _appendScanLog(
-              '[同步识别][DEBUG] 存在 ${candidates.length} 个 TMDB 候选，等待用户选择',
+              '[同步识别][调试] 存在 ${candidates.length} 个 TMDB 候选，等待用户选择',
             );
           }
         }
         if (updated.tmdbID != null) {
           recognizedCount++;
           _appendScanLog(
-            '[同步识别][DEBUG] TMDB 命中：${updated.title} '
+            '[同步识别][调试] TMDB 命中：${updated.title} '
             '(tmdbId=${updated.tmdbID}, ${updated.year.isEmpty ? '年份未知' : updated.year})',
           );
         } else {
           _appendScanLog(
-            '[同步识别][DEBUG] TMDB 未命中：${parsed.title} '
+            '[同步识别][调试] TMDB 未命中：${parsed.title} '
             '(年份=${parsed.year ?? '-'})',
           );
         }
@@ -854,17 +856,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         if (updated.file.name != beforeName) {
           renamedCount++;
           _appendScanLog(
-            '[同步识别][DEBUG] 已规范命名：$beforeName -> ${updated.file.name}',
+            '[同步识别][调试] 已规范命名：$beforeName -> ${updated.file.name}',
           );
         } else if (updated.tmdbID != null) {
-          _appendScanLog('[同步识别][DEBUG] 跳过规范命名：未解析到分辨率或名称已符合规则');
+          _appendScanLog('[同步识别][调试] 跳过规范命名：未解析到分辨率或名称已符合规则');
         }
         updates.add(updated);
         replacements['${original.libraryID}:${original.id}'] = updated;
       } catch (error) {
         failures.add('${original.file.name}: $error');
         _appendScanLog(
-          '[同步识别][DEBUG] 识别失败：${original.file.name}，$error',
+          '[同步识别][调试] 识别失败：${original.file.name}，$error',
           isError: true,
         );
       }
@@ -1584,6 +1586,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     const pageSize = 10000;
     final values = <CloudFile>[];
     for (var page = 0; !_cancelScan; page++) {
+      final typeLabel = resType == 2 ? '目录' : '文件';
+      AppLogger.info('CloudIndex', '正在获取全盘$typeLabel索引，第 ${page + 1} 页');
       final response = await _api!.fsFiles(
         parentID: '*',
         page: page,
@@ -1594,6 +1598,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       final batch = _extractFiles(response);
       values.addAll(batch);
+      AppLogger.info(
+        'CloudIndex',
+        '全盘$typeLabel索引第 ${page + 1} 页完成，获取 ${batch.length} 项，累计 ${values.length} 项',
+      );
       final total = _findIntDeep(response, const [
         'total',
         'totalCount',
@@ -1667,6 +1675,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         if (cachedFolder != null) {
           files = cachedFolder;
         } else {
+          AppLogger.info('Media', '正在读取目录「${folder.path}」第 ${page + 1} 页');
           final response = await _api!.fsFiles(
             parentID: folder.id,
             page: page,
@@ -1675,6 +1684,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             sortType: 0,
           );
           files = _extractFiles(response);
+          AppLogger.info(
+            'Media',
+            '目录「${folder.path}」第 ${page + 1} 页读取完成，获取 ${files.length} 项',
+          );
           files = await _enrichAndCacheFiles(files);
           folderSnapshot.addAll(files);
         }
@@ -1867,9 +1880,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
     } catch (error) {
       // A rename can replace the cloud record. Locate its new ID below.
-      _appendScanLog(
-        '[同步识别][DEBUG] 旧 File ID 查询失败：${knownFile.id}，$error；开始回退定位',
-      );
+      _appendScanLog('[同步识别][调试] 旧文件 ID 查询失败：${knownFile.id}，$error；开始回退定位');
     }
 
     final cached = await FileMetadataCache.file(knownFile.id);
@@ -1881,7 +1892,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         cached.gcid == gcid &&
         cached.id != knownFile.id) {
       _appendScanLog(
-        '[同步识别][DEBUG] 从 GCID 缓存恢复新文件：${knownFile.id} -> ${cached.id}',
+        '[同步识别][调试] 从 GCID 缓存恢复新文件：${knownFile.id} -> ${cached.id}',
       );
       return _cacheResolvedCloudFile(
         knownFile,
@@ -1953,7 +1964,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (located != null) return located;
     }
     _appendScanLog(
-      '[同步识别][DEBUG] 未定位到当前文件目录中的 GCID；停止自动查找，建议重新扫描媒体库',
+      '[同步识别][调试] 未定位到当前文件目录中的 GCID；停止自动查找，建议重新扫描媒体库',
       isError: true,
     );
     return null;
@@ -1965,7 +1976,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }) async {
     final gcid = knownFile.gcid?.trim();
     if (gcid == null || gcid.isEmpty) return null;
-    _appendScanLog('[同步识别][DEBUG] 从当前文件目录扫描：parentId=$parentID，gcid=$gcid');
+    _appendScanLog('[同步识别][调试] 从当前文件目录扫描：父目录 ID=$parentID，GCID=$gcid');
     final parentPath = _parentPath(knownFile.cloudPath);
     List<CloudFile> children;
     try {
@@ -1998,7 +2009,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (resolved.gcid == gcid) {
         final exact = _withPath(resolved, '$parentPath/${resolved.name}');
         _appendScanLog(
-          '[同步识别][DEBUG] 当前目录定位成功：${knownFile.id} -> '
+          '[同步识别][调试] 当前目录定位成功：${knownFile.id} -> '
           '${exact.id}，路径=${exact.cloudPath}',
         );
         return _cacheResolvedCloudFile(
@@ -2009,7 +2020,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
     }
     _appendScanLog(
-      '[同步识别][DEBUG] 当前文件目录未命中：已检查 ${children.length} 个条目，详情查询不超过 12 次',
+      '[同步识别][调试] 当前文件目录未命中：已检查 ${children.length} 个条目，详情查询不超过 12 次',
     );
     return null;
   }

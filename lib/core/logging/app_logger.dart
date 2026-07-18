@@ -22,8 +22,26 @@ class AppLogEntry {
   });
 
   String get text =>
-      '${timestamp.toIso8601String()} [${level.name.toUpperCase()}] '
-      '[$scope] $message';
+      '${timestamp.toIso8601String()} [${_levelLabel(level)}] '
+      '[${_scopeLabel(scope)}] $message';
+
+  static String _levelLabel(AppLogLevel level) => switch (level) {
+    AppLogLevel.debug => '调试',
+    AppLogLevel.info => '信息',
+    AppLogLevel.warning => '警告',
+    AppLogLevel.error => '错误',
+  };
+
+  static String _scopeLabel(String scope) => switch (scope) {
+    'HTTP' => '网络',
+    'Auth' => '认证',
+    'Media' => '媒体库',
+    'CloudIndex' => '全盘索引',
+    'App' => '应用',
+    'Flutter' => '界面',
+    'Dart' => '运行时',
+    _ => scope,
+  };
 }
 
 /// One log sink for debug console, release file diagnostics and the in-app log
