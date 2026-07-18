@@ -824,12 +824,7 @@ class _CloudToolbar extends ConsumerWidget {
     final notifier = ref.read(fileProvider.notifier);
     return Row(
       children: [
-        Expanded(
-          child: BreadcrumbBar(
-            path: state.folderPath,
-            onNavigate: notifier.navigateToPathIndex,
-          ),
-        ),
+        const Spacer(),
         SortMenu(
           currentSort: state.serverSort,
           currentDirection: state.serverSortDirection,
