@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +11,7 @@ import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/file_list_tile.dart';
+import '../widgets/share_link_dialog.dart';
 import '../widgets/media_player_dialog.dart';
 
 class _SearchSelectAllIntent extends Intent {
@@ -332,6 +335,12 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                           onCopyFastTransfer: () =>
                               notifier.copyFastTransferJSON(file),
                           onDownload: () => notifier.downloadFile(file),
+                          onShare: () => unawaited(
+                            showShareLinkDialog(
+                              context,
+                              createLink: () => notifier.createShare(file),
+                            ),
+                          ),
                           onDelete: () => _deleteFiles([file]),
                         );
                       },

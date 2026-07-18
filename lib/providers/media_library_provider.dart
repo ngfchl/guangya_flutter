@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 import '../api/guangya_api.dart';
@@ -258,19 +259,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       clearStatus: true,
     );
     try {
-      final stats = await _store.importBackup(backupPath);
-      final libraries = await _loadLibraries();
-      final selectedID = libraries.isEmpty ? null : libraries.first.id;
-      state = state.copyWith(
-        libraries: libraries,
-        selectedLibraryID: selectedID,
-        clearSelectedLibrary: selectedID == null,
-        items: selectedID == null ? const [] : await _loadItems(selectedID),
-        statusMessage: '刮削数据已导入，已回收 ${_formatBytes(stats.reclaimedBytes)}',
-      );
-      if (selectedID != null) {
-        unawaited(_hydrateMissingArtwork(selectedID, state.items));
-      }
+      await _applyImportedBackup(backupPath);
     } catch (error) {
       state = state.copyWith(errorMessage: '导入失败：$error');
     } finally {
@@ -292,6 +281,103 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       state = state.copyWith(errorMessage: '导出失败：$error');
     } finally {
       state = state.copyWith(isLoading: false);
+    }
+  }
+
+  Future<void> exportScrapedDataToCloud({String? parentID}) async {
+    if (_api == null || state.isLoading || state.isScanning) return;
+    state = state.copyWith(
+      isLoading: true,
+      clearError: true,
+      clearStatus: true,
+    );
+    Directory? temporaryDirectory;
+    try {
+      temporaryDirectory = await Directory.systemTemp.createTemp(
+        'guangya-media-',
+      );
+      final backup = File('${temporaryDirectory.path}/media-library.sqlite3');
+      await _store.exportBackupTo(backup.path);
+      await _api!.fileUpload(
+        backup,
+        parentID: parentID,
+        contentType: 'application/vnd.sqlite3',
+      );
+      state = state.copyWith(statusMessage: '刮削数据已同步到云盘');
+    } catch (error) {
+      state = state.copyWith(errorMessage: '同步到云盘失败：$error');
+    } finally {
+      if (temporaryDirectory != null && await temporaryDirectory.exists()) {
+        await temporaryDirectory.delete(recursive: true);
+      }
+      state = state.copyWith(isLoading: false);
+    }
+  }
+
+  Future<List<CloudFile>> cloudScrapedBackups() async {
+    if (_api == null) return const [];
+    final response = await _api!.searchFiles(
+      'media-library.sqlite3',
+      pageSize: 100,
+    );
+    return _extractFiles(response)
+        .where(
+          (file) =>
+              !file.isDirectory && file.name.toLowerCase().endsWith('.sqlite3'),
+        )
+        .toList();
+  }
+
+  Future<void> importScrapedDataFromCloud(CloudFile backup) async {
+    if (_api == null || state.isLoading || state.isScanning) return;
+    state = state.copyWith(
+      isLoading: true,
+      clearError: true,
+      clearStatus: true,
+    );
+    Directory? temporaryDirectory;
+    try {
+      final download = await _api!.downloadURL(backup.id);
+      final url = _findStringDeep(download, const [
+        'url',
+        'downloadUrl',
+        'download_url',
+        'dlink',
+      ]);
+      if (url == null || Uri.tryParse(url)?.hasScheme != true) {
+        throw Exception('云盘未返回有效下载地址');
+      }
+      temporaryDirectory = await Directory.systemTemp.createTemp(
+        'guangya-media-',
+      );
+      final localBackup = File(
+        '${temporaryDirectory.path}/media-library.sqlite3',
+      );
+      await Dio().download(url, localBackup.path);
+      await _applyImportedBackup(localBackup.path);
+    } catch (error) {
+      state = state.copyWith(errorMessage: '从云盘同步失败：$error');
+    } finally {
+      if (temporaryDirectory != null && await temporaryDirectory.exists()) {
+        await temporaryDirectory.delete(recursive: true);
+      }
+      state = state.copyWith(isLoading: false);
+    }
+  }
+
+  Future<void> _applyImportedBackup(String backupPath) async {
+    final stats = await _store.importBackup(backupPath);
+    final libraries = await _loadLibraries();
+    final selectedID = libraries.isEmpty ? null : libraries.first.id;
+    state = state.copyWith(
+      libraries: libraries,
+      selectedLibraryID: selectedID,
+      clearSelectedLibrary: selectedID == null,
+      items: selectedID == null ? const [] : await _loadItems(selectedID),
+      statusMessage: '刮削数据已导入，已回收 ${_formatBytes(stats.reclaimedBytes)}',
+    );
+    if (selectedID != null) {
+      unawaited(_hydrateMissingArtwork(selectedID, state.items));
     }
   }
 

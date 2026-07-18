@@ -14,7 +14,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>光鸭云盘</string>
+	<string>小黄鸭</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -22,7 +22,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>guangya_flutter</string>
+	<string>小黄鸭</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -88,7 +88,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>我们需要使用相机来拍摄照片。</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>光鸭云盘需要访问本地网络来发现和连接设备。</string>
+	<string>小黄鸭需要访问本地网络来发现和连接设备。</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_googlecast._tcp</string>

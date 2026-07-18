@@ -115,6 +115,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(mediaLibraryProvider);
+    final compact = MediaQuery.sizeOf(context).width < 720;
     ref.listen<MediaLibraryState>(mediaLibraryProvider, (previous, next) {
       final message = next.errorMessage ?? next.statusMessage;
       final previousMessage = previous?.errorMessage ?? previous?.statusMessage;
@@ -145,15 +146,20 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     });
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+      padding: EdgeInsets.fromLTRB(
+        compact ? 10 : 18,
+        compact ? 10 : 14,
+        compact ? 10 : 18,
+        compact ? 10 : 18,
+      ),
       child: Column(
         children: [
-          _buildHeader(context, state),
-          const SizedBox(height: 12),
+          _buildHeader(context, state, compact: compact),
+          SizedBox(height: compact ? 8 : 12),
           _buildToolbar(context, state),
-          const SizedBox(height: 12),
+          SizedBox(height: compact ? 8 : 12),
           Expanded(
-            child: widget.showLibrarySidebar
+            child: widget.showLibrarySidebar && !compact
                 ? Row(
                     children: [
                       _buildLibraryList(context, state),
@@ -171,12 +177,20 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     );
   }
 
-  Widget _buildHeader(BuildContext context, MediaLibraryState state) {
+  Widget _buildHeader(
+    BuildContext context,
+    MediaLibraryState state, {
+    required bool compact,
+  }) {
     final cs = ShadTheme.of(context).colorScheme;
     final stats = state.statistics;
-    return Row(
+    final title = Row(
       children: [
-        Icon(Icons.movie_filter_rounded, size: 26, color: cs.primary),
+        Icon(
+          Icons.movie_filter_rounded,
+          size: compact ? 22 : 26,
+          color: cs.primary,
+        ),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
@@ -185,7 +199,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               Text(
                 widget.searchTitle ?? '光鸭影视',
                 style: TextStyle(
-                  fontSize: 21,
+                  fontSize: compact ? 18 : 21,
                   fontWeight: FontWeight.w700,
                   color: cs.foreground,
                 ),
@@ -198,41 +212,59 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             ],
           ),
         ),
-        _statPill(
-          context,
-          '全部',
-          stats.total.toString(),
-          selected: _wallFilter == _MediaWallFilter.all,
-          onTap: () => _selectWallFilter(_MediaWallFilter.all),
-        ),
-        _statPill(
-          context,
-          '电影',
-          stats.movies.toString(),
-          selected: _wallFilter == _MediaWallFilter.movies,
-          onTap: () => _selectWallFilter(_MediaWallFilter.movies),
-        ),
-        _statPill(
-          context,
-          '剧集',
-          stats.series.toString(),
-          selected: _wallFilter == _MediaWallFilter.series,
-          onTap: () => _selectWallFilter(_MediaWallFilter.series),
-        ),
-        _statPill(
-          context,
-          '合集',
-          stats.collections.toString(),
-          selected: _wallFilter == _MediaWallFilter.collections,
-          onTap: () => _selectWallFilter(_MediaWallFilter.collections),
-        ),
-        _statPill(
-          context,
-          '待匹配',
-          stats.unmatched.toString(),
-          selected: _wallFilter == _MediaWallFilter.unmatched,
-          onTap: () => _selectWallFilter(_MediaWallFilter.unmatched),
-        ),
+      ],
+    );
+    final pills = [
+      _statPill(
+        context,
+        '全部',
+        stats.total.toString(),
+        selected: _wallFilter == _MediaWallFilter.all,
+        onTap: () => _selectWallFilter(_MediaWallFilter.all),
+      ),
+      _statPill(
+        context,
+        '电影',
+        stats.movies.toString(),
+        selected: _wallFilter == _MediaWallFilter.movies,
+        onTap: () => _selectWallFilter(_MediaWallFilter.movies),
+      ),
+      _statPill(
+        context,
+        '剧集',
+        stats.series.toString(),
+        selected: _wallFilter == _MediaWallFilter.series,
+        onTap: () => _selectWallFilter(_MediaWallFilter.series),
+      ),
+      _statPill(
+        context,
+        '合集',
+        stats.collections.toString(),
+        selected: _wallFilter == _MediaWallFilter.collections,
+        onTap: () => _selectWallFilter(_MediaWallFilter.collections),
+      ),
+      _statPill(
+        context,
+        '待匹配',
+        stats.unmatched.toString(),
+        selected: _wallFilter == _MediaWallFilter.unmatched,
+        onTap: () => _selectWallFilter(_MediaWallFilter.unmatched),
+      ),
+    ];
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          title,
+          const SizedBox(height: 8),
+          Wrap(spacing: 0, runSpacing: 6, children: pills),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(child: title),
+        ...pills,
       ],
     );
   }
@@ -284,6 +316,134 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   Widget _buildToolbar(BuildContext context, MediaLibraryState state) {
     final cs = ShadTheme.of(context).colorScheme;
     final detailWork = _detailWork;
+    final compact = MediaQuery.sizeOf(context).width < 720;
+    if (compact) {
+      return Column(
+        children: [
+          Row(
+            children: [
+              if (detailWork != null) ...[
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: () => setState(() => _detailWork = null),
+                  child: const Icon(Icons.arrow_back_rounded, size: 18),
+                ),
+                const SizedBox(width: 6),
+              ],
+              Expanded(
+                child: ShadInput(
+                  controller: _searchController,
+                  placeholder: const Text('搜索影视库或匹配 TMDB…'),
+                  leading: Icon(
+                    Icons.search_rounded,
+                    size: 16,
+                    color: cs.mutedForeground,
+                  ),
+                  onChanged: (value) => ref
+                      .read(mediaLibraryProvider.notifier)
+                      .setSearchQuery(value),
+                  onSubmitted: _searchTMDB,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (detailWork != null) ...[
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: _detailSyncing
+                        ? null
+                        : () =>
+                              unawaited(_refreshAndRecognizeDetail(detailWork)),
+                    leading: const Icon(Icons.auto_awesome_rounded, size: 16),
+                    child: const Text('媒体识别'),
+                  ),
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: _manualMatchPreparing
+                        ? null
+                        : () => unawaited(_showManualTMDBMatch(detailWork)),
+                    leading: const Icon(Icons.manage_search_rounded, size: 16),
+                    child: const Text('手动匹配'),
+                  ),
+                ] else ...[
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: () => _showCreateLibraryDialog(context, ref),
+                    leading: const Icon(Icons.add_rounded, size: 16),
+                    child: const Text('媒体库'),
+                  ),
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: _backupBusy || state.isScanning
+                        ? null
+                        : _exportScrapedData,
+                    leading: const Icon(Icons.save_alt_rounded, size: 16),
+                    child: const Text('导出'),
+                  ),
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: _backupBusy || state.isScanning
+                        ? null
+                        : _importScrapedData,
+                    leading: const Icon(Icons.upload_file_rounded, size: 16),
+                    child: const Text('导入'),
+                  ),
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: _backupBusy || state.isScanning
+                        ? null
+                        : _syncScrapedDataToCloud,
+                    leading: const Icon(Icons.cloud_upload_rounded, size: 16),
+                    child: const Text('上传云盘'),
+                  ),
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: _backupBusy || state.isScanning
+                        ? null
+                        : _syncScrapedDataFromCloud,
+                    leading: const Icon(Icons.cloud_download_rounded, size: 16),
+                    child: const Text('云盘恢复'),
+                  ),
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: state.selectedLibrary == null || state.isScanning
+                        ? null
+                        : () => ref
+                              .read(mediaLibraryProvider.notifier)
+                              .rescanSelectedLibrary(),
+                    leading: const Icon(Icons.refresh_rounded, size: 16),
+                    child: const Text('扫描'),
+                  ),
+                  if (state.isScanning)
+                    ShadButton.destructive(
+                      size: ShadButtonSize.sm,
+                      onPressed: () =>
+                          ref.read(mediaLibraryProvider.notifier).cancelScan(),
+                      leading: const Icon(Icons.stop_rounded, size: 16),
+                      child: const Text('停止'),
+                    ),
+                  ShadButton(
+                    size: ShadButtonSize.sm,
+                    onPressed: _tmdbApiKey.isEmpty
+                        ? null
+                        : () => _searchTMDB(_searchController.text),
+                    leading: const Icon(Icons.travel_explore_rounded, size: 16),
+                    child: const Text('匹配'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      );
+    }
     return Row(
       children: [
         if (detailWork != null) ...[
@@ -346,6 +506,22 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 : _importScrapedData,
             leading: const Icon(Icons.upload_file_rounded, size: 16),
             child: const Text('导入数据'),
+          ),
+          const SizedBox(width: 8),
+          ShadButton.outline(
+            onPressed: _backupBusy || state.isScanning
+                ? null
+                : _syncScrapedDataToCloud,
+            leading: const Icon(Icons.cloud_upload_rounded, size: 16),
+            child: const Text('同步云盘'),
+          ),
+          const SizedBox(width: 8),
+          ShadButton.outline(
+            onPressed: _backupBusy || state.isScanning
+                ? null
+                : _syncScrapedDataFromCloud,
+            leading: const Icon(Icons.cloud_download_rounded, size: 16),
+            child: const Text('云盘恢复'),
           ),
           const SizedBox(width: 8),
           ShadButton.outline(
@@ -948,6 +1124,87 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     setState(() => _backupBusy = true);
     try {
       await ref.read(mediaLibraryProvider.notifier).importScrapedData(path);
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _syncScrapedDataToCloud() async {
+    final fileState = ref.read(fileProvider);
+    final parentID = fileState.folderPath.isEmpty
+        ? null
+        : fileState.folderPath.last.id;
+    setState(() => _backupBusy = true);
+    try {
+      await ref
+          .read(mediaLibraryProvider.notifier)
+          .exportScrapedDataToCloud(parentID: parentID);
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _syncScrapedDataFromCloud() async {
+    final notifier = ref.read(mediaLibraryProvider.notifier);
+    setState(() => _backupBusy = true);
+    List<CloudFile> backups;
+    try {
+      backups = await notifier.cloudScrapedBackups();
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+    if (!mounted || backups.isEmpty) {
+      if (mounted && backups.isEmpty) {
+        ShadSonner.maybeOf(context)?.show(
+          const ShadToast(
+            title: Text('云盘恢复'),
+            description: Text('云盘中没有找到 media-library.sqlite3 备份。'),
+          ),
+        );
+      }
+      return;
+    }
+    final selected = await showShadDialog<CloudFile>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('从云盘恢复刮削数据'),
+        description: const Text('选择一个 SQLite 备份，恢复会合并到当前本地媒体库。'),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+        child: SizedBox(
+          width: 620,
+          height: 360,
+          child: ListView.separated(
+            itemCount: backups.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (_, index) {
+              final backup = backups[index];
+              return ListTile(
+                leading: const Icon(Icons.storage_rounded),
+                title: Text(
+                  backup.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  '${backup.formattedSize} · ${backup.modifiedAt}',
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.of(dialogContext).pop(backup),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      await notifier.importScrapedDataFromCloud(selected);
     } finally {
       if (mounted) setState(() => _backupBusy = false);
     }
@@ -2186,112 +2443,127 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         ? _tmdbImageURL(item.posterPath!, size: 'w342')
         : null;
     final backdrops = _heroBackdropPaths(item);
-    return SizedBox(
-      height: 340,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (backdrops.isNotEmpty)
-              PageView.builder(
-                controller: _backdropController,
-                itemCount: backdrops.length,
-                onPageChanged: (index) => _backdropIndex = index,
-                itemBuilder: (_, index) => CachedNetworkImage(
-                  imageUrl: _tmdbImageURL(backdrops[index], size: 'w1280'),
-                  fit: BoxFit.cover,
-                  errorWidget: (_, _, _) => _tmdbDirectFallback(
-                    path: backdrops[index],
-                    size: 'w1280',
-                    fallback: ColoredBox(color: cs.muted),
-                  ),
-                ),
-              )
-            else
-              ColoredBox(color: cs.muted),
-            ColoredBox(color: Colors.black.withValues(alpha: 0.58)),
-            Padding(
-              padding: const EdgeInsets.all(22),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  SizedBox(
-                    width: 150,
-                    height: 225,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: posterURL == null
-                          ? _detailPosterFallback(cs, isSeries)
-                          : CachedNetworkImage(
-                              imageUrl: posterURL,
-                              fit: BoxFit.cover,
-                              errorWidget: (_, _, _) => _tmdbDirectFallback(
-                                path: item.posterPath!,
-                                size: 'w342',
-                                fallback: _detailPosterFallback(cs, isSeries),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 600;
+        return SizedBox(
+          height: compact ? 500 : 340,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (backdrops.isNotEmpty)
+                  PageView.builder(
+                    controller: _backdropController,
+                    itemCount: backdrops.length,
+                    onPageChanged: (index) => _backdropIndex = index,
+                    itemBuilder: (_, index) => CachedNetworkImage(
+                      imageUrl: _tmdbImageURL(backdrops[index], size: 'w1280'),
+                      fit: BoxFit.cover,
+                      errorWidget: (_, _, _) => _tmdbDirectFallback(
+                        path: backdrops[index],
+                        size: 'w1280',
+                        fallback: ColoredBox(color: cs.muted),
+                      ),
+                    ),
+                  )
+                else
+                  ColoredBox(color: cs.muted),
+                ColoredBox(color: Colors.black.withValues(alpha: 0.58)),
+                Padding(
+                  padding: EdgeInsets.all(compact ? 16 : 22),
+                  child: Flex(
+                    direction: compact ? Axis.vertical : Axis.horizontal,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    crossAxisAlignment: compact
+                        ? CrossAxisAlignment.start
+                        : CrossAxisAlignment.end,
+                    children: [
+                      SizedBox(
+                        width: compact ? 104 : 150,
+                        height: compact ? 156 : 225,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: posterURL == null
+                              ? _detailPosterFallback(cs, isSeries)
+                              : CachedNetworkImage(
+                                  imageUrl: posterURL,
+                                  fit: BoxFit.cover,
+                                  errorWidget: (_, _, _) => _tmdbDirectFallback(
+                                    path: item.posterPath!,
+                                    size: 'w342',
+                                    fallback: _detailPosterFallback(
+                                      cs,
+                                      isSeries,
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: compact ? 0 : 20,
+                        height: compact ? 12 : 0,
+                      ),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SelectableText(
+                              item.title,
+                              style: TextStyle(
+                                fontSize: compact ? 23 : 28,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
                               ),
                             ),
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SelectableText(
-                          item.title,
-                          style: const TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
-                        if (item.originalTitle.isNotEmpty &&
-                            item.originalTitle != item.title) ...[
-                          const SizedBox(height: 3),
-                          SelectableText(
-                            item.originalTitle,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.white.withValues(alpha: 0.72),
+                            if (item.originalTitle.isNotEmpty &&
+                                item.originalTitle != item.title) ...[
+                              const SizedBox(height: 3),
+                              SelectableText(
+                                item.originalTitle,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.white.withValues(alpha: 0.72),
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                ShadBadge(child: Text(isSeries ? '剧集' : '电影')),
+                                if (item.year.isNotEmpty)
+                                  ShadBadge.outline(child: Text(item.year)),
+                                if (item.hasChineseAudio)
+                                  const ShadBadge.outline(child: Text('中文音轨')),
+                                if (item.hasChineseSubtitle)
+                                  const ShadBadge.outline(child: Text('中文字幕')),
+                              ],
                             ),
-                          ),
-                        ],
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            ShadBadge(child: Text(isSeries ? '剧集' : '电影')),
-                            if (item.year.isNotEmpty)
-                              ShadBadge.outline(child: Text(item.year)),
-                            if (item.hasChineseAudio)
-                              const ShadBadge.outline(child: Text('中文音轨')),
-                            if (item.hasChineseSubtitle)
-                              const ShadBadge.outline(child: Text('中文字幕')),
+                            const SizedBox(height: 14),
+                            SelectableText(
+                              item.overview.isEmpty ? '暂无影视简介。' : item.overview,
+                              maxLines: compact ? 3 : 4,
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.55,
+                                color: Colors.white.withValues(alpha: 0.82),
+                              ),
+                            ),
                           ],
                         ),
-                        const SizedBox(height: 14),
-                        SelectableText(
-                          item.overview.isEmpty ? '暂无影视简介。' : item.overview,
-                          maxLines: 4,
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.55,
-                            color: Colors.white.withValues(alpha: 0.82),
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -2891,68 +3163,42 @@ class _ManualTMDBMatchDialogState
               ),
             ),
             const SizedBox(height: 10),
-            Wrap(
-              spacing: 12,
-              runSpacing: 10,
+            Row(
               children: [
-                _manualMatchField(
-                  label: '类型',
-                  child: SizedBox(
-                    width: 150,
-                    child: ShadSelect<String>(
-                      initialValue: _mediaKind,
-                      options: const [
-                        ShadOption(value: 'auto', child: Text('自动')),
-                        ShadOption(value: 'movie', child: Text('电影')),
-                        ShadOption(value: 'tv', child: Text('电视剧')),
-                      ],
-                      selectedOptionBuilder: (context, value) =>
-                          Text(switch (value) {
-                            'movie' => '电影',
-                            'tv' => '电视剧',
-                            _ => '自动',
-                          }),
-                      onChanged: (value) {
-                        if (value != null) setState(() => _mediaKind = value);
-                      },
-                    ),
+                Expanded(child: _mediaKindPills(cs)),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 100,
+                  child: ShadInput(
+                    controller: _yearController,
+                    keyboardType: TextInputType.number,
+                    placeholder: const Text('年份（可选）'),
                   ),
                 ),
-                _manualMatchField(
-                  label: '年份',
-                  child: SizedBox(
-                    width: 96,
+              ],
+            ),
+            if (_mediaKind == 'tv') ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
                     child: ShadInput(
-                      controller: _yearController,
+                      controller: _seasonController,
                       keyboardType: TextInputType.number,
-                      placeholder: const Text('可选'),
+                      placeholder: const Text('季号'),
                     ),
                   ),
-                ),
-                if (_mediaKind == 'tv') ...[
-                  _manualMatchField(
-                    label: '第几季',
-                    child: SizedBox(
-                      width: 88,
-                      child: ShadInput(
-                        controller: _seasonController,
-                        keyboardType: TextInputType.number,
-                      ),
-                    ),
-                  ),
-                  _manualMatchField(
-                    label: '第几集',
-                    child: SizedBox(
-                      width: 88,
-                      child: ShadInput(
-                        controller: _episodeController,
-                        keyboardType: TextInputType.number,
-                      ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ShadInput(
+                      controller: _episodeController,
+                      keyboardType: TextInputType.number,
+                      placeholder: const Text('集号'),
                     ),
                   ),
                 ],
-              ],
-            ),
+              ),
+            ],
             const SizedBox(height: 12),
             Expanded(
               child: _searching
@@ -2995,6 +3241,11 @@ class _ManualTMDBMatchDialogState
     final release =
         (candidate['release_date'] ?? candidate['first_air_date'] ?? '')
             .toString();
+    final originalTitle =
+        (candidate['original_title'] ?? candidate['original_name'] ?? '')
+            .toString();
+    final mediaType = candidate['media_type'] == 'tv' ? '电视剧' : '电影';
+    final tmdbID = candidate['id']?.toString() ?? '';
     final posterPath = candidate['poster_path']?.toString();
     return Material(
       color: Colors.transparent,
@@ -3005,8 +3256,8 @@ class _ManualTMDBMatchDialogState
           child: Row(
             children: [
               SizedBox(
-                width: 44,
-                height: 64,
+                width: 54,
+                height: 78,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: posterPath == null || posterPath.isEmpty
@@ -3052,14 +3303,38 @@ class _ManualTMDBMatchDialogState
                       ),
                     ),
                     const SizedBox(height: 3),
-                    Text(
-                      '${release.length >= 4 ? release.substring(0, 4) : '未知年份'} · ${candidate['media_type'] == 'tv' ? '剧集' : '电影'}',
-                      style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                    if (originalTitle.isNotEmpty && originalTitle != title) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        originalTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      children: [
+                        ShadBadge.outline(child: Text(mediaType)),
+                        ShadBadge.outline(
+                          child: Text(
+                            release.length >= 4
+                                ? release.substring(0, 4)
+                                : '未知年份',
+                          ),
+                        ),
+                        if (tmdbID.isNotEmpty)
+                          ShadBadge.outline(child: Text('TMDB $tmdbID')),
+                      ],
                     ),
                     const SizedBox(height: 3),
                     Text(
                       candidate['overview']?.toString() ?? '',
-                      maxLines: 2,
+                      maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 11, color: cs.mutedForeground),
                     ),
@@ -3070,6 +3345,53 @@ class _ManualTMDBMatchDialogState
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _mediaKindPills(ShadColorScheme cs) {
+    const values = [('auto', '自动'), ('movie', '电影'), ('tv', '电视剧')];
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: cs.muted,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: cs.border),
+      ),
+      child: Row(
+        children: [
+          for (final option in values)
+            Expanded(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(999),
+                onTap: () => setState(() => _mediaKind = option.$1),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 140),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: _mediaKind == option.$1 ? cs.background : null,
+                    borderRadius: BorderRadius.circular(999),
+                    border: _mediaKind == option.$1
+                        ? Border.all(color: cs.border)
+                        : null,
+                  ),
+                  child: Text(
+                    option.$2,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: _mediaKind == option.$1
+                          ? FontWeight.w700
+                          : FontWeight.w500,
+                      color: _mediaKind == option.$1
+                          ? cs.foreground
+                          : cs.mutedForeground,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

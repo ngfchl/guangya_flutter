@@ -33,7 +33,7 @@ class GuangyaApp extends ConsumerWidget {
     }
 
     return ShadApp(
-      title: '光鸭云盘',
+      title: '小黄鸭',
       debugShowCheckedModeBanner: false,
       theme: lightTheme,
       darkTheme: darkTheme,

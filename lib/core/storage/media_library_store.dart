@@ -260,7 +260,13 @@ class MediaLibraryStore {
 
   Future<void> exportBackupTo(String destinationPath) async {
     final db = await _db;
-    await db.execute('PRAGMA wal_checkpoint(FULL)');
+    try {
+      await db.execute('PRAGMA wal_checkpoint(FULL)');
+    } on DatabaseException catch (error) {
+      // sqflite_darwin may report a successful WAL checkpoint as code 0
+      // "not an error". The checkpoint has already completed in that case.
+      if (!error.toString().contains('not an error')) rethrow;
+    }
     await File(db.path).copy(destinationPath);
   }
 

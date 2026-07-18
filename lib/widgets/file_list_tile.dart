@@ -133,6 +133,7 @@ class _FileListTileState extends State<FileListTile> {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     final cs = theme.colorScheme;
+    final compact = MediaQuery.sizeOf(context).width < 720;
     return ShadContextMenuRegion(
       items: [
         if (widget.isRecycleItem)
@@ -209,7 +210,7 @@ class _FileListTileState extends State<FileListTile> {
         onTap: _isRenaming ? null : widget.onSelect,
         onDoubleTap: _isRenaming ? null : widget.onOpen,
         child: Container(
-          height: 62,
+          height: compact ? 74 : 62,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: widget.isSelected
@@ -217,106 +218,197 @@ class _FileListTileState extends State<FileListTile> {
                 : cs.card,
             border: Border(bottom: BorderSide(color: cs.border, width: 0.5)),
           ),
-          child: Row(
-            children: [
-              if (widget.isSelected)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Icon(
-                    LucideIcons.checkCircle,
-                    size: 18,
-                    color: theme.colorScheme.primary,
-                  ),
-                ),
-              SizedBox(
-                width: 32,
-                height: 32,
-                child: FileIcon(file: widget.file),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _isRenaming
-                    ? Row(
-                        children: [
-                          Expanded(
-                            child: ShadInput(
-                              controller: _renameController,
-                              focusNode: _renameFocusNode,
-                              autofocus: true,
-                              enabled: !_isSubmittingRename,
-                              onSubmitted: (_) => _confirmRename(),
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          ShadButton.ghost(
-                            size: ShadButtonSize.sm,
-                            onPressed: _isSubmittingRename
-                                ? null
-                                : _confirmRename,
-                            child: const Icon(Icons.check_rounded, size: 17),
-                          ),
-                          ShadButton.ghost(
-                            size: ShadButtonSize.sm,
-                            onPressed: _isSubmittingRename
-                                ? null
-                                : _cancelRename,
-                            child: const Icon(Icons.close_rounded, size: 17),
-                          ),
-                        ],
-                      )
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.file.name,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              color: theme.colorScheme.foreground,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          if (widget.file.directoryContentSummary
-                              case final String summary)
-                            Text(
-                              summary,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: theme.colorScheme.mutedForeground,
-                              ),
-                            ),
-                        ],
+          child: compact
+              ? _buildCompactContent(theme)
+              : Row(
+                  children: [
+                    if (widget.isSelected)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Icon(
+                          LucideIcons.checkCircle,
+                          size: 18,
+                          color: theme.colorScheme.primary,
+                        ),
                       ),
-              ),
-              SizedBox(
-                width: 80,
-                child: Text(
-                  widget.file.formattedSize,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: theme.colorScheme.mutedForeground,
-                  ),
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: FileIcon(file: widget.file),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _isRenaming
+                          ? Row(
+                              children: [
+                                Expanded(
+                                  child: ShadInput(
+                                    controller: _renameController,
+                                    focusNode: _renameFocusNode,
+                                    autofocus: true,
+                                    enabled: !_isSubmittingRename,
+                                    onSubmitted: (_) => _confirmRename(),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                ShadButton.ghost(
+                                  size: ShadButtonSize.sm,
+                                  onPressed: _isSubmittingRename
+                                      ? null
+                                      : _confirmRename,
+                                  child: const Icon(
+                                    Icons.check_rounded,
+                                    size: 17,
+                                  ),
+                                ),
+                                ShadButton.ghost(
+                                  size: ShadButtonSize.sm,
+                                  onPressed: _isSubmittingRename
+                                      ? null
+                                      : _cancelRename,
+                                  child: const Icon(
+                                    Icons.close_rounded,
+                                    size: 17,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.file.name,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                    color: theme.colorScheme.foreground,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                if (widget.file.directoryContentSummary
+                                    case final String summary)
+                                  Text(
+                                    summary,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: theme.colorScheme.mutedForeground,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                    ),
+                    SizedBox(
+                      width: 80,
+                      child: Text(
+                        widget.file.formattedSize,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: theme.colorScheme.mutedForeground,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 120,
+                      child: Text(
+                        widget.file.modifiedAt,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: theme.colorScheme.mutedForeground,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 12),
-              SizedBox(
-                width: 120,
-                child: Text(
-                  widget.file.modifiedAt,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: theme.colorScheme.mutedForeground,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
         ),
       ),
+    );
+  }
+
+  Widget _buildCompactContent(ShadThemeData theme) {
+    final file = widget.file;
+    final summary = file.directoryContentSummary;
+    final metadata = [
+      if (summary case final String value) value,
+      file.formattedSize,
+      if (file.modifiedAt.isNotEmpty) file.modifiedAt,
+    ].join(' · ');
+    return Row(
+      children: [
+        if (widget.isSelected)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Icon(
+              LucideIcons.checkCircle,
+              size: 18,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+        SizedBox(width: 38, height: 38, child: FileIcon(file: file)),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _isRenaming
+              ? Row(
+                  children: [
+                    Expanded(
+                      child: ShadInput(
+                        controller: _renameController,
+                        focusNode: _renameFocusNode,
+                        autofocus: true,
+                        enabled: !_isSubmittingRename,
+                        onSubmitted: (_) => _confirmRename(),
+                      ),
+                    ),
+                    ShadButton.ghost(
+                      size: ShadButtonSize.sm,
+                      onPressed: _isSubmittingRename ? null : _confirmRename,
+                      child: const Icon(Icons.check_rounded, size: 17),
+                    ),
+                    ShadButton.ghost(
+                      size: ShadButtonSize.sm,
+                      onPressed: _isSubmittingRename ? null : _cancelRename,
+                      child: const Icon(Icons.close_rounded, size: 17),
+                    ),
+                  ],
+                )
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      file.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      metadata,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.colorScheme.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+        if (!_isRenaming && file.isDirectory)
+          Icon(
+            Icons.chevron_right_rounded,
+            size: 20,
+            color: theme.colorScheme.mutedForeground,
+          ),
+      ],
     );
   }
 }

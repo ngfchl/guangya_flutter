@@ -73,7 +73,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   ),
                   const SizedBox(height: 20),
                   Text(
-                    '光鸭云盘',
+                    '小黄鸭',
                     style: TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,

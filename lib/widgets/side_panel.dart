@@ -4,6 +4,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import '../providers/file_provider.dart';
 import '../providers/auth_provider.dart';
 import '../models/cloud_file.dart';
+import 'share_link_dialog.dart';
 
 class SidePanel extends ConsumerWidget {
   const SidePanel({super.key});
@@ -25,7 +26,11 @@ class SidePanel extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                Icon(LucideIcons.info, size: 18, color: theme.colorScheme.foreground),
+                Icon(
+                  LucideIcons.info,
+                  size: 18,
+                  color: theme.colorScheme.foreground,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   '详情',
@@ -118,7 +123,10 @@ class SidePanel extends ConsumerWidget {
   }
 
   Widget _buildSingleFileDetail(
-      BuildContext context, CloudFile file, WidgetRef ref) {
+    BuildContext context,
+    CloudFile file,
+    WidgetRef ref,
+  ) {
     final theme = ShadTheme.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -165,7 +173,10 @@ class SidePanel extends ConsumerWidget {
   }
 
   Widget _buildMultiSelectDetail(
-      BuildContext context, List<CloudFile> files, WidgetRef ref) {
+    BuildContext context,
+    List<CloudFile> files,
+    WidgetRef ref,
+  ) {
     final theme = ShadTheme.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -202,7 +213,10 @@ class SidePanel extends ConsumerWidget {
   }
 
   Widget _buildActionButtons(
-      BuildContext context, CloudFile file, WidgetRef ref) {
+    BuildContext context,
+    CloudFile file,
+    WidgetRef ref,
+  ) {
     final theme = ShadTheme.of(context);
     final fp = ref.read(fileProvider.notifier);
     return Wrap(
@@ -238,7 +252,10 @@ class SidePanel extends ConsumerWidget {
           context,
           icon: LucideIcons.share2,
           label: '分享',
-          onTap: () {},
+          onTap: () => showShareLinkDialog(
+            context,
+            createLink: () => fp.createShare(file),
+          ),
         ),
         _actionChip(
           context,
@@ -286,12 +303,18 @@ class SidePanel extends ConsumerWidget {
         children: [
           Text(
             label,
-            style: TextStyle(fontSize: 13, color: theme.colorScheme.mutedForeground),
+            style: TextStyle(
+              fontSize: 13,
+              color: theme.colorScheme.mutedForeground,
+            ),
           ),
           Flexible(
             child: Text(
               value,
-              style: TextStyle(fontSize: 13, color: theme.colorScheme.foreground),
+              style: TextStyle(
+                fontSize: 13,
+                color: theme.colorScheme.foreground,
+              ),
               overflow: TextOverflow.ellipsis,
             ),
           ),

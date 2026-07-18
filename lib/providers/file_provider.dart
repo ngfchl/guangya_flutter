@@ -978,8 +978,8 @@ class FileNotifier extends StateNotifier<FileState> {
     }
   }
 
-  Future<void> createShare(CloudFile file) async {
-    if (_api == null) return;
+  Future<String?> createShare(CloudFile file) async {
+    if (_api == null) return null;
     try {
       state = state.copyWith(statusMessage: '正在创建分享…');
       final result = await _api!.shareCreate([file.id], title: file.name);
@@ -990,14 +990,15 @@ class FileNotifier extends StateNotifier<FileState> {
         'link',
       ]);
       if (link != null) {
-        await Clipboard.setData(ClipboardData(text: link));
-        state = state.copyWith(statusMessage: '分享链接已复制');
+        state = state.copyWith(statusMessage: '分享链接已生成');
+        return link;
       } else {
         state = state.copyWith(statusMessage: '分享已创建');
       }
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
     }
+    return null;
   }
 
   Future<void> restoreFiles(List<CloudFile> files) async {
