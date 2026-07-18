@@ -11,6 +11,17 @@ import '../providers/media_library_provider.dart';
 import '../widgets/file_list_tile.dart';
 import '../widgets/media_player_dialog.dart';
 
+class _SearchSelectAllIntent extends Intent {
+  const _SearchSelectAllIntent();
+}
+
+const _searchSelectAllShortcuts = <ShortcutActivator, Intent>{
+  SingleActivator(LogicalKeyboardKey.keyA, meta: true):
+      _SearchSelectAllIntent(),
+  SingleActivator(LogicalKeyboardKey.keyA, control: true):
+      _SearchSelectAllIntent(),
+};
+
 class FileSearchResultsPage extends ConsumerStatefulWidget {
   final String query;
   final VoidCallback onClose;
@@ -32,6 +43,13 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
   late Future<List<CloudFile>> _results = _search();
   final _selectedIDs = <String>{};
   String? _selectionAnchorID;
+  final _resultsFocusNode = FocusNode(debugLabel: 'file-search-results');
+
+  @override
+  void dispose() {
+    _resultsFocusNode.dispose();
+    super.dispose();
+  }
 
   bool get _commandPressed =>
       HardwareKeyboard.instance.logicalKeysPressed.contains(
@@ -87,6 +105,14 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
       _selectedIDs
         ..clear()
         ..addAll(selected);
+    });
+  }
+
+  void _selectAllFiles(List<CloudFile> files) {
+    setState(() {
+      _selectedIDs
+        ..clear()
+        ..addAll(files.map((file) => file.id));
     });
   }
 
@@ -230,23 +256,39 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                   ),
                 ),
               Expanded(
-                child: ListView.builder(
-                  itemCount: files.length,
-                  itemBuilder: (context, index) {
-                    final file = files[index];
-                    return FileListTile(
-                      file: file,
-                      isSelected: _selectedIDs.contains(file.id),
-                      onSelect: () => _selectFile(files, file),
-                      onOpen: () => notifier.downloadFile(file),
-                      onCopy: () => notifier.copyToClipboard([file]),
-                      onCut: () => notifier.cutToClipboard([file]),
-                      onCopyFastTransfer: () =>
-                          notifier.copyFastTransferJSON(file),
-                      onDownload: () => notifier.downloadFile(file),
-                      onDelete: () => notifier.deleteFiles([file]),
-                    );
+                child: FocusableActionDetector(
+                  focusNode: _resultsFocusNode,
+                  shortcuts: _searchSelectAllShortcuts,
+                  actions: {
+                    _SearchSelectAllIntent:
+                        CallbackAction<_SearchSelectAllIntent>(
+                          onInvoke: (_) {
+                            _selectAllFiles(files);
+                            return null;
+                          },
+                        ),
                   },
+                  child: Listener(
+                    onPointerDown: (_) => _resultsFocusNode.requestFocus(),
+                    child: ListView.builder(
+                      itemCount: files.length,
+                      itemBuilder: (context, index) {
+                        final file = files[index];
+                        return FileListTile(
+                          file: file,
+                          isSelected: _selectedIDs.contains(file.id),
+                          onSelect: () => _selectFile(files, file),
+                          onOpen: () => notifier.downloadFile(file),
+                          onCopy: () => notifier.copyToClipboard([file]),
+                          onCut: () => notifier.cutToClipboard([file]),
+                          onCopyFastTransfer: () =>
+                              notifier.copyFastTransferJSON(file),
+                          onDownload: () => notifier.downloadFile(file),
+                          onDelete: () => notifier.deleteFiles([file]),
+                        );
+                      },
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -275,7 +317,14 @@ class MediaSearchResultsPage extends ConsumerStatefulWidget {
 class _MediaSearchResultsPageState
     extends ConsumerState<MediaSearchResultsPage> {
   final _selectedIDs = <String>{};
+  final _resultsFocusNode = FocusNode(debugLabel: 'media-search-results');
   bool _recognizing = false;
+
+  @override
+  void dispose() {
+    _resultsFocusNode.dispose();
+    super.dispose();
+  }
 
   Future<void> _recognize(Iterable<MediaLibraryItem> items) async {
     setState(() => _recognizing = true);
@@ -284,6 +333,14 @@ class _MediaSearchResultsPageState
     } finally {
       if (mounted) setState(() => _recognizing = false);
     }
+  }
+
+  void _selectAllItems(List<MediaLibraryItem> items) {
+    setState(() {
+      _selectedIDs
+        ..clear()
+        ..addAll(items.map((item) => item.id));
+    });
   }
 
   @override
@@ -337,138 +394,164 @@ class _MediaSearchResultsPageState
                   ),
                 ),
               Expanded(
-                child: GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 260,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 2.25,
-                  ),
-                  itemCount: items.length,
-                  itemBuilder: (context, index) {
-                    final item = items[index];
-                    final isSelected = _selectedIDs.contains(item.id);
-                    return ShadContextMenuRegion(
-                      items: [
-                        ShadContextMenuItem.inset(
-                          leading: const Icon(
-                            LucideIcons.wandSparkles,
-                            size: 16,
-                          ),
-                          onPressed: _recognizing
-                              ? null
-                              : () => _recognize([item]),
-                          child: const Text('手动识别'),
+                child: FocusableActionDetector(
+                  focusNode: _resultsFocusNode,
+                  shortcuts: _searchSelectAllShortcuts,
+                  actions: {
+                    _SearchSelectAllIntent:
+                        CallbackAction<_SearchSelectAllIntent>(
+                          onInvoke: (_) {
+                            _selectAllItems(items);
+                            return null;
+                          },
                         ),
-                        ShadContextMenuItem.inset(
-                          leading: const Icon(LucideIcons.play, size: 16),
-                          onPressed: () =>
-                              showMediaPlayerDialog(context, item.file),
-                          child: const Text('播放'),
-                        ),
-                        ShadContextMenuItem.inset(
-                          leading: const Icon(
-                            LucideIcons.monitorPlay,
-                            size: 16,
-                          ),
-                          onPressed: () => showShadDialog<void>(
-                            context: context,
-                            builder: (_) =>
-                                ExternalPlayerDialog(file: item.file),
-                          ),
-                          child: const Text('外部播放器'),
-                        ),
-                        ShadContextMenuItem.inset(
-                          leading: const Icon(LucideIcons.download, size: 16),
-                          onPressed: () => ref
-                              .read(fileProvider.notifier)
-                              .downloadFile(item.file),
-                          child: const Text('下载'),
-                        ),
-                        ShadContextMenuItem.inset(
-                          leading: const Icon(LucideIcons.refreshCw, size: 16),
-                          onPressed: () => ref
-                              .read(mediaLibraryProvider.notifier)
-                              .scanSelectedLibrary(),
-                          child: const Text('重新扫描媒体库'),
-                        ),
-                      ],
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          onTap: () => setState(() {
-                            isSelected
-                                ? _selectedIDs.remove(item.id)
-                                : _selectedIDs.add(item.id);
-                          }),
-                          borderRadius: BorderRadius.circular(8),
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: cs.card,
-                              border: Border.all(
-                                color: isSelected ? cs.primary : cs.border,
-                              ),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 46,
-                                  height: 64,
-                                  decoration: BoxDecoration(
-                                    color: cs.muted,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Icon(
-                                    Icons.movie_rounded,
-                                    color: cs.mutedForeground,
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        item.title,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: cs.foreground,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        item.year.isEmpty ? '年份未知' : item.year,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: cs.mutedForeground,
-                                        ),
-                                      ),
-                                      Text(
-                                        item.file.cloudPath,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          color: cs.mutedForeground,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
                   },
+                  child: Listener(
+                    onPointerDown: (_) => _resultsFocusNode.requestFocus(),
+                    child: GridView.builder(
+                      padding: const EdgeInsets.all(16),
+                      gridDelegate:
+                          const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 260,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: 2.25,
+                          ),
+                      itemCount: items.length,
+                      itemBuilder: (context, index) {
+                        final item = items[index];
+                        final isSelected = _selectedIDs.contains(item.id);
+                        return ShadContextMenuRegion(
+                          items: [
+                            ShadContextMenuItem.inset(
+                              leading: const Icon(
+                                LucideIcons.wandSparkles,
+                                size: 16,
+                              ),
+                              onPressed: _recognizing
+                                  ? null
+                                  : () => _recognize([item]),
+                              child: const Text('手动识别'),
+                            ),
+                            ShadContextMenuItem.inset(
+                              leading: const Icon(LucideIcons.play, size: 16),
+                              onPressed: () =>
+                                  showMediaPlayerDialog(context, item.file),
+                              child: const Text('播放'),
+                            ),
+                            ShadContextMenuItem.inset(
+                              leading: const Icon(
+                                LucideIcons.monitorPlay,
+                                size: 16,
+                              ),
+                              onPressed: () => showShadDialog<void>(
+                                context: context,
+                                builder: (_) =>
+                                    ExternalPlayerDialog(file: item.file),
+                              ),
+                              child: const Text('外部播放器'),
+                            ),
+                            ShadContextMenuItem.inset(
+                              leading: const Icon(
+                                LucideIcons.download,
+                                size: 16,
+                              ),
+                              onPressed: () => ref
+                                  .read(fileProvider.notifier)
+                                  .downloadFile(item.file),
+                              child: const Text('下载'),
+                            ),
+                            ShadContextMenuItem.inset(
+                              leading: const Icon(
+                                LucideIcons.refreshCw,
+                                size: 16,
+                              ),
+                              onPressed: () => ref
+                                  .read(mediaLibraryProvider.notifier)
+                                  .scanSelectedLibrary(),
+                              child: const Text('重新扫描媒体库'),
+                            ),
+                          ],
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () => setState(() {
+                                isSelected
+                                    ? _selectedIDs.remove(item.id)
+                                    : _selectedIDs.add(item.id);
+                              }),
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: cs.card,
+                                  border: Border.all(
+                                    color: isSelected ? cs.primary : cs.border,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 46,
+                                      height: 64,
+                                      decoration: BoxDecoration(
+                                        color: cs.muted,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Icon(
+                                        Icons.movie_rounded,
+                                        color: cs.mutedForeground,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            item.title,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: cs.foreground,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            item.year.isEmpty
+                                                ? '年份未知'
+                                                : item.year,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: cs.mutedForeground,
+                                            ),
+                                          ),
+                                          Text(
+                                            item.file.cloudPath,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: cs.mutedForeground,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
                 ),
               ),
             ],
