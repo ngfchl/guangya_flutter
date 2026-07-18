@@ -15,14 +15,35 @@ import '../widgets/media_player_dialog.dart';
 enum _MediaWallFilter { all, movies, series, collections, unmatched }
 
 String _tmdbImageURL(String path, {required String size}) {
-  final source = path.startsWith('http')
-      ? path
-      : 'https://image.tmdb.org/t/p/$size$path';
+  final source = _tmdbDirectImageURL(path, size: size);
   return Uri.https('wsrv.nl', '/', {
     'url': source,
     'output': 'webp',
     'q': '85',
   }).toString();
+}
+
+String _tmdbDirectImageURL(String path, {required String size}) {
+  return path.startsWith('http')
+      ? path
+      : 'https://image.tmdb.org/t/p/$size$path';
+}
+
+Widget _tmdbDirectFallback({
+  required String path,
+  required String size,
+  required Widget fallback,
+  BoxFit fit = BoxFit.cover,
+  double? width,
+  double? height,
+}) {
+  return CachedNetworkImage(
+    imageUrl: _tmdbDirectImageURL(path, size: size),
+    fit: fit,
+    width: width,
+    height: height,
+    errorWidget: (_, _, _) => fallback,
+  );
 }
 
 class MediaLibraryPage extends ConsumerStatefulWidget {
@@ -679,8 +700,13 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                     width: 74,
                     height: 110,
                     fit: BoxFit.cover,
-                    errorWidget: (context, url, error) =>
-                        _posterPlaceholder(context, 74, 110),
+                    errorWidget: (context, url, error) => _tmdbDirectFallback(
+                      path: posterPath,
+                      size: 'w200',
+                      width: 74,
+                      height: 110,
+                      fallback: _posterPlaceholder(context, 74, 110),
+                    ),
                   ),
           ),
           const SizedBox(width: 12),
@@ -1591,11 +1617,15 @@ class _MediaCollectionTile extends ConsumerWidget {
                           : CachedNetworkImage(
                               imageUrl: posterURL,
                               fit: BoxFit.cover,
-                              errorWidget: (_, _, _) => Center(
-                                child: Icon(
-                                  Icons.collections_bookmark_rounded,
-                                  color: cs.mutedForeground,
-                                  size: 34,
+                              errorWidget: (_, _, _) => _tmdbDirectFallback(
+                                path: item.posterPath!,
+                                size: 'w342',
+                                fallback: Center(
+                                  child: Icon(
+                                    Icons.collections_bookmark_rounded,
+                                    color: cs.mutedForeground,
+                                    size: 34,
+                                  ),
                                 ),
                               ),
                             ),
@@ -1716,8 +1746,11 @@ class _MediaPosterTile extends ConsumerWidget {
                             : CachedNetworkImage(
                                 imageUrl: posterURL,
                                 fit: BoxFit.cover,
-                                errorWidget: (_, _, _) =>
-                                    _posterFallback(cs, isSeries),
+                                errorWidget: (_, _, _) => _tmdbDirectFallback(
+                                  path: item.posterPath!,
+                                  size: 'w342',
+                                  fallback: _posterFallback(cs, isSeries),
+                                ),
                               ),
                       ),
                       if (work.resources.length > 1)
@@ -1979,8 +2012,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                 : CachedNetworkImage(
                     imageUrl: posterURL,
                     fit: BoxFit.cover,
-                    errorWidget: (_, _, _) =>
-                        _detailPosterFallback(cs, isSeries),
+                    errorWidget: (_, _, _) => _tmdbDirectFallback(
+                      path: item.posterPath!,
+                      size: 'w342',
+                      fallback: _detailPosterFallback(cs, isSeries),
+                    ),
                   ),
           ),
         ),
@@ -2094,7 +2130,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                   imageUrl: _tmdbImageURL(backdrops[index], size: 'w780'),
                   width: 260,
                   fit: BoxFit.cover,
-                  errorWidget: (_, _, _) => const SizedBox(width: 260),
+                  errorWidget: (_, _, _) => _tmdbDirectFallback(
+                    path: backdrops[index],
+                    size: 'w780',
+                    width: 260,
+                    fallback: const SizedBox(width: 260),
+                  ),
                 ),
               ),
             ),
@@ -2123,7 +2164,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                   imageUrl: _tmdbImageURL(posters[index], size: 'w342'),
                   width: 106,
                   fit: BoxFit.cover,
-                  errorWidget: (_, _, _) => const SizedBox(width: 106),
+                  errorWidget: (_, _, _) => _tmdbDirectFallback(
+                    path: posters[index],
+                    size: 'w342',
+                    width: 106,
+                    fallback: const SizedBox(width: 106),
+                  ),
                 ),
               ),
             ),
@@ -2171,10 +2217,16 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                                 width: 96,
                                 height: 122,
                                 fit: BoxFit.cover,
-                                errorWidget: (_, _, _) => Container(
+                                errorWidget: (_, _, _) => _tmdbDirectFallback(
+                                  path: profile,
+                                  size: 'w185',
                                   width: 96,
                                   height: 122,
-                                  color: cs.muted,
+                                  fallback: Container(
+                                    width: 96,
+                                    height: 122,
+                                    color: cs.muted,
+                                  ),
                                 ),
                               ),
                       ),
@@ -2593,12 +2645,16 @@ class _ManualTMDBMatchDialogState
                       : CachedNetworkImage(
                           imageUrl: _tmdbImageURL(posterPath, size: 'w154'),
                           fit: BoxFit.cover,
-                          errorWidget: (_, _, _) => Container(
-                            color: cs.muted,
-                            child: Icon(
-                              Icons.movie_rounded,
-                              size: 20,
-                              color: cs.mutedForeground,
+                          errorWidget: (_, _, _) => _tmdbDirectFallback(
+                            path: posterPath,
+                            size: 'w154',
+                            fallback: Container(
+                              color: cs.muted,
+                              child: Icon(
+                                Icons.movie_rounded,
+                                size: 20,
+                                color: cs.mutedForeground,
+                              ),
                             ),
                           ),
                         ),
