@@ -12,6 +12,8 @@ import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 
+enum _MediaWallFilter { all, movies, series, unmatched }
+
 class MediaLibraryPage extends ConsumerStatefulWidget {
   final bool showLibrarySidebar;
   final String? searchTitle;
@@ -38,6 +40,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   List<Map<String, dynamic>> _tmdbResults = [];
   bool _backupBusy = false;
   _MediaWork? _detailWork;
+  _MediaWallFilter _wallFilter = _MediaWallFilter.all;
   final _apiKeyController = TextEditingController();
   final _searchController = TextEditingController();
 
@@ -120,27 +123,70 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             ],
           ),
         ),
-        _statPill(context, '全部', stats.total.toString()),
-        _statPill(context, '电影', stats.movies.toString()),
-        _statPill(context, '剧集', stats.series.toString()),
-        _statPill(context, '待匹配', stats.unmatched.toString()),
+        _statPill(
+          context,
+          '全部',
+          stats.total.toString(),
+          selected: _wallFilter == _MediaWallFilter.all,
+          onTap: () => setState(() => _wallFilter = _MediaWallFilter.all),
+        ),
+        _statPill(
+          context,
+          '电影',
+          stats.movies.toString(),
+          selected: _wallFilter == _MediaWallFilter.movies,
+          onTap: () => setState(() => _wallFilter = _MediaWallFilter.movies),
+        ),
+        _statPill(
+          context,
+          '剧集',
+          stats.series.toString(),
+          selected: _wallFilter == _MediaWallFilter.series,
+          onTap: () => setState(() => _wallFilter = _MediaWallFilter.series),
+        ),
+        _statPill(
+          context,
+          '待匹配',
+          stats.unmatched.toString(),
+          selected: _wallFilter == _MediaWallFilter.unmatched,
+          onTap: () => setState(() => _wallFilter = _MediaWallFilter.unmatched),
+        ),
       ],
     );
   }
 
-  Widget _statPill(BuildContext context, String label, String value) {
+  Widget _statPill(
+    BuildContext context,
+    String label,
+    String value, {
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
     final cs = ShadTheme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(left: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: cs.muted,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: cs.border),
-      ),
-      child: Text(
-        '$label $value',
-        style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: selected ? cs.primary.withValues(alpha: 0.12) : cs.muted,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: selected ? cs.primary : cs.border),
+            ),
+            child: Text(
+              '$label $value',
+              style: TextStyle(
+                fontSize: 12,
+                color: selected ? cs.primary : cs.mutedForeground,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -351,7 +397,21 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     if (_tmdbSearching || _tmdbResults.isNotEmpty || _tmdbError != null) {
       return _tmdbResultPanel(context);
     }
-    final works = _MediaWork.fromItems(state.visibleItems);
+    final visibleItems = state.visibleItems;
+    final filteredItems = switch (_wallFilter) {
+      _MediaWallFilter.all => visibleItems,
+      _MediaWallFilter.movies =>
+        visibleItems
+            .where((item) => item.mediaKind == TMDBMediaKind.movie)
+            .toList(),
+      _MediaWallFilter.series =>
+        visibleItems
+            .where((item) => item.mediaKind == TMDBMediaKind.tv)
+            .toList(),
+      _MediaWallFilter.unmatched =>
+        visibleItems.where((item) => !item.isMatched).toList(),
+    };
+    final works = _MediaWork.fromItems(filteredItems);
     if (state.selectedLibrary == null) {
       return _mainEmpty(context, '还没有媒体库', '从云盘根目录或当前目录创建一个媒体库');
     }
@@ -374,7 +434,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     final content = works.isEmpty
         ? _mainEmpty(
             context,
-            state.isScanning ? '正在扫描媒体库' : '没有扫描结果',
+            state.isScanning
+                ? '正在扫描媒体库'
+                : (_wallFilter == _MediaWallFilter.all ? '没有扫描结果' : '当前筛选没有结果'),
             state.isScanning ? '发现并入库的资源会立即显示在这里' : '点击扫描读取该媒体库下的视频文件',
           )
         : LayoutBuilder(
