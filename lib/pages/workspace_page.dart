@@ -126,6 +126,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                             });
                           }
                         },
+                        onSettings: () => _showSettings(context),
                       ),
                       const SizedBox(height: 14),
                       Expanded(
@@ -210,6 +211,7 @@ class _TopBar extends StatelessWidget {
   final bool searchOpen;
   final ValueChanged<String> onSearch;
   final VoidCallback onToggleSearch;
+  final VoidCallback onSettings;
 
   const _TopBar({
     required this.mode,
@@ -219,6 +221,7 @@ class _TopBar extends StatelessWidget {
     required this.searchOpen,
     required this.onSearch,
     required this.onToggleSearch,
+    required this.onSettings,
   });
 
   @override
@@ -248,6 +251,21 @@ class _TopBar extends StatelessWidget {
                   label: '光鸭影视',
                   selected: mode == WorkspaceMode.media,
                   onTap: () => onModeChanged(WorkspaceMode.media),
+                ),
+                ShadTooltip(
+                  builder: (_) => const Text('设置'),
+                  child: SizedBox(
+                    width: 34,
+                    height: 32,
+                    child: GestureDetector(
+                      onTap: onSettings,
+                      child: Icon(
+                        Icons.settings_rounded,
+                        size: 17,
+                        color: cs.mutedForeground,
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),

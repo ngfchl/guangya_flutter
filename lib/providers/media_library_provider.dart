@@ -209,31 +209,66 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
       final tmdbProxyPort =
           StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
-      for (final file in discovered) {
-        if (_cancelScan) break;
-        final fallback = MediaLibraryItem.fromFile(library.id, file);
-        unique[file.id] = await _recognizeMediaItem(
-          fallback,
-          tmdbApiKey,
-          proxyHost: tmdbProxyHost,
-          proxyPort: tmdbProxyPort,
-        );
-        state = state.copyWith(
-          progress: MediaLibraryScanProgress(
-            phase: tmdbApiKey.isEmpty ? '正在建立本地索引' : '正在识别 ${file.name}',
-            completed: unique.length,
-            total: discovered.length,
-          ),
-        );
+      final input = <String, CloudFile>{
+        for (final file in discovered) file.id: file,
+      }.values.toList();
+      var nextIndex = 0;
+      var completed = 0;
+      Future<void> pendingPersistence = Future.value();
+      final initialItems = _loadAllItems()
+        ..removeWhere((item) => item.libraryID == library.id);
+
+      Future<void> worker() async {
+        while (!_cancelScan) {
+          if (nextIndex >= input.length) return;
+          final file = input[nextIndex++];
+          final fallback = MediaLibraryItem.fromFile(library.id, file);
+          final item = await _recognizeMediaItem(
+            fallback,
+            tmdbApiKey,
+            proxyHost: tmdbProxyHost,
+            proxyPort: tmdbProxyPort,
+          );
+          unique[file.id] = item;
+          completed += 1;
+          final visible = unique.values.toList()
+            ..sort(
+              (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+            );
+          // Serialize writes so an earlier, smaller snapshot cannot overwrite
+          // a later batch while recognition workers finish out of order.
+          pendingPersistence = pendingPersistence.then(
+            (_) => _saveAllItems([...initialItems, ...unique.values]),
+          );
+          await pendingPersistence;
+          state = state.copyWith(
+            items: visible,
+            progress: MediaLibraryScanProgress(
+              phase: tmdbApiKey.isEmpty ? '正在建立本地索引' : '正在识别 ${file.name}',
+              completed: completed,
+              total: input.length,
+            ),
+          );
+        }
       }
+
+      final concurrency =
+          (int.tryParse(
+                    StorageManager.get<String>(
+                          StorageKeys.mediaScanConcurrency,
+                        ) ??
+                        '3',
+                  ) ??
+                  3)
+              .clamp(1, 20);
+      await Future.wait(List.generate(concurrency, (_) => worker()));
+      await pendingPersistence;
       final items = unique.values.toList()
         ..sort(
           (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
         );
 
-      final allItems = _loadAllItems()
-        ..removeWhere((item) => item.libraryID == library.id)
-        ..addAll(items);
+      final allItems = [...initialItems, ...items];
       final updatedLibrary = library.copyWith(updatedAt: DateTime.now());
       final libraries = state.libraries
           .map((item) => item.id == library.id ? updatedLibrary : item)

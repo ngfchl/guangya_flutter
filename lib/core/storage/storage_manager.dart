@@ -15,6 +15,14 @@ class StorageKeys {
   static const String mediaLibraries = 'guangya.mediaLibraries';
   static const String mediaLibraryItems = 'guangya.mediaLibraryItems';
   static const String mediaCategoryRules = 'guangya.mediaCategoryRules';
+  static const String fileListCache = 'guangya.fileListCache';
+  static const String httpProxyHost = 'guangya.httpProxyHost';
+  static const String httpProxyPort = 'guangya.httpProxyPort';
+  static const String mediaScanConcurrency = 'guangya.mediaScanConcurrency';
+  static const String fastTransferConcurrency =
+      'guangya.fastTransferConcurrency';
+  static const String fileCacheTTLMinutes = 'guangya.fileCacheTTLMinutes';
+  static const String defaultFilePageSize = 'guangya.defaultFilePageSize';
 }
 
 class StorageManager {

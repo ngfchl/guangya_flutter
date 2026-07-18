@@ -15,6 +15,12 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   final _tmdbApiKeyController = TextEditingController();
   final _tmdbProxyHostController = TextEditingController();
   final _tmdbProxyPortController = TextEditingController();
+  final _httpProxyHostController = TextEditingController();
+  final _httpProxyPortController = TextEditingController();
+  final _scanConcurrencyController = TextEditingController();
+  final _transferConcurrencyController = TextEditingController();
+  final _cacheTTLController = TextEditingController();
+  final _pageSizeController = TextEditingController();
 
   @override
   void initState() {
@@ -25,6 +31,18 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
     _tmdbProxyPortController.text =
         StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
+    _httpProxyHostController.text =
+        StorageManager.get<String>(StorageKeys.httpProxyHost) ?? '';
+    _httpProxyPortController.text =
+        StorageManager.get<String>(StorageKeys.httpProxyPort) ?? '';
+    _scanConcurrencyController.text =
+        StorageManager.get<String>(StorageKeys.mediaScanConcurrency) ?? '3';
+    _transferConcurrencyController.text =
+        StorageManager.get<String>(StorageKeys.fastTransferConcurrency) ?? '3';
+    _cacheTTLController.text =
+        StorageManager.get<String>(StorageKeys.fileCacheTTLMinutes) ?? '3';
+    _pageSizeController.text =
+        StorageManager.get<String>(StorageKeys.defaultFilePageSize) ?? '50';
   }
 
   @override
@@ -32,6 +50,12 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     _tmdbApiKeyController.dispose();
     _tmdbProxyHostController.dispose();
     _tmdbProxyPortController.dispose();
+    _httpProxyHostController.dispose();
+    _httpProxyPortController.dispose();
+    _scanConcurrencyController.dispose();
+    _transferConcurrencyController.dispose();
+    _cacheTTLController.dispose();
+    _pageSizeController.dispose();
     super.dispose();
   }
 
@@ -62,11 +86,14 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('外观',
-                  style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: cs.foreground)),
+              Text(
+                '外观',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: cs.foreground,
+                ),
+              ),
               const SizedBox(height: 12),
               _SettingsRow(
                 icon: Icons.light_mode_rounded,
@@ -77,26 +104,35 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                   placeholder: const Text('选择主题'),
                   options: [
                     ShadOption(
-                        value: 'light',
-                        child: const Row(children: [
+                      value: 'light',
+                      child: const Row(
+                        children: [
                           Icon(Icons.light_mode_rounded, size: 14),
                           SizedBox(width: 8),
-                          Text('浅色')
-                        ])),
+                          Text('浅色'),
+                        ],
+                      ),
+                    ),
                     ShadOption(
-                        value: 'dark',
-                        child: const Row(children: [
+                      value: 'dark',
+                      child: const Row(
+                        children: [
                           Icon(Icons.dark_mode_rounded, size: 14),
                           SizedBox(width: 8),
-                          Text('深色')
-                        ])),
+                          Text('深色'),
+                        ],
+                      ),
+                    ),
                     ShadOption(
-                        value: 'system',
-                        child: const Row(children: [
+                      value: 'system',
+                      child: const Row(
+                        children: [
                           Icon(Icons.brightness_auto_rounded, size: 14),
                           SizedBox(width: 8),
-                          Text('跟随系统')
-                        ])),
+                          Text('跟随系统'),
+                        ],
+                      ),
+                    ),
                   ],
                   selectedOptionBuilder: (ctx, value) =>
                       Text(_themeModeToString(_stringToThemeMode(value))),
@@ -112,11 +148,92 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
               const SizedBox(height: 16),
               const ShadSeparator.horizontal(),
               const SizedBox(height: 16),
-              Text('TMDB 配置',
-                  style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: cs.foreground)),
+              Text(
+                '网络与任务',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: cs.foreground,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _SettingsRow(
+                icon: Icons.http_rounded,
+                label: 'HTTP 代理地址',
+                child: SizedBox(
+                  width: 200,
+                  child: ShadInput(
+                    controller: _httpProxyHostController,
+                    placeholder: const Text('例: 127.0.0.1'),
+                  ),
+                ),
+              ),
+              _SettingsRow(
+                icon: Icons.numbers_rounded,
+                label: 'HTTP 代理端口',
+                child: SizedBox(
+                  width: 200,
+                  child: ShadInput(
+                    controller: _httpProxyPortController,
+                    placeholder: const Text('例: 7890'),
+                  ),
+                ),
+              ),
+              _SettingsRow(
+                icon: Icons.memory_rounded,
+                label: '媒体扫描并发',
+                child: SizedBox(
+                  width: 100,
+                  child: ShadInput(
+                    controller: _scanConcurrencyController,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ),
+              _SettingsRow(
+                icon: Icons.bolt_rounded,
+                label: '秒传并发',
+                child: SizedBox(
+                  width: 100,
+                  child: ShadInput(
+                    controller: _transferConcurrencyController,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ),
+              _SettingsRow(
+                icon: Icons.cached_rounded,
+                label: '文件缓存分钟',
+                child: SizedBox(
+                  width: 100,
+                  child: ShadInput(
+                    controller: _cacheTTLController,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ),
+              _SettingsRow(
+                icon: Icons.format_list_numbered_rounded,
+                label: '默认分页大小',
+                child: SizedBox(
+                  width: 100,
+                  child: ShadInput(
+                    controller: _pageSizeController,
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const ShadSeparator.horizontal(),
+              const SizedBox(height: 16),
+              Text(
+                'TMDB 配置',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: cs.foreground,
+                ),
+              ),
               const SizedBox(height: 12),
               _SettingsRow(
                 icon: Icons.key_rounded,
@@ -156,17 +273,22 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
               const SizedBox(height: 16),
               const ShadSeparator.horizontal(),
               const SizedBox(height: 16),
-              Text('关于',
-                  style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: cs.foreground)),
+              Text(
+                '关于',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: cs.foreground,
+                ),
+              ),
               const SizedBox(height: 12),
               _SettingsRow(
                 icon: Icons.cloud_rounded,
                 label: '版本',
-                child: Text('v1.0.0',
-                    style: TextStyle(fontSize: 13, color: cs.mutedForeground)),
+                child: Text(
+                  'v1.0.0',
+                  style: TextStyle(fontSize: 13, color: cs.mutedForeground),
+                ),
               ),
             ],
           ),
@@ -177,11 +299,41 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
 
   void _saveSettings() {
     StorageManager.set(
-        StorageKeys.tmdbApiKey, _tmdbApiKeyController.text.trim());
+      StorageKeys.tmdbApiKey,
+      _tmdbApiKeyController.text.trim(),
+    );
     StorageManager.set(
-        StorageKeys.tmdbProxyHost, _tmdbProxyHostController.text.trim());
+      StorageKeys.tmdbProxyHost,
+      _tmdbProxyHostController.text.trim(),
+    );
     StorageManager.set(
-        StorageKeys.tmdbProxyPort, _tmdbProxyPortController.text.trim());
+      StorageKeys.tmdbProxyPort,
+      _tmdbProxyPortController.text.trim(),
+    );
+    StorageManager.set(
+      StorageKeys.httpProxyHost,
+      _httpProxyHostController.text.trim(),
+    );
+    StorageManager.set(
+      StorageKeys.httpProxyPort,
+      _httpProxyPortController.text.trim(),
+    );
+    StorageManager.set(
+      StorageKeys.mediaScanConcurrency,
+      _scanConcurrencyController.text.trim(),
+    );
+    StorageManager.set(
+      StorageKeys.fastTransferConcurrency,
+      _transferConcurrencyController.text.trim(),
+    );
+    StorageManager.set(
+      StorageKeys.fileCacheTTLMinutes,
+      _cacheTTLController.text.trim(),
+    );
+    StorageManager.set(
+      StorageKeys.defaultFilePageSize,
+      _pageSizeController.text.trim(),
+    );
   }
 
   String _themeModeToString(ThemeMode mode) {
@@ -212,8 +364,11 @@ class _SettingsRow extends StatelessWidget {
   final String label;
   final Widget child;
 
-  const _SettingsRow(
-      {required this.icon, required this.label, required this.child});
+  const _SettingsRow({
+    required this.icon,
+    required this.label,
+    required this.child,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -225,8 +380,7 @@ class _SettingsRow extends StatelessWidget {
         children: [
           Icon(icon, size: 18, color: cs.mutedForeground),
           const SizedBox(width: 12),
-          Text(label,
-              style: TextStyle(fontSize: 14, color: cs.foreground)),
+          Text(label, style: TextStyle(fontSize: 14, color: cs.foreground)),
           const Spacer(),
           child,
         ],

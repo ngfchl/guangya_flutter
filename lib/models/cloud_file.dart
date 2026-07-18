@@ -162,6 +162,19 @@ class CloudFile {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'isDir': isDirectory,
+    'size': size,
+    'gcid': gcid,
+    'subDirCount': subDirectoryCount,
+    'subFileCount': subFileCount,
+    'updateTime': modifiedAt,
+    'path': cloudPath,
+    'fileType': fileType,
+  };
+
   static String _extractId(Map<String, dynamic> json) {
     for (final key in ['fileId', 'file_id', 'resId', 'res_id', 'fid', 'id']) {
       final v = json[key];

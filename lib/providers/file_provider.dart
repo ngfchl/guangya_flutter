@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../api/guangya_api.dart';
+import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 
 enum FileSort { name, size, modifiedAt, createdAt, type }
@@ -158,18 +159,67 @@ class FileNotifier extends StateNotifier<FileState> {
 
   Future<void> loadFiles({String? parentID}) async {
     if (_api == null) return;
+    final resolvedParentID = parentID ?? _currentParentID;
+    final cacheKey =
+        '${state.section.name}:${resolvedParentID ?? 'root'}:${state.currentPage}:${state.pageSize}';
+    final cached = _readCachedFiles(cacheKey);
+    if (cached != null) {
+      state = state.copyWith(files: cached, clearError: true);
+      return;
+    }
     state = state.copyWith(isLoading: true, clearError: true);
 
     try {
-      final result = await _fetchFiles(parentID ?? _currentParentID);
+      final result = await _fetchFiles(resolvedParentID);
       final extracted = _extractFiles(result);
       final totalPages = _extractTotalPages(result, extracted.length);
       state = state.copyWith(files: extracted, totalPages: totalPages);
+      await _writeCachedFiles(cacheKey, extracted);
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
     } finally {
       state = state.copyWith(isLoading: false);
     }
+  }
+
+  List<CloudFile>? _readCachedFiles(String key) {
+    final raw = StorageManager.get<dynamic>(StorageKeys.fileListCache);
+    if (raw is! Map || raw[key] is! Map) return null;
+    final entry = Map<dynamic, dynamic>.from(raw[key] as Map);
+    final cachedAt = int.tryParse(entry['cachedAt']?.toString() ?? '');
+    final files = entry['files'];
+    final ttlMinutes =
+        int.tryParse(
+          StorageManager.get<String>(StorageKeys.fileCacheTTLMinutes) ?? '3',
+        ) ??
+        3;
+    if (cachedAt == null ||
+        files is! List ||
+        DateTime.now().millisecondsSinceEpoch - cachedAt >
+            Duration(minutes: ttlMinutes.clamp(0, 60)).inMilliseconds) {
+      return null;
+    }
+    try {
+      return files
+          .whereType<Map>()
+          .map((value) => CloudFile.fromJson(Map<String, dynamic>.from(value)))
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _writeCachedFiles(String key, List<CloudFile> files) async {
+    final raw = StorageManager.get<dynamic>(StorageKeys.fileListCache);
+    final cache = raw is Map
+        ? Map<dynamic, dynamic>.from(raw)
+        : <dynamic, dynamic>{};
+    cache[key] = {
+      'cachedAt': DateTime.now().millisecondsSinceEpoch,
+      'files': files.map((file) => file.toJson()).toList(),
+    };
+    if (cache.length > 80) cache.remove(cache.keys.first);
+    await StorageManager.set(StorageKeys.fileListCache, cache);
   }
 
   Future<Map<String, dynamic>> _fetchFiles(String? parentID) async {
