@@ -23,6 +23,7 @@ class StorageKeys {
       'guangya.fastTransferConcurrency';
   static const String fileCacheTTLMinutes = 'guangya.fileCacheTTLMinutes';
   static const String defaultFilePageSize = 'guangya.defaultFilePageSize';
+  static const String fastTransferSession = 'guangya.fastTransferSession';
 }
 
 class StorageManager {

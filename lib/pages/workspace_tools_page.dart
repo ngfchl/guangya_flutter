@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -484,6 +486,28 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   String _result = '';
 
   @override
+  void initState() {
+    super.initState();
+    final raw = StorageManager.get<dynamic>(StorageKeys.fastTransferSession);
+    if (raw is Map && raw['entries'] is List) {
+      final entries = (raw['entries'] as List)
+          .whereType<Map>()
+          .map(
+            (value) =>
+                FastTransferEntry.fromJson(Map<String, dynamic>.from(value)),
+          )
+          .where((entry) => entry.path.isNotEmpty)
+          .toList();
+      if (entries.isNotEmpty) {
+        _json.text = jsonEncode({
+          'files': entries.map((entry) => entry.toJson()).toList(),
+        });
+      }
+      _result = raw['result']?.toString() ?? '';
+    }
+  }
+
+  @override
   void dispose() {
     _json.dispose();
     super.dispose();
@@ -500,6 +524,10 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     setState(() {
       _running = true;
       _result = '';
+    });
+    await StorageManager.set(StorageKeys.fastTransferSession, {
+      'entries': entries.map((entry) => entry.toJson()).toList(),
+      'result': '待执行 ${entries.length} 项',
     });
     var completed = 0;
     var failed = 0;
@@ -564,6 +592,10 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       if (mounted) {
         setState(() => _result = '秒传完成：成功 $completed，失败 $failed');
       }
+      await StorageManager.set(StorageKeys.fastTransferSession, {
+        'entries': entries.map((entry) => entry.toJson()).toList(),
+        'result': '秒传完成：成功 $completed，失败 $failed',
+      });
     } catch (error) {
       if (mounted) {
         setState(() => _result = '已提交 $completed / ${entries.length} 个：$error');

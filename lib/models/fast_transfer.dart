@@ -22,6 +22,16 @@ class FastTransferEntry {
     if (md5 != null) 'etag': md5,
     if (gcid != null) 'gcid': gcid,
   };
+
+  factory FastTransferEntry.fromJson(Map<String, dynamic> value) =>
+      FastTransferEntry(
+        path: value['path']?.toString() ?? '',
+        size: value['size'] is int
+            ? value['size'] as int
+            : int.tryParse('${value['size']}') ?? 0,
+        md5: value['etag']?.toString(),
+        gcid: value['gcid']?.toString(),
+      );
 }
 
 List<FastTransferEntry> parseFastTransferJSON(String text) {
