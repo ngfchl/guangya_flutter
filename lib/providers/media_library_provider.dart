@@ -398,6 +398,22 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     });
   }
 
+  Future<MediaLibraryItem> applyTMDBMatch(
+    MediaLibraryItem item,
+    Map<String, dynamic> candidate,
+  ) async {
+    final updated = _itemFromTMDBCandidate(item, candidate);
+    await _store.upsertItems([updated]);
+    state = state.copyWith(
+      items: state.items
+          .map((current) => current.id == updated.id ? updated : current)
+          .toList(),
+      statusMessage: '已匹配《${updated.title}》',
+      clearError: true,
+    );
+    return updated;
+  }
+
   void clearError() {
     state = state.copyWith(clearError: true);
   }
@@ -429,36 +445,39 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         }
       }
       if (candidate == null) return fallback;
-      final type = candidate['media_type']?.toString();
-      final title = (candidate['title'] ?? candidate['name'])
-          ?.toString()
-          .trim();
-      final originalTitle =
-          (candidate['original_title'] ?? candidate['original_name'])
-              ?.toString()
-              .trim();
-      final releaseDate =
-          (candidate['release_date'] ?? candidate['first_air_date'])
-              ?.toString() ??
-          '';
-      return MediaLibraryItem(
-        libraryID: fallback.libraryID,
-        file: fallback.file,
-        tmdbID: _toInt(candidate['id']),
-        title: title == null || title.isEmpty ? fallback.title : title,
-        originalTitle: originalTitle == null || originalTitle.isEmpty
-            ? fallback.originalTitle
-            : originalTitle,
-        mediaKind: type == 'tv' ? TMDBMediaKind.tv : TMDBMediaKind.movie,
-        releaseDate: releaseDate,
-        overview: candidate['overview']?.toString() ?? '',
-        posterPath: candidate['poster_path']?.toString(),
-        backdropPath: candidate['backdrop_path']?.toString(),
-        updatedAt: DateTime.now(),
-      );
+      return _itemFromTMDBCandidate(fallback, candidate);
     } catch (_) {
       return fallback;
     }
+  }
+
+  MediaLibraryItem _itemFromTMDBCandidate(
+    MediaLibraryItem fallback,
+    Map<String, dynamic> candidate,
+  ) {
+    final type = candidate['media_type']?.toString();
+    final title = (candidate['title'] ?? candidate['name'])?.toString().trim();
+    final originalTitle =
+        (candidate['original_title'] ?? candidate['original_name'])
+            ?.toString()
+            .trim();
+    final releaseDate =
+        (candidate['release_date'] ?? candidate['first_air_date'])
+            ?.toString() ??
+        '';
+    return fallback.copyWith(
+      tmdbID: _toInt(candidate['id']),
+      title: title == null || title.isEmpty ? fallback.title : title,
+      originalTitle: originalTitle == null || originalTitle.isEmpty
+          ? fallback.originalTitle
+          : originalTitle,
+      mediaKind: type == 'tv' ? TMDBMediaKind.tv : TMDBMediaKind.movie,
+      releaseDate: releaseDate,
+      overview: candidate['overview']?.toString() ?? '',
+      posterPath: candidate['poster_path']?.toString(),
+      backdropPath: candidate['backdrop_path']?.toString(),
+      updatedAt: DateTime.now(),
+    );
   }
 
   int? _toInt(dynamic value) {

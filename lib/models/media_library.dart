@@ -294,6 +294,43 @@ class MediaLibraryItem {
   String get year => releaseDate.length >= 4 ? releaseDate.substring(0, 4) : '';
   bool get isMatched => mediaKind != null && tmdbID != null;
 
+  MediaLibraryItem copyWith({
+    CloudFile? file,
+    int? tmdbID,
+    bool clearTMDBID = false,
+    String? title,
+    String? originalTitle,
+    TMDBMediaKind? mediaKind,
+    bool clearMediaKind = false,
+    String? releaseDate,
+    String? overview,
+    String? posterPath,
+    String? backdropPath,
+    bool? hasChineseAudio,
+    bool? hasChineseSubtitle,
+    int? collectionID,
+    String? collectionName,
+    DateTime? updatedAt,
+  }) {
+    return MediaLibraryItem(
+      libraryID: libraryID,
+      file: file ?? this.file,
+      tmdbID: clearTMDBID ? null : (tmdbID ?? this.tmdbID),
+      title: title ?? this.title,
+      originalTitle: originalTitle ?? this.originalTitle,
+      mediaKind: clearMediaKind ? null : (mediaKind ?? this.mediaKind),
+      releaseDate: releaseDate ?? this.releaseDate,
+      overview: overview ?? this.overview,
+      posterPath: posterPath ?? this.posterPath,
+      backdropPath: backdropPath ?? this.backdropPath,
+      hasChineseAudio: hasChineseAudio ?? this.hasChineseAudio,
+      hasChineseSubtitle: hasChineseSubtitle ?? this.hasChineseSubtitle,
+      collectionID: collectionID ?? this.collectionID,
+      collectionName: collectionName ?? this.collectionName,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
   factory MediaLibraryItem.fromFile(String libraryID, CloudFile file) {
     final parsed = ParsedMediaName.parse(file.name);
     final kind = parsed.isEpisode ? TMDBMediaKind.tv : TMDBMediaKind.movie;
