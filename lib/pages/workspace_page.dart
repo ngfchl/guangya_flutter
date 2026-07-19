@@ -240,8 +240,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   Widget build(BuildContext context) {
     final fp = ref.watch(fileProvider);
     final mediaState = ref.watch(mediaLibraryProvider);
-    final drawerWidth = (MediaQuery.sizeOf(context).width * 0.82)
-        .clamp(260.0, 320.0)
+    final drawerWidth = (MediaQuery.sizeOf(context).width * 0.9)
+        .clamp(320.0, 360.0)
         .toDouble();
 
     return Scaffold(
@@ -594,34 +594,10 @@ class _TopBar extends StatelessWidget {
         children: [
           const SizedBox(width: 78),
           const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
-          OS26Glass(
-            radius: 13,
-            opacity: 0.42,
-            padding: const EdgeInsets.all(3),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _SegmentButton(
-                  icon: Icons.folder_rounded,
-                  label: '光鸭云盘',
-                  compact: false,
-                  selected: mode == WorkspaceMode.cloud,
-                  onTap: () => onModeChanged(WorkspaceMode.cloud),
-                ),
-                _SegmentButton(
-                  icon: Icons.movie_rounded,
-                  label: '光鸭影视',
-                  compact: false,
-                  selected: mode == WorkspaceMode.media,
-                  onTap: () => onModeChanged(WorkspaceMode.media),
-                ),
-                _TopBarIconButton(
-                  tooltip: '设置',
-                  icon: Icons.settings_rounded,
-                  onTap: onSettings,
-                ),
-              ],
-            ),
+          _ModeSwitcher(
+            mode: mode,
+            onModeChanged: onModeChanged,
+            onSettings: onSettings,
           ),
           const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
           if (mode == WorkspaceMode.cloud) ...[
@@ -690,7 +666,6 @@ class _SegmentButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool compact;
-  final bool showLabelWhenSelected;
   final bool selected;
   final VoidCallback onTap;
 
@@ -698,7 +673,6 @@ class _SegmentButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.compact,
-    this.showLabelWhenSelected = false,
     required this.selected,
     required this.onTap,
   });
@@ -706,11 +680,11 @@ class _SegmentButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    final showLabel = !compact && (!showLabelWhenSelected || selected);
+    final showLabel = !compact;
     return ShadTooltip(
       builder: (_) => Text(label),
       child: ShadButton.ghost(
-        width: compact ? 38 : (showLabelWhenSelected && !selected ? 38 : 120),
+        width: compact ? 38 : 120,
         height: compact ? 38 : 32,
         padding: EdgeInsets.zero,
         onPressed: onTap,
@@ -781,6 +755,49 @@ class _TopBarIconButton extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ModeSwitcher extends StatelessWidget {
+  final WorkspaceMode mode;
+  final ValueChanged<WorkspaceMode> onModeChanged;
+  final VoidCallback onSettings;
+
+  const _ModeSwitcher({
+    required this.mode,
+    required this.onModeChanged,
+    required this.onSettings,
+  });
+
+  @override
+  Widget build(BuildContext context) => OS26Glass(
+    radius: 13,
+    opacity: 0.42,
+    padding: const EdgeInsets.all(3),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _SegmentButton(
+          icon: Icons.folder_rounded,
+          label: '光鸭云盘',
+          compact: false,
+          selected: mode == WorkspaceMode.cloud,
+          onTap: () => onModeChanged(WorkspaceMode.cloud),
+        ),
+        _SegmentButton(
+          icon: Icons.movie_rounded,
+          label: '光鸭影视',
+          compact: false,
+          selected: mode == WorkspaceMode.media,
+          onTap: () => onModeChanged(WorkspaceMode.media),
+        ),
+        _TopBarIconButton(
+          tooltip: '设置',
+          icon: Icons.settings_rounded,
+          onTap: onSettings,
+        ),
+      ],
+    ),
+  );
 }
 
 class _UploadListTopButton extends StatefulWidget {
@@ -913,36 +930,10 @@ class _NativeMobileDrawerContent extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                OS26Glass(
-                  radius: 13,
-                  opacity: 0.42,
-                  padding: const EdgeInsets.all(3),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _SegmentButton(
-                        icon: Icons.folder_rounded,
-                        label: '光鸭云盘',
-                        compact: false,
-                        showLabelWhenSelected: true,
-                        selected: isCloud,
-                        onTap: () => onModeChanged(WorkspaceMode.cloud),
-                      ),
-                      _SegmentButton(
-                        icon: Icons.movie_rounded,
-                        label: '光鸭影视',
-                        compact: false,
-                        showLabelWhenSelected: true,
-                        selected: !isCloud,
-                        onTap: () => onModeChanged(WorkspaceMode.media),
-                      ),
-                      _TopBarIconButton(
-                        tooltip: '设置',
-                        icon: Icons.settings_rounded,
-                        onTap: onSettings,
-                      ),
-                    ],
-                  ),
+                _ModeSwitcher(
+                  mode: mode,
+                  onModeChanged: onModeChanged,
+                  onSettings: onSettings,
                 ),
               ],
             ),
