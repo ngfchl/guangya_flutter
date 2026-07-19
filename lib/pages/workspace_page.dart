@@ -356,14 +356,19 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _showMobileMenu(BuildContext context) {
-    final width = (MediaQuery.sizeOf(context).width * 0.86)
-        .clamp(280.0, 340.0)
-        .toDouble();
+    final viewport = MediaQuery.sizeOf(context);
+    final width = (viewport.width * 0.86).clamp(280.0, 340.0).toDouble();
     showShadSheet(
       context: context,
       side: ShadSheetSide.left,
       builder: (sheetContext) => ShadSheet(
-        constraints: BoxConstraints.tightFor(width: width),
+        // The desktop sidebars contain Expanded/ListView regions. A left
+        // ShadSheet only has a minimum height by default, so make the mobile
+        // viewport height explicit before those flex children are laid out.
+        constraints: BoxConstraints.tightFor(
+          width: width,
+          height: viewport.height,
+        ),
         padding: EdgeInsets.zero,
         scrollable: false,
         child: Column(
