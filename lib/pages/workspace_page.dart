@@ -249,47 +249,38 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       backgroundColor: Colors.transparent,
       drawer: Drawer(
         width: drawerWidth,
-        child: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
-            children: [
-              _MobileSidebarContent(
-                mode: _mode,
-                cloudState: fp,
-                mediaState: mediaState,
-                onModeChanged: (mode) {
-                  Navigator.of(context).pop();
-                  _changeMode(mode);
-                },
-                onSection: (section) {
-                  Navigator.of(context).pop();
-                  ref.read(fileProvider.notifier).setSection(section);
-                },
-                onSettings: () {
-                  Navigator.of(context).pop();
-                  _showSettings(context);
-                },
-                onSignOut: () {
-                  Navigator.of(context).pop();
-                  ref.read(authProvider.notifier).signOut();
-                },
-                onCreateLibrary: () {
-                  Navigator.of(context).pop();
-                  MediaLibraryPage.showCreateDialog(context, ref);
-                },
-                onSelectLibrary: (libraryID) {
-                  Navigator.of(context).pop();
-                  ref
-                      .read(mediaLibraryProvider.notifier)
-                      .selectLibrary(libraryID);
-                },
-                onTool: (tool) {
-                  Navigator.of(context).pop();
-                  _openTool(tool);
-                },
-              ),
-            ],
-          ),
+        child: _NativeMobileDrawerContent(
+          mode: _mode,
+          cloudState: fp,
+          mediaState: mediaState,
+          onModeChanged: (mode) {
+            Navigator.of(context).pop();
+            _changeMode(mode);
+          },
+          onSection: (section) {
+            Navigator.of(context).pop();
+            ref.read(fileProvider.notifier).setSection(section);
+          },
+          onSettings: () {
+            Navigator.of(context).pop();
+            _showSettings(context);
+          },
+          onSignOut: () {
+            Navigator.of(context).pop();
+            ref.read(authProvider.notifier).signOut();
+          },
+          onCreateLibrary: () {
+            Navigator.of(context).pop();
+            MediaLibraryPage.showCreateDialog(context, ref);
+          },
+          onSelectLibrary: (libraryID) {
+            Navigator.of(context).pop();
+            ref.read(mediaLibraryProvider.notifier).selectLibrary(libraryID);
+          },
+          onTool: (tool) {
+            Navigator.of(context).pop();
+            _openTool(tool);
+          },
         ),
       ),
       body: OS26Surface(
@@ -876,9 +867,203 @@ class _MobileDrawerSwipeAreaState extends State<_MobileDrawerSwipeArea> {
   );
 }
 
+class _NativeMobileDrawerContent extends StatelessWidget {
+  final WorkspaceMode mode;
+  final FileState cloudState;
+  final MediaLibraryState mediaState;
+  final ValueChanged<WorkspaceMode> onModeChanged;
+  final ValueChanged<WorkspaceSection> onSection;
+  final VoidCallback onSettings;
+  final VoidCallback onSignOut;
+  final VoidCallback onCreateLibrary;
+  final ValueChanged<String> onSelectLibrary;
+  final ValueChanged<WorkspaceTool> onTool;
+
+  const _NativeMobileDrawerContent({
+    required this.mode,
+    required this.cloudState,
+    required this.mediaState,
+    required this.onModeChanged,
+    required this.onSection,
+    required this.onSettings,
+    required this.onSignOut,
+    required this.onCreateLibrary,
+    required this.onSelectLibrary,
+    required this.onTool,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isCloud = mode == WorkspaceMode.cloud;
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          DrawerHeader(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest,
+            ),
+            margin: EdgeInsets.zero,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '小黄鸭',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.folder_rounded),
+                  title: const Text('光鸭云盘'),
+                  selected: isCloud,
+                  onTap: () => onModeChanged(WorkspaceMode.cloud),
+                ),
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.movie_rounded),
+                  title: const Text('光鸭影视'),
+                  selected: !isCloud,
+                  onTap: () => onModeChanged(WorkspaceMode.media),
+                ),
+              ],
+            ),
+          ),
+          if (isCloud) ...[
+            for (final section in WorkspaceSection.values.where(
+              (section) => section != WorkspaceSection.mediaLibrary,
+            ))
+              _nativeTile(
+                icon: _cloudIcon(section),
+                label: section.label,
+                selected: cloudState.section == section,
+                onTap: () => onSection(section),
+              ),
+            const Divider(),
+            _nativeTile(
+              icon: Icons.manage_search_rounded,
+              label: '文件扫描与清理',
+              onTap: () => onTool(WorkspaceTool.scan),
+            ),
+            _nativeTile(
+              icon: Icons.text_fields_rounded,
+              label: '批量重命名',
+              onTap: () => onTool(WorkspaceTool.rename),
+            ),
+            _nativeTile(
+              icon: Icons.bolt_rounded,
+              label: '秒传工具',
+              onTap: () => onTool(WorkspaceTool.fastTransfer),
+            ),
+            const Divider(),
+            _nativeTile(
+              icon: Icons.settings_rounded,
+              label: '工作区设置',
+              onTap: onSettings,
+            ),
+            _nativeTile(
+              icon: Icons.logout_rounded,
+              label: '退出登录',
+              destructive: true,
+              onTap: onSignOut,
+            ),
+          ] else ...[
+            _nativeTile(
+              icon: Icons.home_rounded,
+              label: '首页',
+              selected: true,
+              onTap: () => onTool(WorkspaceTool.tmdb),
+            ),
+            _nativeTile(
+              icon: Icons.movie_creation_rounded,
+              label: '电影 (${mediaState.statistics.movies})',
+              onTap: () => onTool(WorkspaceTool.tmdb),
+            ),
+            _nativeTile(
+              icon: Icons.live_tv_rounded,
+              label: '电视剧 (${mediaState.statistics.series})',
+              onTap: () => onTool(WorkspaceTool.tmdb),
+            ),
+            _nativeTile(
+              icon: Icons.help_outline_rounded,
+              label: '未识别 (${mediaState.statistics.unmatched})',
+              onTap: () => onTool(WorkspaceTool.tmdb),
+            ),
+            const Divider(),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text('媒体库'),
+            ),
+            for (final library in mediaState.libraries)
+              _nativeTile(
+                icon: library.kind == MediaLibraryKind.series
+                    ? Icons.live_tv_rounded
+                    : Icons.smart_display_rounded,
+                label: library.name,
+                selected: mediaState.selectedLibrary?.id == library.id,
+                onTap: () => onSelectLibrary(library.id),
+              ),
+            _nativeTile(
+              icon: Icons.add_rounded,
+              label: '新建媒体库',
+              onTap: onCreateLibrary,
+            ),
+            _nativeTile(
+              icon: Icons.auto_fix_high_rounded,
+              label: '媒体库管理',
+              onTap: () => onTool(WorkspaceTool.tmdb),
+            ),
+            _nativeTile(
+              icon: Icons.category_rounded,
+              label: '分类管理',
+              onTap: () => onTool(WorkspaceTool.categories),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _nativeTile({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool selected = false,
+    bool destructive = false,
+  }) => ListTile(
+    leading: Icon(icon),
+    title: Text(label),
+    selected: selected,
+    selectedTileColor: Colors.transparent,
+    textColor: destructive ? Colors.red : null,
+    iconColor: destructive ? Colors.red : null,
+    onTap: onTap,
+  );
+
+  IconData _cloudIcon(WorkspaceSection section) => switch (section) {
+    WorkspaceSection.files => Icons.folder_rounded,
+    WorkspaceSection.recentViewed => Icons.access_time_rounded,
+    WorkspaceSection.recentRestored => Icons.history_rounded,
+    WorkspaceSection.photos => Icons.image_rounded,
+    WorkspaceSection.videos => Icons.smart_display_rounded,
+    WorkspaceSection.audio => Icons.music_note_rounded,
+    WorkspaceSection.documents => Icons.description_rounded,
+    WorkspaceSection.cloud => Icons.cloud_download_rounded,
+    WorkspaceSection.shares => Icons.ios_share_rounded,
+    WorkspaceSection.recycle => Icons.delete_outline_rounded,
+    WorkspaceSection.mediaLibrary => Icons.movie_filter_rounded,
+  };
+}
+
 /// A sheet-safe sidebar without desktop flex regions. ShadDialog owns the
 /// vertical scroll extent, so this widget deliberately contains no Expanded
 /// or nested scrollable viewport.
+// ignore: unused_element
 class _MobileSidebarContent extends StatelessWidget {
   final WorkspaceMode mode;
   final FileState cloudState;
