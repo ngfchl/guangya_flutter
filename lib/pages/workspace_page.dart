@@ -393,31 +393,27 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
                   child: Row(
                     children: [
-                      Expanded(
-                        child: _SegmentButton(
-                          icon: Icons.folder_rounded,
-                          label: '光鸭云盘',
-                          compact: false,
-                          selected: _mode == WorkspaceMode.cloud,
-                          onTap: () {
-                            _changeMode(WorkspaceMode.cloud);
-                            setSheetState(() {});
-                          },
-                        ),
+                      _ModeDisplayButton(
+                        mode: _mode,
+                        onTap: () {
+                          _changeMode(
+                            _mode == WorkspaceMode.cloud
+                                ? WorkspaceMode.media
+                                : WorkspaceMode.cloud,
+                          );
+                          setSheetState(() {});
+                        },
                       ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: _SegmentButton(
-                          icon: Icons.movie_rounded,
-                          label: '光鸭影视',
-                          compact: false,
-                          selected: _mode == WorkspaceMode.media,
-                          onTap: () {
-                            _changeMode(WorkspaceMode.media);
-                            setSheetState(() {});
-                          },
-                        ),
+                      const SizedBox(width: 4),
+                      _TopBarIconButton(
+                        tooltip: '设置',
+                        icon: Icons.settings_rounded,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          _showSettings(context);
+                        },
                       ),
+                      const Spacer(),
                     ],
                   ),
                 ),
@@ -600,6 +596,22 @@ class _TopBar extends StatelessWidget {
                   icon: Icons.menu_rounded,
                   onTap: onOpenMenu,
                 ),
+                const SizedBox(width: 4),
+                _ModeDisplayButton(
+                  mode: mode,
+                  compact: true,
+                  onTap: () => onModeChanged(
+                    mode == WorkspaceMode.cloud
+                        ? WorkspaceMode.media
+                        : WorkspaceMode.cloud,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                _TopBarIconButton(
+                  tooltip: '设置',
+                  icon: Icons.settings_rounded,
+                  onTap: onSettings,
+                ),
               ],
             ),
           ),
@@ -619,20 +631,15 @@ class _TopBar extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _SegmentButton(
-                  icon: Icons.folder_rounded,
-                  label: '光鸭云盘',
-                  compact: false,
-                  selected: mode == WorkspaceMode.cloud,
-                  onTap: () => onModeChanged(WorkspaceMode.cloud),
+                _ModeDisplayButton(
+                  mode: mode,
+                  onTap: () => onModeChanged(
+                    mode == WorkspaceMode.cloud
+                        ? WorkspaceMode.media
+                        : WorkspaceMode.cloud,
+                  ),
                 ),
-                _SegmentButton(
-                  icon: Icons.movie_rounded,
-                  label: '光鸭影视',
-                  compact: false,
-                  selected: mode == WorkspaceMode.media,
-                  onTap: () => onModeChanged(WorkspaceMode.media),
-                ),
+                const SizedBox(width: 4),
                 _TopBarIconButton(
                   tooltip: '设置',
                   icon: Icons.settings_rounded,
@@ -704,69 +711,60 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _SegmentButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
+class _ModeDisplayButton extends StatelessWidget {
+  final WorkspaceMode mode;
   final bool compact;
-  final bool selected;
   final VoidCallback onTap;
 
-  const _SegmentButton({
-    required this.icon,
-    required this.label,
-    required this.compact,
-    required this.selected,
+  const _ModeDisplayButton({
+    required this.mode,
+    this.compact = false,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final isCloud = mode == WorkspaceMode.cloud;
+    final label = isCloud ? '光鸭云盘' : '光鸭影视';
+    final nextLabel = isCloud ? '光鸭影视' : '光鸭云盘';
+    final icon = isCloud ? Icons.folder_rounded : Icons.movie_rounded;
     return ShadTooltip(
-      builder: (_) => Text(label),
+      builder: (_) => Text('切换到$nextLabel'),
       child: Semantics(
         button: true,
-        selected: selected,
-        label: label,
+        label: '$label，点击切换到$nextLabel',
         child: ShadButton.ghost(
-          width: compact ? 38 : 120,
-          height: compact ? 38 : 32,
+          width: compact ? 124 : 136,
+          height: compact ? 38 : 34,
           padding: EdgeInsets.zero,
           onPressed: onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             decoration: BoxDecoration(
-              color: selected ? cs.secondary : Colors.transparent,
+              color: cs.secondary,
               borderRadius: BorderRadius.circular(10),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                        color: cs.border.withValues(alpha: 0.7),
-                        blurRadius: 10,
-                        offset: const Offset(0, 3),
-                      ),
-                    ]
-                  : null,
+              boxShadow: [
+                BoxShadow(
+                  color: cs.border.withValues(alpha: 0.7),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  icon,
-                  size: 15,
-                  color: selected ? cs.foreground : cs.mutedForeground,
-                ),
-                if (!compact) ...[
-                  const SizedBox(width: 7),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                      color: selected ? cs.foreground : cs.mutedForeground,
-                    ),
+                Icon(icon, size: 15, color: cs.foreground),
+                const SizedBox(width: 7),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: compact ? 11 : 12,
+                    fontWeight: FontWeight.w700,
+                    color: cs.foreground,
                   ),
-                ],
+                ),
               ],
             ),
           ),
