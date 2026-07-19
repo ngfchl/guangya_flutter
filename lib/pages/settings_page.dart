@@ -9,8 +9,6 @@ import '../widgets/app_log_dialog.dart';
 import '../core/http/dio_client.dart';
 import '../core/storage/storage_manager.dart';
 
-enum _SettingsTab { general, network, media, diagnostics }
-
 class SettingsDialog extends ConsumerStatefulWidget {
   const SettingsDialog({super.key});
 
@@ -19,7 +17,6 @@ class SettingsDialog extends ConsumerStatefulWidget {
 }
 
 class _SettingsDialogState extends ConsumerState<SettingsDialog> {
-  _SettingsTab _activeTab = _SettingsTab.general;
   var _saving = false;
   final _tmdbApiKeyController = TextEditingController();
   final _tmdbImageProxyController = TextEditingController();
@@ -106,243 +103,182 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       ],
       child: SizedBox(
         width: compact ? MediaQuery.sizeOf(context).width - 32 : 720,
-        child: ShadTabs<_SettingsTab>(
-          value: _activeTab,
-          onChanged: (value) => setState(() => _activeTab = value),
-          scrollable: compact,
-          tabBarConstraints: const BoxConstraints(maxWidth: 720),
-          contentConstraints: const BoxConstraints(maxWidth: 720),
-          tabs: [
-            ShadTab(
-              value: _SettingsTab.general,
-              leading: const Icon(Icons.tune_rounded, size: 15),
-              content: _tabScroll(
-                _SettingsSection(
-                  icon: Icons.palette_outlined,
-                  title: '外观与浏览',
-                  child: Column(
-                    children: [
-                      _SettingsRow(
-                        icon: Icons.light_mode_rounded,
-                        label: '主题模式',
-                        child: ShadSelect<String>(
-                          initialValue: _themeModeToString(
-                            themeState.themeMode,
-                          ),
-                          minWidth: 180,
-                          placeholder: const Text('选择主题'),
-                          selectedOptionBuilder: (context, value) => Text(
-                            _themeModeToString(_stringToThemeMode(value)),
-                          ),
-                          options: const [
-                            ShadOption(value: 'light', child: Text('浅色')),
-                            ShadOption(value: 'dark', child: Text('深色')),
-                            ShadOption(value: 'system', child: Text('跟随系统')),
-                          ],
-                          onChanged: (value) {
-                            if (value != null) {
-                              ref
-                                  .read(themeProvider.notifier)
-                                  .setThemeMode(_stringToThemeMode(value));
-                            }
-                          },
-                        ),
-                      ),
-                      _SettingsRow(
-                        icon: Icons.format_list_numbered_rounded,
-                        label: '默认分页大小',
-                        child: _numberInput(_pageSizeController),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              child: const Text('通用'),
-            ),
-            ShadTab(
-              value: _SettingsTab.network,
-              leading: const Icon(Icons.network_check_rounded, size: 15),
-              content: _tabScroll(
-                Column(
+        height: (MediaQuery.sizeOf(context).height - 180).clamp(360.0, 620.0),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.only(top: 4, bottom: 12),
+          child: Column(
+            children: [
+              _SettingsSection(
+                icon: Icons.palette_outlined,
+                title: '外观与浏览',
+                child: Column(
                   children: [
-                    _SettingsSection(
-                      icon: Icons.http_rounded,
-                      title: '网络代理',
-                      child: Column(
-                        children: [
-                          _SettingsRow(
-                            icon: Icons.lan_outlined,
-                            label: '代理地址',
-                            child: _textInput(
-                              _httpProxyHostController,
-                              placeholder: '127.0.0.1',
-                            ),
-                          ),
-                          _SettingsRow(
-                            icon: Icons.tag_rounded,
-                            label: '代理端口',
-                            child: _numberInput(
-                              _httpProxyPortController,
-                              placeholder: '7890',
-                            ),
-                          ),
+                    _SettingsRow(
+                      icon: Icons.light_mode_rounded,
+                      label: '主题模式',
+                      child: ShadSelect<String>(
+                        initialValue: _themeModeToString(themeState.themeMode),
+                        minWidth: 180,
+                        placeholder: const Text('选择主题'),
+                        selectedOptionBuilder: (context, value) =>
+                            Text(_themeModeToString(_stringToThemeMode(value))),
+                        options: const [
+                          ShadOption(value: 'light', child: Text('浅色')),
+                          ShadOption(value: 'dark', child: Text('深色')),
+                          ShadOption(value: 'system', child: Text('跟随系统')),
                         ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            ref
+                                .read(themeProvider.notifier)
+                                .setThemeMode(_stringToThemeMode(value));
+                          }
+                        },
                       ),
                     ),
-                    const SizedBox(height: 22),
-                    _SettingsSection(
-                      icon: Icons.bolt_outlined,
-                      title: '任务与缓存',
-                      child: Column(
-                        children: [
-                          _SettingsRow(
-                            icon: Icons.memory_rounded,
-                            label: '媒体扫描并发',
-                            child: _numberInput(_scanConcurrencyController),
-                          ),
-                          _SettingsRow(
-                            icon: Icons.bolt_rounded,
-                            label: '秒传并发',
-                            child: _numberInput(_transferConcurrencyController),
-                          ),
-                          _SettingsRow(
-                            icon: Icons.cached_rounded,
-                            label: '文件缓存分钟',
-                            child: _numberInput(_cacheTTLController),
-                          ),
-                          _SettingsRow(
-                            icon: Icons.cloud_sync_rounded,
-                            label: '全盘索引间隔',
-                            child: _numberInput(_cloudIndexRefreshController),
-                          ),
-                          _SettingsRow(
-                            icon: Icons.refresh_rounded,
-                            label: '全盘文件索引',
-                            child: ShadButton.outline(
-                              size: ShadButtonSize.sm,
-                              onPressed: mediaState.isRefreshingCloudIndex
-                                  ? null
-                                  : () => unawaited(
-                                      ref
-                                          .read(mediaLibraryProvider.notifier)
-                                          .refreshGlobalCloudIndex(force: true),
-                                    ),
-                              leading: mediaState.isRefreshingCloudIndex
-                                  ? SizedBox(
-                                      width: 14,
-                                      height: 14,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: cs.primary,
-                                      ),
-                                    )
-                                  : const Icon(Icons.refresh_rounded, size: 15),
-                              child: Text(
-                                mediaState.isRefreshingCloudIndex
-                                    ? '刷新中'
-                                    : '立即刷新',
+                    _SettingsRow(
+                      icon: Icons.format_list_numbered_rounded,
+                      label: '默认分页大小',
+                      child: _numberInput(_pageSizeController),
+                    ),
+                  ],
+                ),
+              ),
+              _SettingsSection(
+                icon: Icons.http_rounded,
+                title: '网络代理',
+                child: Column(
+                  children: [
+                    _SettingsRow(
+                      icon: Icons.lan_outlined,
+                      label: '代理地址',
+                      child: _textInput(
+                        _httpProxyHostController,
+                        placeholder: '127.0.0.1',
+                      ),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.tag_rounded,
+                      label: '代理端口',
+                      child: _numberInput(
+                        _httpProxyPortController,
+                        placeholder: '7890',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _SettingsSection(
+                icon: Icons.bolt_outlined,
+                title: '任务与缓存',
+                child: Column(
+                  children: [
+                    _SettingsRow(
+                      icon: Icons.memory_rounded,
+                      label: '媒体扫描并发',
+                      child: _numberInput(_scanConcurrencyController),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.bolt_rounded,
+                      label: '秒传并发',
+                      child: _numberInput(_transferConcurrencyController),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.cached_rounded,
+                      label: '文件缓存分钟',
+                      child: _numberInput(_cacheTTLController),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.cloud_sync_rounded,
+                      label: '全盘索引间隔',
+                      child: _numberInput(_cloudIndexRefreshController),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.refresh_rounded,
+                      label: '全盘文件索引',
+                      child: ShadButton.outline(
+                        size: ShadButtonSize.sm,
+                        onPressed: mediaState.isRefreshingCloudIndex
+                            ? null
+                            : () => unawaited(
+                                ref
+                                    .read(mediaLibraryProvider.notifier)
+                                    .refreshGlobalCloudIndex(force: true),
                               ),
-                            ),
-                          ),
-                        ],
+                        leading: mediaState.isRefreshingCloudIndex
+                            ? SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: cs.primary,
+                                ),
+                              )
+                            : const Icon(Icons.refresh_rounded, size: 15),
+                        child: Text(
+                          mediaState.isRefreshingCloudIndex ? '刷新中' : '立即刷新',
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-              child: const Text('网络与任务'),
-            ),
-            ShadTab(
-              value: _SettingsTab.media,
-              leading: const Icon(Icons.movie_filter_outlined, size: 15),
-              content: _tabScroll(
-                _SettingsSection(
-                  icon: Icons.movie_filter_outlined,
-                  title: 'TMDB',
-                  child: Column(
-                    children: [
-                      _SettingsRow(
-                        icon: Icons.key_rounded,
-                        label: 'API Key',
-                        child: _textInput(
-                          _tmdbApiKeyController,
-                          placeholder: '输入 TMDB API Key',
-                        ),
+              _SettingsSection(
+                icon: Icons.movie_filter_outlined,
+                title: 'TMDB',
+                child: Column(
+                  children: [
+                    _SettingsRow(
+                      icon: Icons.key_rounded,
+                      label: 'API Key',
+                      child: _textInput(
+                        _tmdbApiKeyController,
+                        placeholder: '输入 TMDB API Key',
                       ),
-                      _SettingsRow(
-                        icon: Icons.image_outlined,
-                        label: '图片加速地址',
-                        child: _textInput(
-                          _tmdbImageProxyController,
-                          placeholder: 'https://wsrv.nl',
-                        ),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.image_outlined,
+                      label: '图片加速地址',
+                      child: _textInput(
+                        _tmdbImageProxyController,
+                        placeholder: 'https://wsrv.nl',
                       ),
-                    ],
+                    ),
+                  ],
+                ),
+              ),
+              _SettingsSection(
+                icon: Icons.sticky_note_2_outlined,
+                title: '运行诊断',
+                child: _SettingsRow(
+                  icon: Icons.subject_rounded,
+                  label: '运行日志',
+                  child: ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: () => showShadDialog(
+                      context: context,
+                      builder: (_) => const AppLogDialog(),
+                    ),
+                    leading: const Icon(Icons.open_in_new_rounded, size: 15),
+                    child: const Text('查看日志'),
                   ),
                 ),
               ),
-              child: const Text('影视资料'),
-            ),
-            ShadTab(
-              value: _SettingsTab.diagnostics,
-              leading: const Icon(Icons.monitor_heart_outlined, size: 15),
-              content: _tabScroll(
-                Column(
-                  children: [
-                    _SettingsSection(
-                      icon: Icons.sticky_note_2_outlined,
-                      title: '运行诊断',
-                      child: _SettingsRow(
-                        icon: Icons.subject_rounded,
-                        label: '运行日志',
-                        child: ShadButton.outline(
-                          size: ShadButtonSize.sm,
-                          onPressed: () => showShadDialog(
-                            context: context,
-                            builder: (_) => const AppLogDialog(),
-                          ),
-                          leading: const Icon(
-                            Icons.open_in_new_rounded,
-                            size: 15,
-                          ),
-                          child: const Text('查看日志'),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 22),
-                    _SettingsSection(
-                      icon: Icons.info_outline_rounded,
-                      title: '应用信息',
-                      child: _SettingsRow(
-                        icon: Icons.cloud_outlined,
-                        label: '版本',
-                        child: Text(
-                          'v1.0.0',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: cs.mutedForeground,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+              _SettingsSection(
+                icon: Icons.info_outline_rounded,
+                title: '应用信息',
+                child: _SettingsRow(
+                  icon: Icons.cloud_outlined,
+                  label: '版本',
+                  child: Text(
+                    'v1.0.0',
+                    style: TextStyle(fontSize: 13, color: cs.mutedForeground),
+                  ),
                 ),
               ),
-              child: const Text('诊断'),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
-    );
-  }
-
-  Widget _tabScroll(Widget child) {
-    final availableHeight = MediaQuery.sizeOf(context).height - 270;
-    return SizedBox(
-      height: availableHeight.clamp(260.0, 420.0),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: child,
       ),
     );
   }
