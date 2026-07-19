@@ -308,7 +308,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          choco install innosetup -y --no-progress
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+          }
           $versionName = '${{ steps.version.outputs.name }}'
           $packageVersion = '${{ steps.version.outputs.package }}'
           $versionInfo = "$versionName.${{ github.run_number }}"
@@ -333,7 +335,7 @@ jobs:
           VersionInfoVersion=$versionInfo
 
           [Languages]
-          Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+          Name: "chinese"; MessagesFile: "ChineseSimplified.isl";
 
           [Tasks]
           Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: unchecked
