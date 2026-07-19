@@ -118,6 +118,7 @@ class FileState {
   final int totalPages;
   final FileSort serverSort;
   final SortDirection serverSortDirection;
+  final String currentListSearchQuery;
   final String? errorMessage;
   final String? statusMessage;
   final Set<String> selectedIDs;
@@ -135,6 +136,7 @@ class FileState {
     this.totalPages = 1,
     this.serverSort = FileSort.name,
     this.serverSortDirection = SortDirection.ascending,
+    this.currentListSearchQuery = '',
     this.errorMessage,
     this.statusMessage,
     this.selectedIDs = const {},
@@ -156,6 +158,7 @@ class FileState {
     int? totalPages,
     FileSort? serverSort,
     SortDirection? serverSortDirection,
+    String? currentListSearchQuery,
     String? errorMessage,
     bool clearError = false,
     String? statusMessage,
@@ -177,6 +180,8 @@ class FileState {
       totalPages: totalPages ?? this.totalPages,
       serverSort: serverSort ?? this.serverSort,
       serverSortDirection: serverSortDirection ?? this.serverSortDirection,
+      currentListSearchQuery:
+          currentListSearchQuery ?? this.currentListSearchQuery,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       statusMessage: clearStatus ? null : (statusMessage ?? this.statusMessage),
       selectedIDs: selectedIDs ?? this.selectedIDs,
@@ -209,8 +214,17 @@ class FileNotifier extends StateNotifier<FileState> {
       folderPath: preservePath ? state.folderPath : [],
       currentPage: 0,
       selectedIDs: {},
+      currentListSearchQuery: '',
     );
     loadFiles();
+  }
+
+  /// Filters only the file page currently held in memory. This is deliberately
+  /// separate from global cloud search and never sends another API request.
+  void setCurrentListSearchQuery(String query) {
+    final normalized = query.trim();
+    if (normalized == state.currentListSearchQuery) return;
+    state = state.copyWith(currentListSearchQuery: normalized, selectedIDs: {});
   }
 
   Future<void> loadFiles({String? parentID}) async {
@@ -472,8 +486,57 @@ class FileNotifier extends StateNotifier<FileState> {
       folderPath: newPath,
       currentPage: 0,
       selectedIDs: {},
+      currentListSearchQuery: '',
     );
     await loadFiles(parentID: folder.id);
+  }
+
+  /// Opens the location returned by a global search. Search results are not
+  /// necessarily below the currently visible directory, so appending their
+  /// folder to [state.folderPath] would produce a misleading breadcrumb.
+  /// Instead replace the visible location with the matched folder itself.
+  Future<void> navigateToSearchResult(CloudFile result) async {
+    final folderID = result.isDirectory ? result.id : result.parentID;
+    if (folderID == null || folderID.isEmpty) {
+      state = state.copyWith(
+        folderPath: const [],
+        currentPage: 0,
+        selectedIDs: {},
+        currentListSearchQuery: '',
+      );
+      await loadFiles(parentID: null);
+      return;
+    }
+
+    final folder = result.isDirectory
+        ? result
+        : CloudFile(
+            id: folderID,
+            name: _searchResultParentName(result),
+            isDirectory: true,
+            cloudPath: _searchResultParentPath(result.cloudPath),
+          );
+    state = state.copyWith(
+      folderPath: [folder],
+      currentPage: 0,
+      selectedIDs: {},
+      currentListSearchQuery: '',
+    );
+    await loadFiles(parentID: folderID);
+  }
+
+  String _searchResultParentName(CloudFile file) {
+    final parts = file.cloudPath
+        .split(RegExp(r'[/\\]+'))
+        .where((part) => part.trim().isNotEmpty)
+        .toList();
+    return parts.length >= 2 ? parts[parts.length - 2] : '所在文件夹';
+  }
+
+  String _searchResultParentPath(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final index = normalized.lastIndexOf('/');
+    return index > 0 ? normalized.substring(0, index) : '';
   }
 
   Future<void> navigateBack() async {
@@ -483,6 +546,7 @@ class FileNotifier extends StateNotifier<FileState> {
       folderPath: newPath,
       currentPage: 0,
       selectedIDs: {},
+      currentListSearchQuery: '',
     );
     final parentID = newPath.isNotEmpty ? newPath.last.id : null;
     await loadFiles(parentID: parentID);
@@ -494,6 +558,7 @@ class FileNotifier extends StateNotifier<FileState> {
         folderPath: const [],
         currentPage: 0,
         selectedIDs: {},
+        currentListSearchQuery: '',
       );
       loadFiles(parentID: null);
       return;
@@ -504,6 +569,7 @@ class FileNotifier extends StateNotifier<FileState> {
       folderPath: newPath,
       currentPage: 0,
       selectedIDs: {},
+      currentListSearchQuery: '',
     );
     final parentID = index >= 0 ? newPath[index].id : null;
     loadFiles(parentID: parentID);
@@ -745,28 +811,55 @@ class FileNotifier extends StateNotifier<FileState> {
   }
 
   Future<void> pasteFromClipboard() async {
-    if (_api == null || state.clipboard == null) return;
+    await pasteFromClipboardTo(_currentParentID);
+  }
+
+  /// Pastes into an explicit panel destination. The secondary file pane uses
+  /// this rather than the notifier's primary-path destination.
+  Future<void> pasteFromClipboardTo(String? parentID) async {
+    if (_api == null || state.clipboard == null || state.clipboard!.isEmpty) {
+      return;
+    }
     state = state.copyWith(
       statusMessage: state.clipboardIsMove ? '正在移动…' : '正在复制…',
     );
     try {
       final ids = state.clipboard!.map((f) => f.id).toList();
       if (state.clipboardIsMove) {
-        await _api!.fsMove(ids, parentID: _currentParentID);
+        await _api!.fsMove(ids, parentID: parentID);
         await FileMetadataCache.removeFilesFromAllFolders(ids);
         await FileMetadataCache.updateFolderChildren(
-          _currentParentID,
+          parentID,
           addOrReplace: state.clipboard!,
         );
       } else {
-        await _api!.fsCopy(ids, parentID: _currentParentID);
+        await _api!.fsCopy(ids, parentID: parentID);
         await FileMetadataCache.updateFolderChildren(
-          _currentParentID,
+          parentID,
           invalidate: true,
         );
       }
-      await _invalidateListCache(_currentParentID);
+      await _invalidateListCache(parentID);
       state = state.copyWith(statusMessage: '操作完成');
+      if (parentID == _currentParentID) {
+        await loadFiles(parentID: _currentParentID);
+      }
+    } catch (e) {
+      state = state.copyWith(errorMessage: e.toString());
+    }
+  }
+
+  Future<void> copyFilesTo(List<CloudFile> files, {String? parentID}) async {
+    if (_api == null || files.isEmpty) return;
+    state = state.copyWith(statusMessage: '正在复制 ${files.length} 个项目…');
+    try {
+      await _api!.fsCopy(
+        files.map((file) => file.id).toList(),
+        parentID: parentID,
+      );
+      await FileMetadataCache.updateFolderChildren(parentID, invalidate: true);
+      await _invalidateListCache(parentID);
+      state = state.copyWith(statusMessage: '复制完成');
       await loadFiles(parentID: _currentParentID);
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());

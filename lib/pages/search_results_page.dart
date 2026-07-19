@@ -25,16 +25,43 @@ const _searchSelectAllShortcuts = <ShortcutActivator, Intent>{
       _SearchSelectAllIntent(),
 };
 
+enum _FileSearchTypeFilter { all, files, folders }
+
+enum _FileSearchSort { name, size, modifiedAt, pathLength }
+
+extension on _FileSearchTypeFilter {
+  String get label => switch (this) {
+    _FileSearchTypeFilter.all => '全部类型',
+    _FileSearchTypeFilter.files => '仅文件',
+    _FileSearchTypeFilter.folders => '仅文件夹',
+  };
+}
+
+extension on _FileSearchSort {
+  String get label => switch (this) {
+    _FileSearchSort.name => '名称',
+    _FileSearchSort.size => '大小',
+    _FileSearchSort.modifiedAt => '最后修改时间',
+    _FileSearchSort.pathLength => '路径长度',
+  };
+}
+
 class FileSearchResultsPage extends ConsumerStatefulWidget {
   final String query;
   final VoidCallback onClose;
   final ValueChanged<List<CloudFile>> onBatchRename;
+  final Future<void> Function(CloudFile file) onOpenLocation;
+  final List<CloudFile>? cachedResults;
+  final ValueChanged<List<CloudFile>>? onResultsLoaded;
 
   const FileSearchResultsPage({
     super.key,
     required this.query,
     required this.onClose,
     required this.onBatchRename,
+    required this.onOpenLocation,
+    this.cachedResults,
+    this.onResultsLoaded,
   });
 
   @override
@@ -43,10 +70,13 @@ class FileSearchResultsPage extends ConsumerStatefulWidget {
 }
 
 class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
-  late Future<List<CloudFile>> _results = _search();
+  late Future<List<CloudFile>> _results = _loadResults();
   final _selectedIDs = <String>{};
   String? _selectionAnchorID;
   final _resultsFocusNode = FocusNode(debugLabel: 'file-search-results');
+  var _typeFilter = _FileSearchTypeFilter.all;
+  var _sort = _FileSearchSort.name;
+  var _sortAscending = true;
 
   @override
   void dispose() {
@@ -119,6 +149,49 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
     });
   }
 
+  void _setTypeFilter(_FileSearchTypeFilter value) {
+    setState(() {
+      _typeFilter = value;
+      // Hidden selections should never unexpectedly take part in a batch
+      // operation after the user changes the visible result set.
+      _selectedIDs.clear();
+      _selectionAnchorID = null;
+    });
+  }
+
+  List<CloudFile> _displayFiles(List<CloudFile> values) {
+    final filtered = values.where((file) {
+      return switch (_typeFilter) {
+        _FileSearchTypeFilter.all => true,
+        _FileSearchTypeFilter.files => !file.isDirectory,
+        _FileSearchTypeFilter.folders => file.isDirectory,
+      };
+    }).toList();
+    int compare(CloudFile left, CloudFile right) {
+      final value = switch (_sort) {
+        _FileSearchSort.name => left.name.toLowerCase().compareTo(
+          right.name.toLowerCase(),
+        ),
+        _FileSearchSort.size => (left.size ?? -1).compareTo(right.size ?? -1),
+        _FileSearchSort.modifiedAt => _modifiedAtValue(
+          left,
+        ).compareTo(_modifiedAtValue(right)),
+        _FileSearchSort.pathLength => left.cloudPath.length.compareTo(
+          right.cloudPath.length,
+        ),
+      };
+      if (value != 0) return _sortAscending ? value : -value;
+      return left.name.toLowerCase().compareTo(right.name.toLowerCase());
+    }
+
+    filtered.sort(compare);
+    return filtered;
+  }
+
+  int _modifiedAtValue(CloudFile file) {
+    return DateTime.tryParse(file.modifiedAt)?.millisecondsSinceEpoch ?? 0;
+  }
+
   Future<void> _deleteFiles(List<CloudFile> files) async {
     if (files.isEmpty) return;
     final confirmed = await showShadDialog<bool>(
@@ -149,14 +222,22 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
     if (!mounted) return;
     setState(() {
       _selectedIDs.removeAll(files.map((file) => file.id));
-      _results = _search();
+      _results = _loadResults(force: true);
     });
   }
 
   @override
   void didUpdateWidget(covariant FileSearchResultsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.query != widget.query) _results = _search();
+    if (oldWidget.query != widget.query) _results = _loadResults();
+  }
+
+  Future<List<CloudFile>> _loadResults({bool force = false}) async {
+    final cached = widget.cachedResults;
+    if (!force && cached != null) return cached;
+    final results = await _search();
+    widget.onResultsLoaded?.call(results);
+    return results;
   }
 
   Future<List<CloudFile>> _search() async {
@@ -235,8 +316,8 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
               ),
             );
           }
-          final files = snapshot.data ?? const <CloudFile>[];
-          if (files.isEmpty) {
+          final allFiles = snapshot.data ?? const <CloudFile>[];
+          if (allFiles.isEmpty) {
             return Center(
               child: Text(
                 '没有匹配的文件',
@@ -244,11 +325,23 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
               ),
             );
           }
+          final files = _displayFiles(allFiles);
           final selected = files
               .where((file) => _selectedIDs.contains(file.id))
               .toList();
           return Column(
             children: [
+              _SearchResultControls(
+                totalCount: allFiles.length,
+                visibleCount: files.length,
+                typeFilter: _typeFilter,
+                sort: _sort,
+                sortAscending: _sortAscending,
+                onTypeFilterChanged: _setTypeFilter,
+                onSortChanged: (value) => setState(() => _sort = value),
+                onDirectionToggle: () =>
+                    setState(() => _sortAscending = !_sortAscending),
+              ),
               if (selected.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
@@ -317,7 +410,8 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                           file: file,
                           isSelected: _selectedIDs.contains(file.id),
                           onSelect: () => _selectFile(files, file),
-                          onOpen: () => notifier.downloadFile(file),
+                          onOpen: () => unawaited(widget.onOpenLocation(file)),
+                          openLabel: file.isDirectory ? '打开文件夹' : '打开所在文件夹',
                           onRenameConfirm: (name) async {
                             final renamed = await notifier.renameFile(
                               file,
@@ -330,7 +424,11 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                                     file.copyWith(name: name),
                                   ]);
                             }
-                            if (mounted) setState(() => _results = _search());
+                            if (mounted) {
+                              setState(
+                                () => _results = _loadResults(force: true),
+                              );
+                            }
                           },
                           onCopy: () => notifier.copyToClipboard([file]),
                           onCut: () => notifier.cutToClipboard([file]),
@@ -350,6 +448,118 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                   ),
                 ),
               ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _SearchResultControls extends StatelessWidget {
+  final int totalCount;
+  final int visibleCount;
+  final _FileSearchTypeFilter typeFilter;
+  final _FileSearchSort sort;
+  final bool sortAscending;
+  final ValueChanged<_FileSearchTypeFilter> onTypeFilterChanged;
+  final ValueChanged<_FileSearchSort> onSortChanged;
+  final VoidCallback onDirectionToggle;
+
+  const _SearchResultControls({
+    required this.totalCount,
+    required this.visibleCount,
+    required this.typeFilter,
+    required this.sort,
+    required this.sortAscending,
+    required this.onTypeFilterChanged,
+    required this.onSortChanged,
+    required this.onDirectionToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final typeSelect = ShadSelect<_FileSearchTypeFilter>(
+      key: ValueKey(typeFilter),
+      initialValue: typeFilter,
+      minWidth: 116,
+      selectedOptionBuilder: (_, value) => Text(value.label),
+      options: [
+        for (final value in _FileSearchTypeFilter.values)
+          ShadOption(value: value, child: Text(value.label)),
+      ],
+      onChanged: (value) {
+        if (value != null) onTypeFilterChanged(value);
+      },
+    );
+    final sortSelect = ShadSelect<_FileSearchSort>(
+      key: ValueKey(sort),
+      initialValue: sort,
+      minWidth: 128,
+      selectedOptionBuilder: (_, value) => Text(value.label),
+      options: [
+        for (final value in _FileSearchSort.values)
+          ShadOption(value: value, child: Text(value.label)),
+      ],
+      onChanged: (value) {
+        if (value != null) onSortChanged(value);
+      },
+    );
+    final directionButton = ShadTooltip(
+      builder: (_) => Text(sortAscending ? '升序' : '降序'),
+      child: ShadButton.ghost(
+        size: ShadButtonSize.sm,
+        onPressed: onDirectionToggle,
+        child: Icon(
+          sortAscending
+              ? Icons.arrow_upward_rounded
+              : Icons.arrow_downward_rounded,
+          size: 17,
+        ),
+      ),
+    );
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: cs.border.withValues(alpha: 0.7)),
+        ),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final summary = Text(
+            visibleCount == totalCount
+                ? '$totalCount 个结果'
+                : '$visibleCount / $totalCount 个结果',
+            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+          );
+          if (constraints.maxWidth < 520) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [typeSelect, sortSelect, directionButton],
+                ),
+                const SizedBox(height: 6),
+                summary,
+              ],
+            );
+          }
+          return Row(
+            children: [
+              const Icon(Icons.tune_rounded, size: 16),
+              const SizedBox(width: 7),
+              typeSelect,
+              const SizedBox(width: 8),
+              sortSelect,
+              const SizedBox(width: 2),
+              directionButton,
+              const Spacer(),
+              summary,
             ],
           );
         },

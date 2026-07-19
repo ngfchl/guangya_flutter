@@ -10,10 +10,13 @@ class FileListTile extends StatefulWidget {
   final bool isSelected;
   final VoidCallback? onSelect;
   final VoidCallback? onOpen;
+  final String openLabel;
   final VoidCallback? onRename;
   final Future<void> Function(String newName)? onRenameConfirm;
   final VoidCallback? onCopy;
   final VoidCallback? onCut;
+  final VoidCallback? onCopyTo;
+  final VoidCallback? onMoveTo;
   final VoidCallback? onDownload;
   final VoidCallback? onShare;
   final VoidCallback? onCopyFastTransfer;
@@ -26,10 +29,13 @@ class FileListTile extends StatefulWidget {
     this.isSelected = false,
     this.onSelect,
     this.onOpen,
+    this.openLabel = '打开',
     this.onRename,
     this.onRenameConfirm,
     this.onCopy,
     this.onCut,
+    this.onCopyTo,
+    this.onMoveTo,
     this.onDownload,
     this.onShare,
     this.onCopyFastTransfer,
@@ -135,6 +141,7 @@ class _FileListTileState extends State<FileListTile> {
     final cs = theme.colorScheme;
     final compact = MediaQuery.sizeOf(context).width < 720;
     return ShadContextMenuRegion(
+      tapEnabled: false,
       items: [
         if (widget.isRecycleItem)
           ShadContextMenuItem.inset(
@@ -154,7 +161,7 @@ class _FileListTileState extends State<FileListTile> {
             leading: const Icon(LucideIcons.folderOpen, size: 16),
             trailing: const Icon(LucideIcons.chevronRight),
             onPressed: widget.onOpen,
-            child: const Text('打开'),
+            child: Text(widget.openLabel),
           ),
           ShadContextMenuItem.inset(
             leading: const Icon(LucideIcons.pencil, size: 16),
@@ -172,6 +179,18 @@ class _FileListTileState extends State<FileListTile> {
             trailing: const Icon(LucideIcons.chevronRight),
             onPressed: widget.onCut,
             child: const Text('剪切'),
+          ),
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.copyPlus, size: 16),
+            trailing: const Icon(LucideIcons.chevronRight),
+            onPressed: widget.onCopyTo,
+            child: const Text('复制到…'),
+          ),
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.folderInput, size: 16),
+            trailing: const Icon(LucideIcons.chevronRight),
+            onPressed: widget.onMoveTo,
+            child: const Text('移动到…'),
           ),
           const Divider(height: 8),
           ShadContextMenuItem.inset(
