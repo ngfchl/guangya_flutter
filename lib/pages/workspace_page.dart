@@ -311,17 +311,14 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                 children: [_buildCloudContent(fp), _buildMediaContent()],
               );
               if (compact) {
-                return _MobileDrawerSwipeArea(
-                  onOpen: _openMobileDrawer,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                    child: Column(
-                      children: [
-                        topBar,
-                        const SizedBox(height: 8),
-                        Expanded(child: content),
-                      ],
-                    ),
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                  child: Column(
+                    children: [
+                      topBar,
+                      const SizedBox(height: 8),
+                      Expanded(child: content),
+                    ],
                   ),
                 );
               }
@@ -819,58 +816,6 @@ class _UploadListTopButtonState extends State<_UploadListTopButton> {
       icon: Icons.upload_file_rounded,
       onTap: _controller.toggle,
     ),
-  );
-}
-
-class _MobileDrawerSwipeArea extends StatefulWidget {
-  final Widget child;
-  final VoidCallback onOpen;
-
-  const _MobileDrawerSwipeArea({required this.child, required this.onOpen});
-
-  @override
-  State<_MobileDrawerSwipeArea> createState() => _MobileDrawerSwipeAreaState();
-}
-
-class _MobileDrawerSwipeAreaState extends State<_MobileDrawerSwipeArea> {
-  var _distance = 0.0;
-  var _opening = false;
-
-  void _onDragUpdate(DragUpdateDetails details) {
-    if (_opening) return;
-    final delta = details.primaryDelta ?? 0;
-    if (delta <= 0) {
-      _distance = 0;
-      return;
-    }
-    _distance += delta;
-    if (_distance >= 28) {
-      _opening = true;
-      _distance = 0;
-      widget.onOpen();
-      Future<void>.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) _opening = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Stack(
-    children: [
-      widget.child,
-      Positioned(
-        left: 0,
-        top: 0,
-        bottom: 0,
-        width: 28,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onHorizontalDragUpdate: _onDragUpdate,
-          onHorizontalDragEnd: (_) => _distance = 0,
-          onHorizontalDragCancel: () => _distance = 0,
-        ),
-      ),
-    ],
   );
 }
 
