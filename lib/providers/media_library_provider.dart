@@ -344,7 +344,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         'guangya-media-',
       );
       final backup = File(
-        '${temporaryDirectory.path}/media-library-${DateTime.now().millisecondsSinceEpoch}.sqlite3',
+        '${temporaryDirectory.path}/${_cloudBackupFileName(DateTime.now())}',
       );
       _appendBackupLog('正在导出本地刮削数据库');
       await _store.exportBackupTo(backup.path);
@@ -414,6 +414,22 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<_CloudBackupDestination> _resolveCloudBackupDestination() async {
     const folderName = '小黄鸭备份';
+    final existing = await _findCloudBackupDestination();
+    if (existing != null) return existing;
+    final folderID = _findStringDeep(
+      await _api!.fsCreateDir(folderName, parentID: null),
+      const ['fileId', 'file_id', 'resId', 'res_id', 'id'],
+    );
+    if (folderID == null || folderID.isEmpty) {
+      throw Exception('无法创建云盘备份目录「$folderName」');
+    }
+    await StorageManager.set(StorageKeys.cloudScrapedBackupFolderID, folderID);
+    _appendBackupLog('已创建云盘备份目录：云盘根目录/$folderName');
+    return _CloudBackupDestination(id: folderID, path: '云盘根目录/$folderName');
+  }
+
+  Future<_CloudBackupDestination?> _findCloudBackupDestination() async {
+    const folderName = '小黄鸭备份';
     final storedID = StorageManager.get<String>(
       StorageKeys.cloudScrapedBackupFolderID,
     )?.trim();
@@ -425,17 +441,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       root,
     ).where((file) => file.isDirectory && file.name == folderName);
     final folder = existing.isEmpty ? null : existing.first;
-    final folderID =
-        folder?.id ??
-        _findStringDeep(
-          await _api!.fsCreateDir(folderName, parentID: null),
-          const ['fileId', 'file_id', 'resId', 'res_id', 'id'],
-        );
-    if (folderID == null || folderID.isEmpty) {
-      throw Exception('无法创建云盘备份目录「$folderName」');
-    }
-    await StorageManager.set(StorageKeys.cloudScrapedBackupFolderID, folderID);
-    return _CloudBackupDestination(id: folderID, path: '云盘根目录/$folderName');
+    if (folder == null) return null;
+    await StorageManager.set(StorageKeys.cloudScrapedBackupFolderID, folder.id);
+    return _CloudBackupDestination(id: folder.id, path: '云盘根目录/$folderName');
   }
 
   Future<List<CloudFile>> cloudScrapedBackups() async {
@@ -453,17 +461,35 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       ),
     );
     try {
-      final response = await _api!.searchFiles(
-        'media-library.sqlite3',
-        pageSize: 100,
+      final destination = await _findCloudBackupDestination();
+      if (destination == null) {
+        _appendBackupLog('未找到云盘备份目录，当前没有可恢复的备份');
+        state = state.copyWith(
+          cloudBackupSync: const CloudBackupSyncProgress(
+            phase: '未找到云盘备份',
+            destination: '云盘根目录/小黄鸭备份',
+            transferredBytes: 0,
+            totalBytes: 0,
+            isActive: false,
+          ),
+        );
+        return const [];
+      }
+      _appendBackupLog('正在读取备份目录：${destination.path}');
+      final response = await _api!.fsFiles(
+        parentID: destination.id,
+        pageSize: 1000,
       );
-      final backups = _extractFiles(response)
-          .where(
-            (file) =>
-                !file.isDirectory &&
-                file.name.toLowerCase().endsWith('.sqlite3'),
-          )
-          .toList();
+      final backups =
+          _extractFiles(response)
+              .where(
+                (file) =>
+                    !file.isDirectory &&
+                    file.name.toLowerCase().endsWith('.sqlite3') &&
+                    file.name.startsWith('media-library-'),
+              )
+              .toList()
+            ..sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
       _appendBackupLog('云盘备份查找完成，找到 ${backups.length} 个文件');
       state = state.copyWith(
         cloudBackupSync: const CloudBackupSyncProgress(
@@ -1188,6 +1214,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return value
         .replaceFirst(RegExp(r'^Exception:\s*'), '')
         .replaceFirst(RegExp(r'^DioException \[[^\]]+\]:\s*'), '网络请求失败：');
+  }
+
+  String _cloudBackupFileName(DateTime value) {
+    String two(int number) => number.toString().padLeft(2, '0');
+    return 'media-library-${value.year}${two(value.month)}${two(value.day)}-'
+        '${two(value.hour)}${two(value.minute)}${two(value.second)}.sqlite3';
   }
 
   List<MediaLibraryScanLog> _loadScanHistory() {
