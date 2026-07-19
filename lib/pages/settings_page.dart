@@ -25,6 +25,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   final _scanConcurrencyController = TextEditingController();
   final _transferConcurrencyController = TextEditingController();
   final _cacheTTLController = TextEditingController();
+  final _cloudIndexConcurrencyController = TextEditingController();
   final _cloudIndexRefreshController = TextEditingController();
   final _pageSizeController = TextEditingController();
 
@@ -44,6 +45,8 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         StorageManager.get<String>(StorageKeys.fastTransferConcurrency) ?? '3';
     _cacheTTLController.text =
         StorageManager.get<String>(StorageKeys.fileCacheTTLMinutes) ?? '3';
+    _cloudIndexConcurrencyController.text =
+        StorageManager.get<String>(StorageKeys.cloudIndexConcurrency) ?? '6';
     _cloudIndexRefreshController.text =
         StorageManager.get<String>(StorageKeys.cloudIndexRefreshMinutes) ??
         '30';
@@ -60,6 +63,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     _scanConcurrencyController.dispose();
     _transferConcurrencyController.dispose();
     _cacheTTLController.dispose();
+    _cloudIndexConcurrencyController.dispose();
     _cloudIndexRefreshController.dispose();
     _pageSizeController.dispose();
     super.dispose();
@@ -190,6 +194,11 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                     ),
                     _SettingsRow(
                       icon: Icons.cloud_sync_rounded,
+                      label: '全盘索引并发',
+                      child: _numberInput(_cloudIndexConcurrencyController),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.schedule_rounded,
                       label: '全盘索引间隔',
                       child: _numberInput(_cloudIndexRefreshController),
                     ),
@@ -334,6 +343,10 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       StorageManager.set(
         StorageKeys.fileCacheTTLMinutes,
         _cacheTTLController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.cloudIndexConcurrency,
+        _cloudIndexConcurrencyController.text.trim(),
       ),
       StorageManager.set(
         StorageKeys.cloudIndexRefreshMinutes,

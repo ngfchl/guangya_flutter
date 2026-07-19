@@ -11,6 +11,7 @@ import '../core/logging/app_logger.dart';
 import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/media_library_store.dart';
 import '../core/storage/storage_manager.dart';
+import '../core/utils/concurrent_map.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import 'watch_history_provider.dart';
@@ -1263,23 +1264,47 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     _scheduleCloudIndexRefresh(minutes);
   }
 
+  int get _cloudIndexConcurrency =>
+      (int.tryParse(
+                StorageManager.get<String>(StorageKeys.cloudIndexConcurrency) ??
+                    '6',
+              ) ??
+              6)
+          .clamp(1, 20);
+
   Future<_CloudIndexRefreshResult> _rebuildGlobalCloudIndex() async {
     await FileMetadataCache.clearFolderChildrenIndex();
     final folders = <_CloudIndexFolder>[const _CloudIndexFolder(null, '根目录')];
     final visited = <String>{};
+    final concurrency = _cloudIndexConcurrency;
+    var nextFolder = 0;
     var updatedFolders = 0;
     var updatedEntries = 0;
 
-    for (var index = 0; index < folders.length; index++) {
-      final folder = folders[index];
-      final key = folder.id ?? '@root';
-      if (!visited.add(key)) continue;
-      final snapshot = await _loadCloudIndexFolder(folder);
-      await FileMetadataCache.cacheFolderChildren(folder.id, snapshot);
-      updatedFolders += 1;
-      updatedEntries += snapshot.length;
-      for (final child in snapshot.where((file) => file.isDirectory)) {
-        folders.add(_CloudIndexFolder(child.id, child.name));
+    AppLogger.info('CloudIndex', '全量索引目录请求并发数：$concurrency');
+    while (nextFolder < folders.length) {
+      final batch = <_CloudIndexFolder>[];
+      while (nextFolder < folders.length && batch.length < concurrency) {
+        final folder = folders[nextFolder++];
+        if (visited.add(folder.id ?? '@root')) batch.add(folder);
+      }
+      if (batch.isEmpty) continue;
+
+      final snapshots = await concurrentMapOrdered(
+        batch,
+        concurrency: concurrency,
+        action: _loadCloudIndexFolder,
+      );
+      await FileMetadataCache.cacheFolderChildrenBatch({
+        for (var index = 0; index < batch.length; index++)
+          batch[index].id: snapshots[index],
+      });
+      updatedFolders += batch.length;
+      for (final snapshot in snapshots) {
+        updatedEntries += snapshot.length;
+        for (final child in snapshot.where((file) => file.isDirectory)) {
+          folders.add(_CloudIndexFolder(child.id, child.name));
+        }
       }
     }
     return _CloudIndexRefreshResult(
@@ -1291,53 +1316,63 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<_CloudIndexRefreshResult> _refreshChangedCloudIndex() async {
     final root = const _CloudIndexFolder(null, '根目录');
-    final rootCached =
-        await FileMetadataCache.folderChildren(root.id) ?? const <CloudFile>[];
-    final rootRemote = await _loadCloudIndexFolder(root);
-    final folders = <_CloudIndexFolder>[];
-    final queued = <String>{};
-    var checkedFolders = 1;
+    final folders = <_CloudIndexFolder>[root];
+    final queued = <String>{'@root'};
+    final concurrency = _cloudIndexConcurrency;
+    var nextFolder = 0;
+    var checkedFolders = 0;
     var updatedFolders = 0;
     var updatedEntries = 0;
 
-    final rootUpdate = await _replaceCloudIndexFolder(
-      folderID: root.id,
-      previous: rootCached,
-      current: rootRemote,
-    );
-    if (rootUpdate.changed) {
-      updatedFolders += 1;
-      updatedEntries += rootRemote.length;
-    }
-    _queueChangedIndexFolders(
-      folders: folders,
-      queued: queued,
-      previous: rootCached,
-      current: rootRemote,
-    );
+    AppLogger.info('CloudIndex', '增量索引目录请求并发数：$concurrency');
+    while (nextFolder < folders.length) {
+      final end = (nextFolder + concurrency).clamp(0, folders.length);
+      final batch = folders.sublist(nextFolder, end);
+      nextFolder = end;
+      final previousSnapshots = await Future.wait(
+        batch.map(
+          (folder) async =>
+              await FileMetadataCache.folderChildren(folder.id) ??
+              const <CloudFile>[],
+        ),
+      );
+      final currentSnapshots = await concurrentMapOrdered(
+        batch,
+        concurrency: concurrency,
+        action: _loadCloudIndexFolder,
+      );
+      checkedFolders += batch.length;
 
-    for (var index = 0; index < folders.length; index++) {
-      final folder = folders[index];
-      final previous =
-          await FileMetadataCache.folderChildren(folder.id) ??
-          const <CloudFile>[];
-      final current = await _loadCloudIndexFolder(folder);
-      checkedFolders += 1;
-      final update = await _replaceCloudIndexFolder(
-        folderID: folder.id,
-        previous: previous,
-        current: current,
-      );
-      if (update.changed) {
-        updatedFolders += 1;
-        updatedEntries += current.length;
+      final changed = <String?, List<CloudFile>>{};
+      final removedFolders = <String>[];
+      for (var index = 0; index < batch.length; index++) {
+        final folder = batch[index];
+        final previous = previousSnapshots[index];
+        final current = currentSnapshots[index];
+        if (!_sameCloudIndexSnapshot(previous, current)) {
+          changed[folder.id] = current;
+          updatedFolders += 1;
+          updatedEntries += current.length;
+          final currentIDs = current.map((file) => file.id).toSet();
+          removedFolders.addAll(
+            previous
+                .where(
+                  (file) => file.isDirectory && !currentIDs.contains(file.id),
+                )
+                .map((file) => file.id),
+          );
+        }
+        _queueChangedIndexFolders(
+          folders: folders,
+          queued: queued,
+          previous: previous,
+          current: current,
+        );
       }
-      _queueChangedIndexFolders(
-        folders: folders,
-        queued: queued,
-        previous: previous,
-        current: current,
-      );
+      await FileMetadataCache.cacheFolderChildrenBatch(changed);
+      if (removedFolders.isNotEmpty) {
+        await FileMetadataCache.removeFolderChildrenSubtrees(removedFolders);
+      }
     }
     return _CloudIndexRefreshResult(
       checkedFolders: checkedFolders,
@@ -1371,26 +1406,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (batch.length < pageSize || added.isEmpty) break;
     }
     return values;
-  }
-
-  Future<({bool changed})> _replaceCloudIndexFolder({
-    required String? folderID,
-    required List<CloudFile> previous,
-    required List<CloudFile> current,
-  }) async {
-    if (_sameCloudIndexSnapshot(previous, current)) {
-      return (changed: false);
-    }
-    final currentIDs = current.map((file) => file.id).toSet();
-    final removedFolders = previous
-        .where((file) => file.isDirectory && !currentIDs.contains(file.id))
-        .map((file) => file.id)
-        .toList();
-    await FileMetadataCache.cacheFolderChildren(folderID, current);
-    if (removedFolders.isNotEmpty) {
-      await FileMetadataCache.removeFolderChildrenSubtrees(removedFolders);
-    }
-    return (changed: true);
   }
 
   void _queueChangedIndexFolders({

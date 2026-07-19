@@ -32,6 +32,7 @@ class StorageKeys {
   static const String mediaScanHistory = 'guangya.mediaScanHistory';
   static const String cloudIndexRefreshMinutes =
       'guangya.cloudIndexRefreshMinutes';
+  static const String cloudIndexConcurrency = 'guangya.cloudIndexConcurrency';
   static const String cloudIndexLastUpdatedAt =
       'guangya.cloudIndexLastUpdatedAt';
   static const String cloudIndexLiveGCIDVersion =
