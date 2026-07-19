@@ -8,7 +8,7 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, quality, android, ios, macos, windows]
+        options: [all, android, ios, macos, windows]
   push:
     tags: ['*']
 
@@ -17,31 +17,24 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   FLUTTER_VERSION: '3.41.9'
   RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || github.sha }}
+  RELEASE_NAME: Release ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || github.sha }}
+  RELEASE_DRAFT: ${{ startsWith(github.ref, 'refs/tags/') == false }}
 
 jobs:
-  quality:
-    name: Analyze and test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-      - run: flutter pub get
-      - run: flutter analyze
-      - run: flutter test
-
   android:
-    name: Android release
-    needs: quality
-    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'android'
+    name: Android arm64 APK
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'android'))
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
@@ -53,7 +46,17 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
-      - name: Restore Android release keystore
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(awk '/^version:/ { print $2; exit }' pubspec.yaml)
+          test -n "$VERSION"
+          echo "full=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=${VERSION%%+*}" >> "$GITHUB_OUTPUT"
+          echo "package=${VERSION//+/_}" >> "$GITHUB_OUTPUT"
+      - name: Restore Android signing key
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -62,151 +65,310 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          test -n "$KEYSTORE_BASE64" && test -n "$KEYSTORE_PASSWORD" && test -n "$KEY_PASSWORD" && test -n "$KEY_ALIAS"
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_PASSWORD KEY_ALIAS; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required secret: $name"
+              exit 1
+            fi
+          done
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/release.jks
-          cat > android/key.properties <<EOF
-          storePassword=$KEYSTORE_PASSWORD
-          keyPassword=$KEY_PASSWORD
-          keyAlias=$KEY_ALIAS
-          storeFile=release.jks
-          EOF
+          test -s android/app/release.jks
+          {
+            printf 'storePassword=%s\n' "$KEYSTORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'storeFile=release.jks\n'
+          } > android/key.properties
       - run: flutter pub get
-      - run: flutter build apk --release --split-per-abi
-      - name: Package Android arm64 APK
-        run: cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk guangya_flutter-${{ env.RELEASE_TAG }}-android-arm64.apk
+      - name: Build Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build apk \
+            --release \
+            --target-platform android-arm64 \
+            --split-per-abi \
+            --obfuscate \
+            --split-debug-info=build/symbols \
+            --build-name="${{ steps.version.outputs.name }}" \
+            --build-number="${{ github.run_number }}"
+      - name: Package Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          DESTINATION=dist/android/guangya_flutter-${{ steps.version.outputs.package }}-android-arm64.apk
+          test -s "$SOURCE"
+          mkdir -p dist/android
+          cp "$SOURCE" "$DESTINATION"
       - uses: actions/upload-artifact@v7
         with:
-          name: android-arm64
-          path: guangya_flutter-*-android-arm64.apk
-      - name: Publish Android release
-        if: startsWith(github.ref, 'refs/tags/')
+          name: android-arm64-apk
+          path: dist/android/*.apk
+          if-no-files-found: error
+      - name: Publish Android package
         uses: softprops/action-gh-release@v3
         with:
-          files: guangya_flutter-*-android-arm64.apk
+          token: ${{ github.token }}
+          files: dist/android/*.apk
+          fail_on_unmatched_files: true
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          draft: ${{ env.RELEASE_DRAFT }}
+          prerelease: false
 
   ios:
-    name: iOS release
-    needs: quality
-    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'ios'
-    runs-on: macos-14
+    name: iOS unsigned IPA
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'ios'))
+    permissions:
+      contents: write
+    runs-on: macos-26
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
-      - name: Install iOS release certificate and profile
+      - name: Resolve version
+        id: version
         shell: bash
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
-          EXPORT_OPTIONS_BASE64: ${{ secrets.IOS_EXPORT_OPTIONS_PLIST_BASE64 }}
         run: |
           set -euo pipefail
-          test -n "$CERTIFICATE_BASE64" && test -n "$CERTIFICATE_PASSWORD" && test -n "$PROFILE_BASE64" && test -n "$KEYCHAIN_PASSWORD" && test -n "$EXPORT_OPTIONS_BASE64"
-          CERT_PATH="$RUNNER_TEMP/ios-release.p12"
-          KEYCHAIN_PATH="$RUNNER_TEMP/ios-signing.keychain-db"
-          PROFILE_PATH="$RUNNER_TEMP/Guangya.mobileprovision"
-          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
-          printf '%s' "$PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
-          printf '%s' "$EXPORT_OPTIONS_BASE64" | base64 --decode > ios/ExportOptions.plist
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          UUID=$(security cms -D -i "$PROFILE_PATH" | plutil -extract UUID raw -)
-          cp "$PROFILE_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/$UUID.mobileprovision
+          VERSION=$(awk '/^version:/ { print $2; exit }' pubspec.yaml)
+          test -n "$VERSION"
+          echo "full=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=${VERSION%%+*}" >> "$GITHUB_OUTPUT"
+          echo "package=${VERSION//+/_}" >> "$GITHUB_OUTPUT"
       - run: flutter pub get
-      - run: flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
-      - run: cp build/ios/ipa/*.ipa guangya_flutter-${{ env.RELEASE_TAG }}-ios.ipa
+      - name: Build iOS app without code signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build ios \
+            --release \
+            --no-codesign \
+            --build-name="${{ steps.version.outputs.name }}" \
+            --build-number="${{ github.run_number }}"
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=build/ios/iphoneos/Runner.app
+          STAGING="$RUNNER_TEMP/guangya-ipa"
+          IPA="$GITHUB_WORKSPACE/dist/ios/guangya_flutter-${{ steps.version.outputs.package }}-ios-arm64-unsigned.ipa"
+          test -d "$APP"
+          mkdir -p "$STAGING/Payload" dist/ios
+          ditto --norsrc --noextattr "$APP" "$STAGING/Payload/Runner.app"
+          ditto -c -k --norsrc --noextattr --keepParent "$STAGING/Payload" "$IPA"
+          test -s "$IPA"
       - uses: actions/upload-artifact@v7
         with:
-          name: ios-ipa
-          path: guangya_flutter-*-ios.ipa
-      - name: Publish iOS release
-        if: startsWith(github.ref, 'refs/tags/')
+          name: ios-unsigned-ipa
+          path: dist/ios/*.ipa
+          if-no-files-found: error
+      - name: Publish iOS package
         uses: softprops/action-gh-release@v3
         with:
-          files: guangya_flutter-*-ios.ipa
+          token: ${{ github.token }}
+          files: dist/ios/*.ipa
+          fail_on_unmatched_files: true
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          draft: ${{ env.RELEASE_DRAFT }}
+          prerelease: false
 
   macos:
-    name: macOS release
-    needs: quality
-    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'macos'
-    runs-on: macos-14
+    name: macOS universal PKG
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'macos'))
+    permissions:
+      contents: write
+    runs-on: macos-26
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
-      - name: Install macOS Developer ID certificate
+      - name: Resolve version
+        id: version
         shell: bash
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "$CERTIFICATE_BASE64" && test -n "$CERTIFICATE_PASSWORD" && test -n "$KEYCHAIN_PASSWORD"
-          CERT_PATH="$RUNNER_TEMP/macos-release.p12"
-          KEYCHAIN_PATH="$RUNNER_TEMP/macos-signing.keychain-db"
-          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          VERSION=$(awk '/^version:/ { print $2; exit }' pubspec.yaml)
+          test -n "$VERSION"
+          echo "full=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=${VERSION%%+*}" >> "$GITHUB_OUTPUT"
+          echo "package=${VERSION//+/_}" >> "$GITHUB_OUTPUT"
       - run: flutter pub get
-      - run: flutter build macos --release
-      - name: Sign and package macOS app
+      - name: Build macOS app
         shell: bash
-        env:
-          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
-          test -n "$SIGNING_IDENTITY"
+          flutter build macos \
+            --release \
+            --build-name="${{ steps.version.outputs.name }}" \
+            --build-number="${{ github.run_number }}"
+      - name: Package macOS PKG
+        shell: bash
+        run: |
+          set -euo pipefail
           APP=build/macos/Build/Products/Release/小黄鸭.app
+          EXECUTABLE="$APP/Contents/MacOS/小黄鸭"
+          PKG=dist/macos/guangya_flutter-${{ steps.version.outputs.package }}-macos-universal.pkg
+          STAGING=$(mktemp -d "$RUNNER_TEMP/guangya-pkg.XXXXXX")
+          STAGED_APP="$STAGING/小黄鸭.app"
           test -d "$APP"
-          codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" guangya_flutter-${{ env.RELEASE_TAG }}-macos.zip
+          test -x "$EXECUTABLE"
+          ARCHS=$(lipo -archs "$EXECUTABLE")
+          echo "macOS executable architectures: $ARCHS"
+          [[ " $ARCHS " == *" arm64 "* && " $ARCHS " == *" x86_64 "* ]]
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          mkdir -p dist/macos
+          ditto --norsrc --noextattr "$APP" "$STAGED_APP"
+          codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
+          pkgbuild \
+            --component "$STAGED_APP" \
+            --install-location /Applications \
+            --identifier com.ptools.guangyaFlutter.pkg \
+            --version "${{ steps.version.outputs.name }}" \
+            "$PKG"
+          test -s "$PKG"
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-app
-          path: guangya_flutter-*-macos.zip
-      - name: Publish macOS release
-        if: startsWith(github.ref, 'refs/tags/')
+          name: macos-universal-pkg
+          path: dist/macos/*.pkg
+          if-no-files-found: error
+      - name: Publish macOS package
         uses: softprops/action-gh-release@v3
         with:
-          files: guangya_flutter-*-macos.zip
+          token: ${{ github.token }}
+          files: dist/macos/*.pkg
+          fail_on_unmatched_files: true
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          draft: ${{ env.RELEASE_DRAFT }}
+          prerelease: false
 
   windows:
-    name: Windows release
-    needs: quality
-    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'windows'
+    name: Windows x64 installers
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'windows'))
+    permissions:
+      contents: write
     runs-on: windows-2022
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
-      - run: flutter pub get
-      - run: flutter build windows --release
-      - name: Package Windows release
+      - name: Resolve version
+        id: version
         shell: pwsh
-        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath guangya_flutter-${{ env.RELEASE_TAG }}-windows-x64.zip
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $versionLine = Get-Content pubspec.yaml | Where-Object { $_ -match '^version:\s*' } | Select-Object -First 1
+          if (-not $versionLine) { throw 'Version not found in pubspec.yaml' }
+          $version = ($versionLine -split ':\s*', 2)[1].Trim()
+          $versionName = ($version -split '\+', 2)[0]
+          $packageVersion = $version -replace '\+', '_'
+          "full=$version" >> $env:GITHUB_OUTPUT
+          "name=$versionName" >> $env:GITHUB_OUTPUT
+          "package=$packageVersion" >> $env:GITHUB_OUTPUT
+      - run: flutter pub get
+      - name: Build Windows app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Remove-Item Env:CMAKE_GENERATOR -ErrorAction SilentlyContinue
+          Remove-Item Env:CMAKE_GENERATOR_INSTANCE -ErrorAction SilentlyContinue
+          Remove-Item Env:CMAKE_GENERATOR_PLATFORM -ErrorAction SilentlyContinue
+          Remove-Item Env:CMAKE_GENERATOR_TOOLSET -ErrorAction SilentlyContinue
+          flutter build windows --release --build-name="${{ steps.version.outputs.name }}" --build-number="${{ github.run_number }}"
+          if (-not (Test-Path 'build/windows/x64/runner/Release/guangya_flutter.exe')) {
+            throw 'Windows executable was not generated'
+          }
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist/windows | Out-Null
+          $zip = 'dist/windows/guangya_flutter-${{ steps.version.outputs.package }}-windows-x64-portable.zip'
+          Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath $zip -Force
+          if (-not (Test-Path $zip)) { throw 'Windows portable ZIP was not generated' }
+      - name: Build Windows setup installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install innosetup -y --no-progress
+          $versionName = '${{ steps.version.outputs.name }}'
+          $packageVersion = '${{ steps.version.outputs.package }}'
+          $versionInfo = "$versionName.${{ github.run_number }}"
+          $setupBaseName = "guangya_flutter-$packageVersion-windows-x64-setup"
+          $iss = @"
+          [Setup]
+          AppId={{7202603F-CE16-45DB-9E60-60CC357E79CF}
+          AppName=小黄鸭
+          AppVersion=$versionName
+          AppVerName=小黄鸭 $versionName
+          AppPublisher=PTools
+          DefaultDirName={autopf}\Guangya
+          DefaultGroupName=小黄鸭
+          OutputDir=dist\windows
+          OutputBaseFilename=$setupBaseName
+          SetupIconFile=windows\runner\resources\app_icon.ico
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+          VersionInfoVersion=$versionInfo
+
+          [Languages]
+          Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+          [Tasks]
+          Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: unchecked
+
+          [Files]
+          Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\小黄鸭"; Filename: "{app}\guangya_flutter.exe"
+          Name: "{autodesktop}\小黄鸭"; Filename: "{app}\guangya_flutter.exe"; Tasks: desktopicon
+
+          [Run]
+          Filename: "{app}\guangya_flutter.exe"; Description: "启动小黄鸭"; Flags: nowait postinstall skipifsilent
+          "@
+          $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+          [System.IO.File]::WriteAllText((Join-Path $PWD 'setup.iss'), $iss, $utf8Bom)
+          iscc setup.iss
+          $setup = "dist/windows/$setupBaseName.exe"
+          if (-not (Test-Path $setup)) { throw 'Windows setup installer was not generated' }
       - uses: actions/upload-artifact@v7
         with:
-          name: windows-x64
-          path: guangya_flutter-*-windows-x64.zip
-      - name: Publish Windows release
-        if: startsWith(github.ref, 'refs/tags/')
+          name: windows-x64-installers
+          path: |
+            dist/windows/*.zip
+            dist/windows/*.exe
+          if-no-files-found: error
+      - name: Publish Windows packages
         uses: softprops/action-gh-release@v3
         with:
-          files: guangya_flutter-*-windows-x64.zip
+          token: ${{ github.token }}
+          files: |
+            dist/windows/*.zip
+            dist/windows/*.exe
+          fail_on_unmatched_files: true
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          draft: ${{ env.RELEASE_DRAFT }}
+          prerelease: false
