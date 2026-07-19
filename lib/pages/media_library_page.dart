@@ -1283,21 +1283,62 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               .toDouble(),
           child: ListView.separated(
             itemCount: backups.length,
-            separatorBuilder: (_, _) => const Divider(height: 1),
-            itemBuilder: (_, index) {
+            separatorBuilder: (_, _) => const ShadSeparator.horizontal(),
+            itemBuilder: (itemContext, index) {
               final backup = backups[index];
-              return ListTile(
-                leading: const Icon(Icons.storage_rounded),
-                title: Text(
-                  backup.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+              final cs = ShadTheme.of(itemContext).colorScheme;
+              return LayoutBuilder(
+                builder: (context, constraints) => ShadButton.ghost(
+                  width: constraints.maxWidth,
+                  expands: false,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 9,
+                  ),
+                  onPressed: () => Navigator.of(dialogContext).pop(backup),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.storage_rounded,
+                        size: 18,
+                        color: cs.mutedForeground,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              backup.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: cs.foreground,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              '${backup.formattedSize} · ${backup.modifiedAt}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: cs.mutedForeground,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        color: cs.mutedForeground,
+                      ),
+                    ],
+                  ),
                 ),
-                subtitle: Text(
-                  '${backup.formattedSize} · ${backup.modifiedAt}',
-                ),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => Navigator.of(dialogContext).pop(backup),
               );
             },
           ),
