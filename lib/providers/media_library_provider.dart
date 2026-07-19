@@ -589,14 +589,27 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 (existing.id == file.id ||
                     (file.gcid?.isNotEmpty == true &&
                         file.gcid == existing.file.gcid));
-            var item = existing == null || !sameCloudResource
+            // Keep complete entries during a rescan. New resources and rows
+            // missing scraped metadata follow the same automatic recognition,
+            // detail hydration and canonical naming path as detail-page media
+            // recognition.
+            final shouldRecognize =
+                existing == null ||
+                !sameCloudResource ||
+                _needsMediaRefresh(existing);
+            var item = shouldRecognize
                 ? await _recognizeMediaItem(
                     fallback,
                     tmdbApiKey,
                     proxyHost: tmdbProxyHost,
                     proxyPort: tmdbProxyPort,
                   )
-                : existing.copyWith(file: file);
+                : existing.copyWith(file: file, updatedAt: DateTime.now());
+            // Do not lose an existing match solely because a transient TMDB
+            // lookup failed while filling an incomplete record.
+            if (item.tmdbID == null && existing?.tmdbID != null) {
+              item = existing!.copyWith(file: file, updatedAt: DateTime.now());
+            }
             item = await _renameMatchedMediaFile(item);
             unique[file.id] = item;
             completed += 1;
@@ -1635,6 +1648,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     } catch (_) {
       return fallback;
     }
+  }
+
+  bool _needsMediaRefresh(MediaLibraryItem item) {
+    return item.tmdbID == null ||
+        item.mediaKind == null ||
+        item.title.trim().isEmpty ||
+        item.originalTitle.trim().isEmpty ||
+        item.overview.trim().isEmpty ||
+        item.releaseDate.trim().isEmpty ||
+        item.posterPath?.isEmpty != false ||
+        item.backdropPath?.isEmpty != false;
   }
 
   Future<List<Map<String, dynamic>>> _tmdbCandidatesForItem(

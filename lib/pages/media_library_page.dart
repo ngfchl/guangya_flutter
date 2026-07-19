@@ -2358,8 +2358,12 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
 class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   late MediaLibraryItem _resource = widget.work.primary;
   Map<String, dynamic>? _tmdbDetails;
+  Map<String, dynamic>? _episodeDetails;
   int? _loadedTMDBID;
+  int? _selectedSeason;
+  String? _selectedEpisodeID;
   bool _loadingTMDBDetails = false;
+  bool _loadingEpisodeDetails = false;
   final _backdropController = PageController();
   Timer? _backdropTimer;
   var _backdropIndex = 0;
@@ -2382,6 +2386,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       _resource = widget.work.primary;
     }
     if (widget.work.primary.tmdbID != _loadedTMDBID) {
+      _selectedSeason = null;
+      _selectedEpisodeID = null;
+      _episodeDetails = null;
       Future.microtask(_loadTMDBDetails);
     }
   }
@@ -2430,6 +2437,51 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       // Artwork enrichments are optional and should not interrupt playback.
     } finally {
       if (mounted) setState(() => _loadingTMDBDetails = false);
+    }
+  }
+
+  Future<void> _selectEpisode(MediaLibraryItem resource) async {
+    final parsed = ParsedMediaName.parse(
+      resource.file.name,
+      directoryName: _parentDirectoryName(resource.file.cloudPath),
+    );
+    setState(() {
+      _resource = resource;
+      _selectedSeason = parsed.season ?? _selectedSeason ?? 1;
+      _selectedEpisodeID = resource.id;
+      _episodeDetails = null;
+    });
+    final tmdbID = widget.work.primary.tmdbID;
+    final season = parsed.season;
+    final episode = parsed.episode;
+    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    if (tmdbID == null || season == null || episode == null || apiKey.isEmpty) {
+      return;
+    }
+    setState(() => _loadingEpisodeDetails = true);
+    try {
+      final details = await ref
+          .read(authProvider.notifier)
+          .api
+          .tmdbEpisodeDetails(
+            tmdbID,
+            season: season,
+            episode: episode,
+            apiKey: apiKey,
+            proxyHost:
+                StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+            proxyPort:
+                StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+          );
+      if (mounted && _selectedEpisodeID == resource.id) {
+        setState(() => _episodeDetails = details);
+      }
+    } catch (_) {
+      // File metadata remains available when an episode detail request fails.
+    } finally {
+      if (mounted && _selectedEpisodeID == resource.id) {
+        setState(() => _loadingEpisodeDetails = false);
+      }
     }
   }
 
@@ -2921,13 +2973,26 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final episodesBySeason = <int, List<MediaLibraryItem>>{};
     if (isSeries) {
       for (final resource in widget.work.resources) {
-        final parsed = ParsedMediaName.parse(resource.file.name);
+        final parsed = ParsedMediaName.parse(
+          resource.file.name,
+          directoryName: _parentDirectoryName(resource.file.cloudPath),
+        );
         (episodesBySeason[parsed.season ?? 1] ??= []).add(resource);
       }
       for (final values in episodesBySeason.values) {
         values.sort((a, b) {
-          final aEpisode = ParsedMediaName.parse(a.file.name).episode ?? 9999;
-          final bEpisode = ParsedMediaName.parse(b.file.name).episode ?? 9999;
+          final aEpisode =
+              ParsedMediaName.parse(
+                a.file.name,
+                directoryName: _parentDirectoryName(a.file.cloudPath),
+              ).episode ??
+              9999;
+          final bEpisode =
+              ParsedMediaName.parse(
+                b.file.name,
+                directoryName: _parentDirectoryName(b.file.cloudPath),
+              ).episode ??
+              9999;
           return aEpisode == bEpisode
               ? a.file.name.compareTo(b.file.name)
               : aEpisode.compareTo(bEpisode);
@@ -2950,32 +3015,172 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           ),
         ),
         const SizedBox(height: 8),
-        if (isSeries && episodesBySeason.isNotEmpty)
-          for (final entry in episodesBySeason.entries) ...[
-            Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 6),
-              child: Text(
-                '第 ${entry.key} 季',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: cs.foreground,
-                ),
-              ),
+        if (isSeries && episodesBySeason.isNotEmpty) ...[
+          _seasonPicker(episodesBySeason, cs),
+          const SizedBox(height: 10),
+          ...episodesBySeason[_activeSeason(episodesBySeason)]!.map(
+            (resource) => _resourceTile(
+              resource,
+              cs,
+              episode: ParsedMediaName.parse(
+                resource.file.name,
+                directoryName: _parentDirectoryName(resource.file.cloudPath),
+              ).episode,
             ),
-            ...entry.value.map(
-              (resource) => _resourceTile(
-                resource,
-                cs,
-                episode: ParsedMediaName.parse(resource.file.name).episode,
-              ),
-            ),
-          ]
-        else
+          ),
+          _episodeIntroduction(context, cs),
+        ] else
           ...widget.work.resources.map(
             (resource) => _resourceTile(resource, cs),
           ),
       ],
+    );
+  }
+
+  int _activeSeason(Map<int, List<MediaLibraryItem>> episodesBySeason) {
+    if (_selectedSeason != null &&
+        episodesBySeason.containsKey(_selectedSeason)) {
+      return _selectedSeason!;
+    }
+    return episodesBySeason.keys.reduce((a, b) => a < b ? a : b);
+  }
+
+  Widget _seasonPicker(
+    Map<int, List<MediaLibraryItem>> episodesBySeason,
+    ShadColorScheme cs,
+  ) {
+    final selectedSeason = _activeSeason(episodesBySeason);
+    final seasons = episodesBySeason.keys.toList()..sort();
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final season in seasons)
+            Padding(
+              padding: EdgeInsets.only(right: season == seasons.last ? 0 : 8),
+              child: ShadButton.outline(
+                size: ShadButtonSize.sm,
+                onPressed: () => setState(() {
+                  _selectedSeason = season;
+                  _selectedEpisodeID = null;
+                  _episodeDetails = null;
+                }),
+                backgroundColor: season == selectedSeason ? cs.primary : null,
+                foregroundColor: season == selectedSeason
+                    ? cs.primaryForeground
+                    : null,
+                child: Text(
+                  '第 $season 季 · ${episodesBySeason[season]!.length} 集',
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _episodeIntroduction(BuildContext context, ShadColorScheme cs) {
+    final selected = _selectedEpisodeID == _resource.id;
+    if (!selected) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(
+          '选择一集查看当前集介绍',
+          style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+        ),
+      );
+    }
+    if (_loadingEpisodeDetails) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: SizedBox(width: 120, child: ShadProgress()),
+      );
+    }
+    final parsed = ParsedMediaName.parse(
+      _resource.file.name,
+      directoryName: _parentDirectoryName(_resource.file.cloudPath),
+    );
+    final details = _episodeDetails;
+    final title = details?['name']?.toString().trim();
+    final overview = details?['overview']?.toString().trim();
+    final airDate = details?['air_date']?.toString().trim();
+    final runtime = details?['runtime'];
+    final stillPath = details?['still_path']?.toString();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.muted.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: cs.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (stillPath?.isNotEmpty == true)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: CachedNetworkImage(
+                imageUrl: _tmdbImageURL(stillPath!, size: 'w300'),
+                width: 128,
+                height: 72,
+                fit: BoxFit.cover,
+                errorWidget: (_, _, _) => _tmdbDirectFallback(
+                  path: stillPath,
+                  size: 'w300',
+                  width: 128,
+                  height: 72,
+                  fallback: Container(color: cs.card),
+                ),
+              ),
+            ),
+          if (stillPath?.isNotEmpty == true) const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SelectableText(
+                  title?.isNotEmpty == true
+                      ? title!
+                      : '第 ${parsed.episode?.toString() ?? '-'} 集',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: cs.foreground,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                if (airDate?.isNotEmpty == true || runtime != null)
+                  Text(
+                    [
+                      if (airDate?.isNotEmpty == true) airDate!,
+                      if (runtime != null) '$runtime 分钟',
+                    ].join(' · '),
+                    style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                  ),
+                if (overview?.isNotEmpty == true) ...[
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    overview!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.45,
+                      color: cs.foreground,
+                    ),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    '暂无本集简介',
+                    style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -3008,7 +3213,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: () => setState(() => _resource = resource),
+            onTap: () => _selectEpisode(resource),
             borderRadius: BorderRadius.circular(6),
             child: Container(
               width: double.infinity,
@@ -3422,9 +3627,10 @@ class _ManualTMDBMatchDialogState
         children: [
           for (final option in values)
             Expanded(
-              child: InkWell(
-                borderRadius: BorderRadius.circular(999),
-                onTap: () => setState(() => _mediaKind = option.$1),
+              child: ShadButton.ghost(
+                size: ShadButtonSize.sm,
+                padding: EdgeInsets.zero,
+                onPressed: () => setState(() => _mediaKind = option.$1),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 140),
                   alignment: Alignment.center,
