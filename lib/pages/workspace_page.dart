@@ -198,6 +198,7 @@ class WorkspacePage extends ConsumerStatefulWidget {
 }
 
 class _WorkspacePageState extends ConsumerState<WorkspacePage> {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
   WorkspaceMode _mode = WorkspaceMode.cloud;
@@ -238,9 +239,59 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   @override
   Widget build(BuildContext context) {
     final fp = ref.watch(fileProvider);
+    final mediaState = ref.watch(mediaLibraryProvider);
+    final drawerWidth = (MediaQuery.sizeOf(context).width * 0.86)
+        .clamp(280.0, 340.0)
+        .toDouble();
 
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: Colors.transparent,
+      drawer: Drawer(
+        width: drawerWidth,
+        child: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+            children: [
+              _MobileSidebarContent(
+                mode: _mode,
+                cloudState: fp,
+                mediaState: mediaState,
+                onModeChanged: (mode) {
+                  Navigator.of(context).pop();
+                  _changeMode(mode);
+                },
+                onSection: (section) {
+                  Navigator.of(context).pop();
+                  ref.read(fileProvider.notifier).setSection(section);
+                },
+                onSettings: () {
+                  Navigator.of(context).pop();
+                  _showSettings(context);
+                },
+                onSignOut: () {
+                  Navigator.of(context).pop();
+                  ref.read(authProvider.notifier).signOut();
+                },
+                onCreateLibrary: () {
+                  Navigator.of(context).pop();
+                  MediaLibraryPage.showCreateDialog(context, ref);
+                },
+                onSelectLibrary: (libraryID) {
+                  Navigator.of(context).pop();
+                  ref
+                      .read(mediaLibraryProvider.notifier)
+                      .selectLibrary(libraryID);
+                },
+                onTool: (tool) {
+                  Navigator.of(context).pop();
+                  _openTool(tool);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
       body: OS26Surface(
         child: SafeArea(
           child: LayoutBuilder(
@@ -256,7 +307,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                 onSearch: _submitSearch,
                 onToggleSearch: _toggleSearch,
                 onSettings: () => _showSettings(context),
-                onOpenMenu: () => _showMobileMenu(context),
+                onOpenMenu: _openMobileDrawer,
                 uploadProgress: fp.uploadProgress,
               );
               final content = IndexedStack(
@@ -265,7 +316,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
               );
               if (compact) {
                 return _MobileDrawerSwipeArea(
-                  onOpen: () => _showMobileMenu(context),
+                  onOpen: _openMobileDrawer,
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
                     child: Column(
@@ -355,52 +406,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     );
   }
 
-  void _showMobileMenu(BuildContext context) {
-    final viewport = MediaQuery.sizeOf(context);
-    final width = (viewport.width * 0.86).clamp(280.0, 340.0).toDouble();
-    showShadSheet(
-      context: context,
-      side: ShadSheetSide.left,
-      builder: (sheetContext) => ShadSheet(
-        constraints: BoxConstraints.tightFor(width: width),
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
-        scrollable: true,
-        child: _MobileSidebarContent(
-          mode: _mode,
-          cloudState: ref.read(fileProvider),
-          mediaState: ref.read(mediaLibraryProvider),
-          onModeChanged: (mode) {
-            Navigator.of(sheetContext).pop();
-            _changeMode(mode);
-          },
-          onSection: (section) {
-            Navigator.of(sheetContext).pop();
-            ref.read(fileProvider.notifier).setSection(section);
-          },
-          onSettings: () {
-            Navigator.of(sheetContext).pop();
-            _showSettings(context);
-          },
-          onSignOut: () {
-            Navigator.of(sheetContext).pop();
-            ref.read(authProvider.notifier).signOut();
-          },
-          onCreateLibrary: () {
-            Navigator.of(sheetContext).pop();
-            MediaLibraryPage.showCreateDialog(context, ref);
-          },
-          onSelectLibrary: (libraryID) {
-            Navigator.of(sheetContext).pop();
-            ref.read(mediaLibraryProvider.notifier).selectLibrary(libraryID);
-          },
-          onTool: (tool) {
-            Navigator.of(sheetContext).pop();
-            _openTool(tool);
-          },
-        ),
-      ),
-    );
-  }
+  void _openMobileDrawer() => _scaffoldKey.currentState?.openDrawer();
 
   void _showSettings(BuildContext context) {
     showShadDialog<void>(
