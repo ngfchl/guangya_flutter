@@ -8,7 +8,7 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, android, ios, macos, windows]
+        options: [all, android, ios, macos_intel, macos_arm, windows]
   push:
     tags: ['*']
 
@@ -180,11 +180,81 @@ jobs:
           draft: ${{ env.RELEASE_DRAFT }}
           prerelease: false
 
-  macos:
-    name: macOS universal PKG
+  macos_intel:
+    name: macOS Intel PKG
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
-      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'macos'))
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'macos_intel'))
+    permissions:
+      contents: write
+    runs-on: macos-15-intel
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(awk '/^version:/ { print $2; exit }' pubspec.yaml)
+          test -n "$VERSION"
+          echo "full=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=${VERSION%%+*}" >> "$GITHUB_OUTPUT"
+          echo "package=${VERSION//+/_}" >> "$GITHUB_OUTPUT"
+      - run: flutter pub get
+      - name: Build macOS app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build macos \
+            --release \
+            --build-name="${{ steps.version.outputs.name }}" \
+            --build-number="${{ github.run_number }}"
+      - name: Package macOS PKG
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=build/macos/Build/Products/Release/小黄鸭.app
+          PKG=dist/macos/guangya_flutter-${{ steps.version.outputs.package }}-macos-x86_64.pkg
+          STAGING=$(mktemp -d "$RUNNER_TEMP/guangya-pkg.XXXXXX")
+          STAGED_APP="$STAGING/小黄鸭.app"
+          test -d "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          mkdir -p dist/macos
+          ditto --norsrc --noextattr "$APP" "$STAGED_APP"
+          codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
+          pkgbuild \
+            --component "$STAGED_APP" \
+            --install-location /Applications \
+            --identifier com.ptools.guangyaFlutter.pkg \
+            --version "${{ steps.version.outputs.name }}" \
+            "$PKG"
+          test -s "$PKG"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-x86_64-pkg
+          path: dist/macos/*.pkg
+          if-no-files-found: error
+      - name: Publish macOS package
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ github.token }}
+          files: dist/macos/*.pkg
+          fail_on_unmatched_files: true
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          draft: ${{ env.RELEASE_DRAFT }}
+          prerelease: false
+
+  macos_arm:
+    name: macOS Apple Silicon PKG
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'macos_arm'))
     permissions:
       contents: write
     runs-on: macos-26
@@ -219,15 +289,10 @@ jobs:
         run: |
           set -euo pipefail
           APP=build/macos/Build/Products/Release/小黄鸭.app
-          EXECUTABLE="$APP/Contents/MacOS/小黄鸭"
-          PKG=dist/macos/guangya_flutter-${{ steps.version.outputs.package }}-macos-universal.pkg
+          PKG=dist/macos/guangya_flutter-${{ steps.version.outputs.package }}-macos-arm64.pkg
           STAGING=$(mktemp -d "$RUNNER_TEMP/guangya-pkg.XXXXXX")
           STAGED_APP="$STAGING/小黄鸭.app"
           test -d "$APP"
-          test -x "$EXECUTABLE"
-          ARCHS=$(lipo -archs "$EXECUTABLE")
-          echo "macOS executable architectures: $ARCHS"
-          [[ " $ARCHS " == *" arm64 "* && " $ARCHS " == *" x86_64 "* ]]
           codesign --verify --deep --strict --verbose=2 "$APP"
           mkdir -p dist/macos
           ditto --norsrc --noextattr "$APP" "$STAGED_APP"
@@ -241,7 +306,7 @@ jobs:
           test -s "$PKG"
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-universal-pkg
+          name: macos-arm64-pkg
           path: dist/macos/*.pkg
           if-no-files-found: error
       - name: Publish macOS package
