@@ -34,9 +34,12 @@ class StorageKeys {
       'guangya.cloudIndexRefreshMinutes';
   static const String cloudIndexLastUpdatedAt =
       'guangya.cloudIndexLastUpdatedAt';
+  static const String cloudIndexLiveGCIDVersion =
+      'guangya.cloudIndexLiveGCIDVersion';
   static const String cloudScrapedBackupFolderID =
       'guangya.cloudScrapedBackupFolderID';
   static const String workspaceMode = 'guangya.workspaceMode';
+  static const String watchHistory = 'guangya.watchHistory';
 }
 
 class StorageManager {

@@ -14,6 +14,7 @@ import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import '../core/logging/app_logger.dart';
 import '../providers/file_provider.dart';
+import '../providers/watch_history_provider.dart';
 
 Future<void> showMediaPlayerDialog(
   BuildContext context,
@@ -69,6 +70,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   late final Player _player;
   late final VideoController _controller;
   StreamSubscription<VideoParams>? _videoParamsSubscription;
+  StreamSubscription<Duration>? _positionSubscription;
   Timer? _videoDimensionFallbackTimer;
   late CloudFile _currentFile;
   String? _error;
@@ -77,6 +79,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   var _videoAspectRatio = 3 / 2;
   var _hasVideoDimensions = false;
   bool _showEpisodes = false;
+  int _lastRecordedSeconds = 0;
   List<CloudFile> _episodes = const [];
   List<CloudFile> _subtitleCandidates = const [];
 
@@ -111,15 +114,22 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     } catch (error) {
       _handlePlaybackFailure(error, '内置视频输出初始化失败');
     }
+    _currentFile = widget.file;
     _videoParamsSubscription = _player.stream.videoParams.listen(
       _updateVideoDimensions,
     );
-    _currentFile = widget.file;
+    _positionSubscription = _player.stream.position.listen(
+      _recordPlaybackProgress,
+    );
     _episodes = _matchingEpisodes(widget.file, widget.episodeCandidates);
     Future.microtask(_open);
   }
 
   Future<void> _open([CloudFile? file]) async {
+    if (file != null && file.id != _currentFile.id) {
+      _saveCurrentPlaybackProgress();
+      _lastRecordedSeconds = 0;
+    }
     _videoDimensionFallbackTimer?.cancel();
     if (mounted) {
       setState(() {
@@ -185,6 +195,27 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
       await Navigator.of(context).maybePop();
       await widget.onPlaybackFailure!();
     }());
+  }
+
+  void _recordPlaybackProgress(Duration position) {
+    final duration = _player.state.duration;
+    if (duration.inSeconds < 10 || position.inSeconds < 3) return;
+    final completed = position >= duration * 0.95;
+    if (!completed && position.inSeconds - _lastRecordedSeconds < 10) return;
+    _lastRecordedSeconds = position.inSeconds;
+    unawaited(
+      ref
+          .read(watchHistoryProvider.notifier)
+          .record(
+            fileID: _currentFile.id,
+            position: position,
+            duration: duration,
+          ),
+    );
+  }
+
+  void _saveCurrentPlaybackProgress() {
+    _recordPlaybackProgress(_player.state.position);
   }
 
   void _updateVideoDimensions(VideoParams params) {
@@ -276,8 +307,10 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
 
   @override
   void dispose() {
+    _saveCurrentPlaybackProgress();
     _videoDimensionFallbackTimer?.cancel();
     _videoParamsSubscription?.cancel();
+    _positionSubscription?.cancel();
     _player.dispose();
     super.dispose();
   }
