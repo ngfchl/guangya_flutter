@@ -469,6 +469,10 @@ class MediaLibraryScanProgress {
 
 enum MediaLibraryScanMode { unrecognizedOnly, forceAll }
 
+extension MediaLibraryScanModeBehavior on MediaLibraryScanMode {
+  bool get refreshesFileIndex => this == MediaLibraryScanMode.forceAll;
+}
+
 class MediaLibraryScanLog {
   final DateTime createdAt;
   final String message;

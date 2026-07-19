@@ -770,7 +770,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }) async {
     final library = state.selectedLibrary;
     if (library == null || _api == null || state.isScanning) return;
-    final forceAll = mode == MediaLibraryScanMode.forceAll;
+    final forceAll = mode.refreshesFileIndex;
     final modeLabel = forceAll ? '强制全部重新识别' : '仅扫描未识别资源';
 
     _cancelScan = false;
@@ -802,7 +802,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       };
       final initialItems = await _loadAllItems()
         ..removeWhere((item) => item.libraryID == library.id);
-      final unique = <String, MediaLibraryItem>{};
+      final unique = <String, MediaLibraryItem>{
+        if (!forceAll)
+          for (final item in previousLibraryItems) item.id: item,
+      };
       final tmdbApiKey =
           StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
       final tmdbProxyHost =
@@ -1053,11 +1056,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         await recognitionTail;
       }
 
-      _appendScanLog('正在强制刷新当前媒体库目录…');
-      state = state.copyWith(
-        progress: const MediaLibraryScanProgress(phase: '正在读取当前媒体库目录'),
-      );
-      if (!_cancelScan) {
+      if (forceAll && !_cancelScan) {
+        _appendScanLog('正在强制刷新当前媒体库目录…');
+        state = state.copyWith(
+          progress: const MediaLibraryScanProgress(phase: '正在读取当前媒体库目录'),
+        );
         List<CloudFile> mediaFiles;
         try {
           mediaFiles = await _scanLibrarySourcesConcurrently(
@@ -1088,6 +1091,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           mediaFiles = fallback.values.toList(growable: false);
         }
         _appendScanLog('当前媒体库目录刷新完成，发现 ${mediaFiles.length} 个媒体文件');
+      } else if (!_cancelScan) {
+        final unrecognized = previousLibraryItems
+            .where((item) => !item.isMatched)
+            .map((item) => item.file)
+            .toList(growable: false);
+        _appendScanLog('未刷新文件索引，直接识别媒体库中 ${unrecognized.length} 个未识别资源');
+        state = state.copyWith(
+          progress: MediaLibraryScanProgress(
+            phase: '正在识别未匹配资源',
+            total: unrecognized.length,
+          ),
+        );
+        await enqueueForRecognition(unrecognized);
       }
       if (!_cancelScan) await flushRecognitionQueue();
       await pendingPersistence;
@@ -1109,7 +1125,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
       final allItems = [...initialItems, ...items];
       final discoveredIDs = items.map((item) => item.id).toSet();
-      final removedMissing = _cancelScan
+      final removedMissing = _cancelScan || !forceAll
           ? 0
           : previousLibraryItems
                 .where((item) => !discoveredIDs.contains(item.id))

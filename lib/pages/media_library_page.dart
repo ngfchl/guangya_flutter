@@ -303,14 +303,14 @@ class _MediaScanMenuState extends State<_MediaScanMenu> {
               _option(
                 icon: Icons.filter_alt_outlined,
                 title: '仅扫描未识别',
-                description: '读取当前目录，仅识别新增或尚未匹配的资源',
+                description: '不刷新目录，只识别媒体库中尚未匹配的资源',
                 onPressed: widget.onScanUnrecognized,
               ),
               const SizedBox(height: 3),
               _option(
                 icon: Icons.restart_alt_rounded,
                 title: '强制全部重新识别',
-                description: '重新读取全部资源并再次执行自动识别',
+                description: '刷新当前媒体库目录并重新识别全部资源',
                 onPressed: widget.onForceAll,
               ),
             ],

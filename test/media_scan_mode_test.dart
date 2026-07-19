@@ -15,6 +15,11 @@ void main() {
     mediaKind: TMDBMediaKind.movie,
   );
 
+  test('only force-all mode refreshes the file index', () {
+    expect(MediaLibraryScanMode.unrecognizedOnly.refreshesFileIndex, isFalse);
+    expect(MediaLibraryScanMode.forceAll.refreshesFileIndex, isTrue);
+  });
+
   test('unrecognized-only scan skips an existing matched resource', () {
     expect(
       shouldRecognizeMediaScanItem(
@@ -26,15 +31,7 @@ void main() {
     );
   });
 
-  test('unrecognized-only scan recognizes new and unmatched resources', () {
-    expect(
-      shouldRecognizeMediaScanItem(
-        mode: MediaLibraryScanMode.unrecognizedOnly,
-        existing: null,
-        sameCloudResource: false,
-      ),
-      isTrue,
-    );
+  test('unrecognized-only scan recognizes an existing unmatched resource', () {
     expect(
       shouldRecognizeMediaScanItem(
         mode: MediaLibraryScanMode.unrecognizedOnly,
