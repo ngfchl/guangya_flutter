@@ -1268,7 +1268,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       builder: (dialogContext) => ShadDialog(
         title: const Text('从云盘恢复刮削数据'),
         description: const Text('选择一个 SQLite 备份，恢复会合并到当前本地媒体库。'),
-        scrollable: false,
         actions: [
           ShadButton.outline(
             onPressed: () => Navigator.of(dialogContext).pop(),
@@ -1279,20 +1278,15 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           width: (MediaQuery.sizeOf(dialogContext).width - 32)
               .clamp(280.0, 620.0)
               .toDouble(),
-          height: (MediaQuery.sizeOf(dialogContext).height - 260)
-              .clamp(240.0, 360.0)
-              .toDouble(),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var index = 0; index < backups.length; index++) ...[
-                  _cloudBackupRestoreRow(dialogContext, backup: backups[index]),
-                  if (index < backups.length - 1)
-                    const ShadSeparator.horizontal(),
-                ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var index = 0; index < backups.length; index++) ...[
+                _cloudBackupRestoreRow(dialogContext, backup: backups[index]),
+                if (index < backups.length - 1)
+                  const ShadSeparator.horizontal(),
               ],
-            ),
+            ],
           ),
         ),
       ),
@@ -1311,45 +1305,43 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     required CloudFile backup,
   }) {
     final cs = ShadTheme.of(context).colorScheme;
-    return LayoutBuilder(
-      builder: (context, constraints) => ShadButton.ghost(
-        width: constraints.maxWidth,
-        expands: false,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-        onPressed: () => Navigator.of(context).pop(backup),
-        child: Row(
-          children: [
-            Icon(Icons.storage_rounded, size: 18, color: cs.mutedForeground),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    backup.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: cs.foreground,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '${backup.formattedSize} · ${backup.modifiedAt}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-                  ),
-                ],
-              ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ShadButton.ghost(
+          expands: false,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          leading: Icon(
+            Icons.storage_rounded,
+            size: 18,
+            color: cs.mutedForeground,
+          ),
+          trailing: Icon(
+            Icons.chevron_right_rounded,
+            color: cs.mutedForeground,
+          ),
+          onPressed: () => Navigator.of(context).pop(backup),
+          child: Text(
+            backup.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: cs.foreground,
             ),
-            Icon(Icons.chevron_right_rounded, color: cs.mutedForeground),
-          ],
+          ),
         ),
-      ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(38, 0, 10, 8),
+          child: Text(
+            '${backup.formattedSize} · ${backup.modifiedAt}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+          ),
+        ),
+      ],
     );
   }
 
