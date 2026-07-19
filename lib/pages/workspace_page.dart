@@ -249,13 +249,11 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
               final topBar = _TopBar(
                 mode: _mode,
                 compact: compact,
-                onModeChanged: _changeMode,
                 searchController: _searchController,
                 searchFocusNode: _searchFocusNode,
                 searchOpen: _searchOpen,
                 onSearch: _submitSearch,
                 onToggleSearch: _toggleSearch,
-                onSettings: () => _showSettings(context),
                 onOpenMenu: () => _showMobileMenu(context),
                 uploadProgress: fp.uploadProgress,
               );
@@ -307,11 +305,14 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                                 .read(fileProvider.notifier)
                                 .setSection(section),
                             onSettings: () => _showSettings(context),
+                            onModeChanged: _changeMode,
                             onSignOut: () =>
                                 ref.read(authProvider.notifier).signOut(),
                             onTool: _openTool,
                           )
                         : _MediaSidebar(
+                            onModeChanged: _changeMode,
+                            onSettings: () => _showSettings(context),
                             onCreate: () =>
                                 MediaLibraryPage.showCreateDialog(context, ref),
                             onTool: _openTool,
@@ -423,6 +424,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       ? _CloudSidebar(
                           state: ref.read(fileProvider),
                           width: width,
+                          showBrand: false,
+                          onModeChanged: _changeMode,
                           onSection: (section) {
                             Navigator.of(sheetContext).pop();
                             ref.read(fileProvider.notifier).setSection(section);
@@ -442,6 +445,9 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                         )
                       : _MediaSidebar(
                           width: width,
+                          showBrand: false,
+                          onModeChanged: _changeMode,
+                          onSettings: () => _showSettings(context),
                           onCreate: () {
                             Navigator.of(sheetContext).pop();
                             MediaLibraryPage.showCreateDialog(context, ref);
@@ -551,26 +557,22 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
 class _TopBar extends StatelessWidget {
   final WorkspaceMode mode;
   final bool compact;
-  final ValueChanged<WorkspaceMode> onModeChanged;
   final TextEditingController searchController;
   final FocusNode searchFocusNode;
   final bool searchOpen;
   final ValueChanged<String> onSearch;
   final VoidCallback onToggleSearch;
-  final VoidCallback onSettings;
   final VoidCallback onOpenMenu;
   final UploadProgress? uploadProgress;
 
   const _TopBar({
     required this.mode,
     required this.compact,
-    required this.onModeChanged,
     required this.searchController,
     required this.searchFocusNode,
     required this.searchOpen,
     required this.onSearch,
     required this.onToggleSearch,
-    required this.onSettings,
     required this.onOpenMenu,
     required this.uploadProgress,
   });
@@ -596,22 +598,6 @@ class _TopBar extends StatelessWidget {
                   icon: Icons.menu_rounded,
                   onTap: onOpenMenu,
                 ),
-                const SizedBox(width: 4),
-                _ModeDisplayButton(
-                  mode: mode,
-                  compact: true,
-                  onTap: () => onModeChanged(
-                    mode == WorkspaceMode.cloud
-                        ? WorkspaceMode.media
-                        : WorkspaceMode.cloud,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                _TopBarIconButton(
-                  tooltip: '设置',
-                  icon: Icons.settings_rounded,
-                  onTap: onSettings,
-                ),
               ],
             ),
           ),
@@ -623,31 +609,6 @@ class _TopBar extends StatelessWidget {
       child: Row(
         children: [
           const SizedBox(width: 78),
-          const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
-          OS26Glass(
-            radius: 13,
-            opacity: 0.42,
-            padding: const EdgeInsets.all(3),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _ModeDisplayButton(
-                  mode: mode,
-                  onTap: () => onModeChanged(
-                    mode == WorkspaceMode.cloud
-                        ? WorkspaceMode.media
-                        : WorkspaceMode.cloud,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                _TopBarIconButton(
-                  tooltip: '设置',
-                  icon: Icons.settings_rounded,
-                  onTap: onSettings,
-                ),
-              ],
-            ),
-          ),
           const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
           if (mode == WorkspaceMode.cloud) ...[
             _UploadListTopButton(progress: uploadProgress),
@@ -713,14 +674,9 @@ class _TopBar extends StatelessWidget {
 
 class _ModeDisplayButton extends StatelessWidget {
   final WorkspaceMode mode;
-  final bool compact;
   final VoidCallback onTap;
 
-  const _ModeDisplayButton({
-    required this.mode,
-    this.compact = false,
-    required this.onTap,
-  });
+  const _ModeDisplayButton({required this.mode, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -735,33 +691,23 @@ class _ModeDisplayButton extends StatelessWidget {
         button: true,
         label: '$label，点击切换到$nextLabel',
         child: ShadButton.ghost(
-          width: compact ? 124 : 136,
-          height: compact ? 38 : 34,
-          padding: EdgeInsets.zero,
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           onPressed: onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            decoration: BoxDecoration(
-              color: cs.secondary,
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: [
-                BoxShadow(
-                  color: cs.border.withValues(alpha: 0.7),
-                  blurRadius: 10,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
+            duration: const Duration(milliseconds: 180),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon, size: 15, color: cs.foreground),
-                const SizedBox(width: 7),
+                Icon(icon, size: 20, color: cs.foreground),
+                const SizedBox(width: 8),
                 Text(
                   label,
                   style: TextStyle(
-                    fontSize: compact ? 11 : 12,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
                     color: cs.foreground,
                   ),
                 ),
@@ -1220,6 +1166,8 @@ class _MobileMenuRow extends StatelessWidget {
 class _CloudSidebar extends StatelessWidget {
   final FileState state;
   final double width;
+  final bool showBrand;
+  final ValueChanged<WorkspaceMode> onModeChanged;
   final ValueChanged<WorkspaceSection> onSection;
   final VoidCallback onSettings;
   final VoidCallback onSignOut;
@@ -1228,6 +1176,8 @@ class _CloudSidebar extends StatelessWidget {
   const _CloudSidebar({
     required this.state,
     this.width = 250,
+    this.showBrand = true,
+    required this.onModeChanged,
     required this.onSection,
     required this.onSettings,
     required this.onSignOut,
@@ -1242,19 +1192,23 @@ class _CloudSidebar extends StatelessWidget {
     return SizedBox(
       width: width,
       child: OS26Glass(
-        radius: 24,
-        opacity: 0.56,
-        padding: const EdgeInsets.fromLTRB(14, 18, 14, 12),
+        radius: showBrand ? 24 : 0,
+        opacity: showBrand ? 0.56 : 0,
+        padding: EdgeInsets.fromLTRB(14, showBrand ? 18 : 14, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _SidebarBrand(
-              icon: Icons.cloud_sync_rounded,
-              title: '光鸭云盘',
-              subtitle: 'Cloud Workspace',
-              imageAsset: 'assets/branding/guangya_icon.png',
-            ),
-            const SizedBox(height: 18),
+            if (showBrand) ...[
+              _SidebarBrand(
+                icon: Icons.cloud_sync_rounded,
+                title: '光鸭云盘',
+                subtitle: 'Cloud Workspace',
+                imageAsset: 'assets/branding/guangya_icon.png',
+                onSwitchMode: () => onModeChanged(WorkspaceMode.media),
+                onSettings: onSettings,
+              ),
+              const SizedBox(height: 18),
+            ],
             Expanded(
               child: ListView(
                 children: [
@@ -1286,12 +1240,6 @@ class _CloudSidebar extends StatelessWidget {
                   ),
                 ],
               ),
-            ),
-            _SidebarTile(
-              icon: Icons.settings_rounded,
-              label: '工作区设置',
-              selected: false,
-              onTap: onSettings,
             ),
             _SidebarTile(
               icon: Icons.logout_rounded,
@@ -1335,11 +1283,17 @@ class _CloudSidebar extends StatelessWidget {
 
 class _MediaSidebar extends ConsumerWidget {
   final double width;
+  final bool showBrand;
+  final ValueChanged<WorkspaceMode> onModeChanged;
+  final VoidCallback onSettings;
   final VoidCallback onCreate;
   final ValueChanged<WorkspaceTool> onTool;
 
   const _MediaSidebar({
     this.width = 250,
+    this.showBrand = true,
+    required this.onModeChanged,
+    required this.onSettings,
     required this.onCreate,
     required this.onTool,
   });
@@ -1351,18 +1305,22 @@ class _MediaSidebar extends ConsumerWidget {
     return SizedBox(
       width: width,
       child: OS26Glass(
-        radius: 24,
-        opacity: 0.56,
-        padding: const EdgeInsets.fromLTRB(14, 18, 14, 12),
+        radius: showBrand ? 24 : 0,
+        opacity: showBrand ? 0.56 : 0,
+        padding: EdgeInsets.fromLTRB(14, showBrand ? 18 : 14, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _SidebarBrand(
-              icon: Icons.play_circle_fill_rounded,
-              title: '光鸭影视',
-              subtitle: 'Media Center',
-            ),
-            const SizedBox(height: 18),
+            if (showBrand) ...[
+              _SidebarBrand(
+                icon: Icons.play_circle_fill_rounded,
+                title: '光鸭影视',
+                subtitle: 'Media Center',
+                onSwitchMode: () => onModeChanged(WorkspaceMode.cloud),
+                onSettings: onSettings,
+              ),
+              const SizedBox(height: 18),
+            ],
             _SidebarTile(
               icon: Icons.home_rounded,
               label: '首页',
@@ -1442,18 +1400,22 @@ class _SidebarBrand extends StatelessWidget {
   final String title;
   final String subtitle;
   final String? imageAsset;
+  final VoidCallback? onSwitchMode;
+  final VoidCallback? onSettings;
 
   const _SidebarBrand({
     required this.icon,
     required this.title,
     required this.subtitle,
     this.imageAsset,
+    this.onSwitchMode,
+    this.onSettings,
   });
 
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    return Row(
+    final brand = Row(
       children: [
         Container(
           width: 46,
@@ -1511,6 +1473,33 @@ class _SidebarBrand extends StatelessWidget {
         ),
       ],
     );
+    return Row(
+      children: [
+        Expanded(
+          child: Semantics(
+            button: onSwitchMode != null,
+            label: onSwitchMode == null ? title : '$title，点击切换工作区',
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: onSwitchMode,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: brand,
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (onSettings != null)
+          _TopBarIconButton(
+            tooltip: '设置',
+            icon: Icons.settings_rounded,
+            onTap: onSettings!,
+          ),
+      ],
+    );
   }
 }
 
@@ -1535,17 +1524,20 @@ class _SidebarTile extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: InkWell(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         onTap: onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
-          height: 42,
+          duration: const Duration(milliseconds: 180),
+          height: 44,
           padding: const EdgeInsets.symmetric(horizontal: 9),
           decoration: BoxDecoration(
             color: selected
-                ? const Color(0xFFFFB18A).withValues(alpha: 0.72)
+                ? cs.primary.withValues(alpha: 0.14)
                 : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(8),
+            border: selected
+                ? Border.all(color: cs.primary.withValues(alpha: 0.24))
+                : null,
           ),
           child: Row(
             children: [
@@ -1554,8 +1546,8 @@ class _SidebarTile extends StatelessWidget {
                 height: 28,
                 decoration: BoxDecoration(
                   color: selected
-                      ? Colors.white.withValues(alpha: 0.36)
-                      : const Color(0xFFFFE4D2).withValues(alpha: 0.82),
+                      ? cs.primary.withValues(alpha: 0.18)
+                      : cs.muted,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(icon, size: 17, color: cs.primary),

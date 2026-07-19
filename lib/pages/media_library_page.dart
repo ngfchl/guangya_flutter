@@ -243,7 +243,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   bool _detailSyncing = false;
   bool _manualMatchPreparing = false;
   _MediaWork? _detailWork;
-  _MediaWallFilter _wallFilter = _MediaWallFilter.all;
+  final _MediaWallFilter _wallFilter = _MediaWallFilter.all;
   String? _activeCollectionKey;
   final _searchController = TextEditingController();
 
@@ -335,7 +335,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     required bool compact,
   }) {
     final cs = ShadTheme.of(context).colorScheme;
-    final stats = state.statistics;
     final title = Row(
       children: [
         Icon(
@@ -366,103 +365,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ),
       ],
     );
-    final pills = [
-      _statPill(
-        context,
-        '全部',
-        stats.total.toString(),
-        selected: _wallFilter == _MediaWallFilter.all,
-        onTap: () => _selectWallFilter(_MediaWallFilter.all),
-      ),
-      _statPill(
-        context,
-        '电影',
-        stats.movies.toString(),
-        selected: _wallFilter == _MediaWallFilter.movies,
-        onTap: () => _selectWallFilter(_MediaWallFilter.movies),
-      ),
-      _statPill(
-        context,
-        '剧集',
-        stats.series.toString(),
-        selected: _wallFilter == _MediaWallFilter.series,
-        onTap: () => _selectWallFilter(_MediaWallFilter.series),
-      ),
-      _statPill(
-        context,
-        '合集',
-        stats.collections.toString(),
-        selected: _wallFilter == _MediaWallFilter.collections,
-        onTap: () => _selectWallFilter(_MediaWallFilter.collections),
-      ),
-      _statPill(
-        context,
-        '待匹配',
-        stats.unmatched.toString(),
-        selected: _wallFilter == _MediaWallFilter.unmatched,
-        onTap: () => _selectWallFilter(_MediaWallFilter.unmatched),
-      ),
-    ];
-    if (compact) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          title,
-          const SizedBox(height: 8),
-          Wrap(spacing: 0, runSpacing: 6, children: pills),
-        ],
-      );
-    }
-    return Row(
-      children: [
-        Expanded(child: title),
-        ...pills,
-      ],
-    );
-  }
-
-  void _selectWallFilter(_MediaWallFilter filter) {
-    setState(() {
-      _wallFilter = filter;
-      _activeCollectionKey = null;
-      _detailWork = null;
-    });
-  }
-
-  Widget _statPill(
-    BuildContext context,
-    String label,
-    String value, {
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: selected ? cs.primary.withValues(alpha: 0.12) : cs.muted,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: selected ? cs.primary : cs.border),
-            ),
-            child: Text(
-              '$label $value',
-              style: TextStyle(
-                fontSize: 12,
-                color: selected ? cs.primary : cs.mutedForeground,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+    return title;
   }
 
   Widget _buildToolbar(BuildContext context, MediaLibraryState state) {
@@ -506,7 +409,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (detailWork != null) ...[
+                if (detailWork != null && widget.showManagementToolbar) ...[
                   ShadButton.outline(
                     size: ShadButtonSize.sm,
                     onPressed: _detailSyncing
