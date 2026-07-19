@@ -67,7 +67,10 @@ class WorkspaceToolsPage extends StatelessWidget {
       WorkspaceTool.scan => const _FileScanTool(),
       WorkspaceTool.rename => const _BatchRenameTool(),
       WorkspaceTool.fastTransfer => const _FastTransferTool(),
-      WorkspaceTool.tmdb => const MediaLibraryPage(showLibrarySidebar: true),
+      WorkspaceTool.tmdb => const MediaLibraryPage(
+        showLibrarySidebar: true,
+        showManagementToolbar: true,
+      ),
       WorkspaceTool.categories => const _CategoryManagementTool(),
     };
     return Column(

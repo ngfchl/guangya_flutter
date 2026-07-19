@@ -65,11 +65,13 @@ Widget _tmdbDirectFallback({
 
 class MediaLibraryPage extends ConsumerStatefulWidget {
   final bool showLibrarySidebar;
+  final bool showManagementToolbar;
   final String? searchTitle;
 
   const MediaLibraryPage({
     super.key,
     this.showLibrarySidebar = true,
+    this.showManagementToolbar = false,
     this.searchTitle,
   });
 
@@ -475,7 +477,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                     leading: const Icon(Icons.manage_search_rounded, size: 16),
                     child: const Text('手动匹配'),
                   ),
-                ] else ...[
+                ] else if (widget.showManagementToolbar) ...[
                   ShadButton.outline(
                     size: ShadButtonSize.sm,
                     onPressed: () => _showCreateLibraryDialog(context, ref),
@@ -557,7 +559,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             leading: const Icon(Icons.manage_search_rounded, size: 16),
             child: const Text('手动匹配'),
           ),
-        ] else ...[
+        ] else if (widget.showManagementToolbar) ...[
           ShadButton.outline(
             onPressed: () => _showCreateLibraryDialog(context, ref),
             leading: const Icon(Icons.add_rounded, size: 16),
