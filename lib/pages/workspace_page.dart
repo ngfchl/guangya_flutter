@@ -156,6 +156,206 @@ void _openCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
   ref.read(fileProvider.notifier).downloadFile(file);
 }
 
+class _CloudFolderDestination {
+  final String? parentID;
+
+  const _CloudFolderDestination(this.parentID);
+}
+
+Future<bool> _copyOrMoveFilesToDestination(
+  BuildContext context,
+  WidgetRef ref,
+  List<CloudFile> files, {
+  required bool move,
+}) async {
+  if (files.isEmpty) return false;
+  final destination = await showShadDialog<_CloudFolderDestination>(
+    context: context,
+    builder: (_) => _CloudFolderDestinationPicker(move: move),
+  );
+  if (destination == null || !context.mounted) return false;
+  final notifier = ref.read(fileProvider.notifier);
+  if (move) {
+    await notifier.moveFilesTo(files, parentID: destination.parentID);
+  } else {
+    await notifier.copyFilesTo(files, parentID: destination.parentID);
+  }
+  return true;
+}
+
+class _CloudFolderDestinationPicker extends ConsumerStatefulWidget {
+  final bool move;
+
+  const _CloudFolderDestinationPicker({required this.move});
+
+  @override
+  ConsumerState<_CloudFolderDestinationPicker> createState() =>
+      _CloudFolderDestinationPickerState();
+}
+
+class _CloudFolderDestinationPickerState
+    extends ConsumerState<_CloudFolderDestinationPicker> {
+  final _path = <CloudFile>[];
+  var _folders = <CloudFile>[];
+  var _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final response = await ref
+          .read(authProvider.notifier)
+          .api
+          .fsFiles(
+            parentID: _path.isEmpty ? null : _path.last.id,
+            pageSize: 1000,
+          );
+      if (mounted) {
+        setState(() {
+          _folders =
+              _cloudFilesFromResponse(
+                response,
+              ).where((file) => file.isDirectory).toList()..sort(
+                (left, right) =>
+                    left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+              );
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final currentName = _path.isEmpty ? '云盘根目录' : _path.last.name;
+    return ShadDialog(
+      title: Text(widget.move ? '移动到' : '复制到'),
+      description: Text('选择目标文件夹：$currentName'),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        ShadButton(
+          onPressed: () => Navigator.of(
+            context,
+          ).pop(_CloudFolderDestination(_path.isEmpty ? null : _path.last.id)),
+          child: const Text('选择此文件夹'),
+        ),
+      ],
+      child: SizedBox(
+        width: 440,
+        height: 340,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: _path.isEmpty
+                      ? null
+                      : () {
+                          setState(() => _path.clear());
+                          unawaited(_load());
+                        },
+                  child: const Text('根目录'),
+                ),
+                for (var index = 0; index < _path.length; index++)
+                  ShadButton.ghost(
+                    size: ShadButtonSize.sm,
+                    onPressed: () {
+                      setState(
+                        () => _path.removeRange(index + 1, _path.length),
+                      );
+                      unawaited(_load());
+                    },
+                    child: Text(_path[index].name),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                  ? Center(
+                      child: Text(
+                        _error!,
+                        style: TextStyle(color: cs.destructive),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _folders.length,
+                      itemBuilder: (context, index) {
+                        final folder = _folders[index];
+                        return ShadButton.ghost(
+                          width: double.infinity,
+                          mainAxisAlignment: MainAxisAlignment.start,
+                          leading: const Icon(Icons.folder_rounded, size: 18),
+                          trailing: const Icon(
+                            Icons.chevron_right_rounded,
+                            size: 18,
+                          ),
+                          onPressed: () {
+                            setState(() => _path.add(folder));
+                            unawaited(_load());
+                          },
+                          child: Text(folder.name),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ClipboardPasteButton extends ConsumerWidget {
+  final String? parentID;
+  final Future<void> Function()? onCompleted;
+
+  const _ClipboardPasteButton({required this.parentID, this.onCompleted});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(fileProvider);
+    final count = state.clipboard?.length ?? 0;
+    if (count == 0) return const SizedBox.shrink();
+    return ShadButton.outline(
+      size: ShadButtonSize.sm,
+      onPressed: () async {
+        await ref.read(fileProvider.notifier).pasteFromClipboardTo(parentID);
+        await onCompleted?.call();
+      },
+      leading: Icon(
+        state.clipboardIsMove
+            ? Icons.content_paste_go_rounded
+            : Icons.content_paste_rounded,
+        size: 15,
+      ),
+      child: Text('粘贴 $count'),
+    );
+  }
+}
+
 Future<void> _confirmDeleteCloudFiles(
   BuildContext context,
   List<CloudFile> files,
@@ -204,7 +404,11 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   bool _isSidePanelOpen = false;
   bool _searchOpen = false;
   String? _fileSearchQuery;
+  String? _fileSearchReturnQuery;
+  List<CloudFile>? _fileSearchResultsCache;
   String? _mediaSearchQuery;
+  MediaLibraryBrowseFilter _mediaBrowseFilter = MediaLibraryBrowseFilter.all;
+  bool _mediaHomeSelected = true;
   WorkspaceTool? _cloudActiveTool;
   WorkspaceTool? _mediaActiveTool;
 
@@ -246,6 +450,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   @override
   Widget build(BuildContext context) {
     final fp = ref.watch(fileProvider);
+    final media = ref.watch(mediaLibraryProvider);
+    final mediaDetail = ref.watch(activeMediaDetailHeaderProvider);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -263,12 +469,38 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                 onSearch: _submitSearch,
                 onToggleSearch: _toggleSearch,
                 onOpenMenu: () => _showMobileMenu(context),
+                mediaState: media,
+                mediaFilter: _mediaBrowseFilter,
+                mediaHomeSelected: _mediaHomeSelected,
+                onSelectMediaLibrary: _selectMediaLibrary,
+                hideMediaIdentity:
+                    _mode == WorkspaceMode.media && _mediaActiveTool != null,
                 uploadProgress: fp.uploadProgress,
+                mediaDetail: mediaDetail,
+                onCloseMediaDetail: () =>
+                    ref.read(activeMediaDetailHeaderProvider.notifier).state =
+                        null,
               );
-              final content = IndexedStack(
+              final rawContent = IndexedStack(
                 index: _mode == WorkspaceMode.cloud ? 0 : 1,
                 children: [_buildCloudContent(fp), _buildMediaContent()],
               );
+              final content = _mode == WorkspaceMode.media
+                  ? OS26Glass(
+                      radius: 18,
+                      opacity: 0.42,
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        children: [
+                          if (_mediaActiveTool == null) ...[
+                            topBar,
+                            const ShadSeparator.horizontal(),
+                          ],
+                          Expanded(child: rawContent),
+                        ],
+                      ),
+                    )
+                  : rawContent;
               if (compact) {
                 return _MobileDrawerSwipeArea(
                   onOpen: () => _showMobileMenu(context),
@@ -276,8 +508,10 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                     padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
                     child: Column(
                       children: [
-                        topBar,
-                        const SizedBox(height: 8),
+                        if (_mode == WorkspaceMode.cloud) ...[
+                          topBar,
+                          const SizedBox(height: 8),
+                        ],
                         Expanded(child: content),
                       ],
                     ),
@@ -306,13 +540,23 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                             onCreate: () =>
                                 MediaLibraryPage.showCreateDialog(context, ref),
                             onTool: _openTool,
+                            selectedFilter: _mediaBrowseFilter,
+                            onFilter: _changeMediaBrowseFilter,
+                            homeSelected: _mediaHomeSelected,
+                            onHome: _showMediaHome,
+                            onSelectLibrary: _selectMediaLibrary,
+                            isManagingLibrary:
+                                _mediaActiveTool == WorkspaceTool.tmdb,
+                            onOpenCurrentLibrary: _openCurrentMediaLibrary,
                           ),
                     const SizedBox(width: 16),
                     Expanded(
                       child: Column(
                         children: [
-                          topBar,
-                          const SizedBox(height: 14),
+                          if (_mode == WorkspaceMode.cloud) ...[
+                            topBar,
+                            const SizedBox(height: 10),
+                          ],
                           Expanded(child: content),
                         ],
                       ),
@@ -343,6 +587,39 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     }
   }
 
+  void _changeMediaBrowseFilter(MediaLibraryBrowseFilter filter) {
+    setState(() {
+      _mediaBrowseFilter = filter;
+      _mediaHomeSelected = false;
+      _mediaActiveTool = null;
+    });
+  }
+
+  void _showMediaHome() {
+    setState(() {
+      _mediaBrowseFilter = MediaLibraryBrowseFilter.all;
+      _mediaHomeSelected = true;
+      _mediaActiveTool = null;
+    });
+  }
+
+  void _openCurrentMediaLibrary() {
+    setState(() {
+      _mediaBrowseFilter = MediaLibraryBrowseFilter.all;
+      _mediaHomeSelected = false;
+      _mediaActiveTool = null;
+    });
+  }
+
+  void _selectMediaLibrary(String id) {
+    setState(() {
+      _mediaBrowseFilter = MediaLibraryBrowseFilter.all;
+      _mediaHomeSelected = false;
+      _mediaActiveTool = null;
+    });
+    unawaited(ref.read(mediaLibraryProvider.notifier).selectLibrary(id));
+  }
+
   void _submitSearch(String value) {
     final query = value.trim();
     if (query.isEmpty) return;
@@ -350,7 +627,11 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       setState(() => _mediaSearchQuery = query);
       ref.read(mediaLibraryProvider.notifier).setSearchQuery(query);
     } else {
-      setState(() => _fileSearchQuery = query);
+      setState(() {
+        _fileSearchQuery = query;
+        _fileSearchReturnQuery = null;
+        _fileSearchResultsCache = null;
+      });
     }
   }
 
@@ -454,6 +735,20 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                               Navigator.of(sheetContext).pop();
                               _openTool(tool);
                             },
+                            selectedFilter: _mediaBrowseFilter,
+                            onFilter: _changeMediaBrowseFilter,
+                            homeSelected: _mediaHomeSelected,
+                            onHome: _showMediaHome,
+                            onSelectLibrary: (libraryID) {
+                              Navigator.of(sheetContext).pop();
+                              _selectMediaLibrary(libraryID);
+                            },
+                            isManagingLibrary:
+                                _mediaActiveTool == WorkspaceTool.tmdb,
+                            onOpenCurrentLibrary: () {
+                              Navigator.of(sheetContext).pop();
+                              _openCurrentMediaLibrary();
+                            },
                           ),
                   ),
                 ],
@@ -468,6 +763,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   void _showSettings(BuildContext context) {
     showShadDialog<void>(
       context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.18),
       builder: (_) => const SettingsDialog(),
     );
   }
@@ -495,6 +791,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
           query: _fileSearchQuery!,
           onClose: () => setState(() {
             _fileSearchQuery = null;
+            _fileSearchReturnQuery = null;
+            _fileSearchResultsCache = null;
             _searchController.clear();
           }),
           onBatchRename: (files) {
@@ -504,6 +802,24 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
               _cloudActiveTool = WorkspaceTool.rename;
             });
           },
+          onOpenLocation: (file) async {
+            await ref.read(fileProvider.notifier).navigateToSearchResult(file);
+            if (!mounted) return;
+            setState(() {
+              _fileSearchReturnQuery = _fileSearchQuery;
+              _fileSearchQuery = null;
+              _searchController.clear();
+            });
+          },
+          cachedResults: _fileSearchResultsCache,
+          onResultsLoaded: (results) {
+            if (!mounted || _fileSearchQuery == null) return;
+            setState(
+              () => _fileSearchResultsCache = List<CloudFile>.unmodifiable(
+                results,
+              ),
+            );
+          },
         ),
       );
     }
@@ -512,43 +828,40 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       sidePanelOpen: _isSidePanelOpen,
       onToggleSidePanel: () =>
           setState(() => _isSidePanelOpen = !_isSidePanelOpen),
+      onReturnToSearch: _fileSearchReturnQuery == null
+          ? null
+          : () => setState(() {
+              _fileSearchQuery = _fileSearchReturnQuery;
+              _fileSearchReturnQuery = null;
+              _searchController.text = _fileSearchQuery!;
+            }),
     );
   }
 
   Widget _buildMediaContent() {
     if (_mediaActiveTool != null) {
-      return OS26Glass(
-        radius: 18,
-        opacity: 0.42,
-        padding: EdgeInsets.zero,
-        child: WorkspaceToolsPage(
-          key: const PageStorageKey('media-tools'),
-          tool: _mediaActiveTool!,
-          onClose: _closeActiveTool,
-        ),
+      return WorkspaceToolsPage(
+        key: const PageStorageKey('media-tools'),
+        tool: _mediaActiveTool!,
+        onClose: _closeActiveTool,
       );
     }
     if (_mediaSearchQuery != null) {
-      return OS26Glass(
-        radius: 18,
-        opacity: 0.42,
-        padding: EdgeInsets.zero,
-        child: MediaSearchResultsPage(
-          key: const PageStorageKey('media-search-results'),
-          query: _mediaSearchQuery!,
-          onClose: () => setState(() {
-            _mediaSearchQuery = null;
-            _searchController.clear();
-            ref.read(mediaLibraryProvider.notifier).setSearchQuery('');
-          }),
-        ),
+      return MediaSearchResultsPage(
+        key: const PageStorageKey('media-search-results'),
+        query: _mediaSearchQuery!,
+        onClose: () => setState(() {
+          _mediaSearchQuery = null;
+          _searchController.clear();
+          ref.read(mediaLibraryProvider.notifier).setSearchQuery('');
+        }),
       );
     }
-    return OS26Glass(
-      radius: 18,
-      opacity: 0.42,
-      padding: EdgeInsets.zero,
-      child: const MediaLibraryPage(showLibrarySidebar: false),
+    return MediaLibraryPage(
+      showLibrarySidebar: false,
+      showBrowseHeader: false,
+      showHomePanel: _mediaHomeSelected,
+      browseFilter: _mediaBrowseFilter,
     );
   }
 }
@@ -562,7 +875,14 @@ class _TopBar extends StatelessWidget {
   final ValueChanged<String> onSearch;
   final VoidCallback onToggleSearch;
   final VoidCallback onOpenMenu;
+  final MediaLibraryState mediaState;
+  final MediaLibraryBrowseFilter mediaFilter;
+  final bool mediaHomeSelected;
+  final ValueChanged<String> onSelectMediaLibrary;
+  final bool hideMediaIdentity;
   final UploadProgress? uploadProgress;
+  final MediaDetailHeader? mediaDetail;
+  final VoidCallback onCloseMediaDetail;
 
   const _TopBar({
     required this.mode,
@@ -573,13 +893,26 @@ class _TopBar extends StatelessWidget {
     required this.onSearch,
     required this.onToggleSearch,
     required this.onOpenMenu,
+    required this.mediaState,
+    required this.mediaFilter,
+    required this.mediaHomeSelected,
+    required this.onSelectMediaLibrary,
+    required this.hideMediaIdentity,
     required this.uploadProgress,
+    required this.mediaDetail,
+    required this.onCloseMediaDetail,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     final cs = theme.colorScheme;
+    if (mode == WorkspaceMode.media && hideMediaIdentity) {
+      return const SizedBox.shrink();
+    }
+    if (mode == WorkspaceMode.media && !hideMediaIdentity) {
+      return _buildMediaTopBar(context, cs);
+    }
     if (compact) {
       return SizedBox(
         height: 46,
@@ -710,6 +1043,383 @@ class _TopBar extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildMediaTopBar(BuildContext context, ShadColorScheme cs) {
+    final detail = mediaDetail;
+    if (detail != null) {
+      return _MediaDetailTopBar(
+        compact: compact,
+        detail: detail,
+        onBack: onCloseMediaDetail,
+      );
+    }
+    final identity = _MediaLibraryTopPopover(
+      state: mediaState,
+      compact: compact,
+      filter: mediaFilter,
+      homeSelected: mediaHomeSelected,
+      onSelected: onSelectMediaLibrary,
+    );
+    final searchField = Container(
+      height: compact ? 42 : 40,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: cs.background.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: cs.border),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.search_rounded, size: 18, color: cs.mutedForeground),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: searchController,
+              focusNode: searchFocusNode,
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                isDense: true,
+                hintText: '搜索影视资源',
+              ),
+              textInputAction: TextInputAction.search,
+              onSubmitted: onSearch,
+            ),
+          ),
+          _TopBarIconButton(
+            tooltip: '关闭搜索',
+            icon: Icons.close_rounded,
+            onTap: onToggleSearch,
+          ),
+        ],
+      ),
+    );
+    if (compact) {
+      return SizedBox(
+        height: 48,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 5, 10, 0),
+          child: Row(
+            children: [
+              _TopBarIconButton(
+                tooltip: '打开菜单',
+                icon: Icons.menu_rounded,
+                onTap: onOpenMenu,
+              ),
+              const SizedBox(width: 6),
+              Expanded(child: searchOpen ? searchField : identity),
+              if (!searchOpen) ...[
+                const SizedBox(width: 4),
+                _TopBarIconButton(
+                  tooltip: '搜索影视资源',
+                  icon: Icons.search_rounded,
+                  onTap: onToggleSearch,
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      height: 52,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 16, 14, 0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(child: identity),
+            const SizedBox(width: 16),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              width: searchOpen ? 360 : 40,
+              height: 38,
+              child: searchOpen
+                  ? searchField
+                  : _TopBarIconButton(
+                      tooltip: '搜索影视资源',
+                      icon: Icons.search_rounded,
+                      onTap: onToggleSearch,
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaDetailTopBar extends StatelessWidget {
+  final bool compact;
+  final MediaDetailHeader detail;
+  final VoidCallback onBack;
+
+  const _MediaDetailTopBar({
+    required this.compact,
+    required this.detail,
+    required this.onBack,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final type = detail.mediaKind == TMDBMediaKind.tv ? '剧集' : '电影';
+    return SizedBox(
+      height: compact ? 48 : 52,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          compact ? 10 : 14,
+          compact ? 5 : 16,
+          compact ? 10 : 14,
+          compact ? 3 : 0,
+        ),
+        child: Center(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              ShadTooltip(
+                builder: (_) => const Text('返回影视库'),
+                child: _TopBarIconButton(
+                  tooltip: '返回影视库',
+                  icon: Icons.arrow_back_rounded,
+                  onTap: onBack,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                detail.mediaKind == TMDBMediaKind.tv
+                    ? Icons.tv_rounded
+                    : Icons.movie_rounded,
+                size: compact ? 19 : 20,
+                color: cs.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  detail.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: compact ? 15 : 16,
+                    fontWeight: FontWeight.w700,
+                    color: cs.foreground,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ShadBadge(child: Text(type)),
+              if (detail.year.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                ShadBadge.outline(child: Text(detail.year)),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaLibraryTopIdentity extends StatelessWidget {
+  final MediaLibraryState state;
+  final bool compact;
+  final MediaLibraryBrowseFilter filter;
+  final bool homeSelected;
+  final VoidCallback onTap;
+
+  const _MediaLibraryTopIdentity({
+    required this.state,
+    required this.compact,
+    required this.filter,
+    required this.homeSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final library = state.selectedLibrary;
+    final statistics = homeSelected || filter != MediaLibraryBrowseFilter.all
+        ? state.globalStatistics
+        : state.statistics;
+    final isLibraryView =
+        !homeSelected && filter == MediaLibraryBrowseFilter.all;
+    final title = homeSelected
+        ? '首页'
+        : switch (filter) {
+            MediaLibraryBrowseFilter.movies => '电影',
+            MediaLibraryBrowseFilter.series => '电视剧',
+            MediaLibraryBrowseFilter.unmatched => '未识别',
+            MediaLibraryBrowseFilter.collections => '合集',
+            MediaLibraryBrowseFilter.all => library?.name ?? '未选择媒体库',
+          };
+    final subtitle = homeSelected
+        ? '${statistics.movies} 部电影 · ${statistics.series} 部剧集 · ${statistics.total} 个媒体文件'
+        : switch (filter) {
+            MediaLibraryBrowseFilter.movies => '${statistics.movies} 部电影',
+            MediaLibraryBrowseFilter.series => '${statistics.series} 部剧集',
+            MediaLibraryBrowseFilter.unmatched =>
+              '${statistics.unmatched} 个未识别资源',
+            MediaLibraryBrowseFilter.collections => '自动整理的媒体合集',
+            MediaLibraryBrowseFilter.all =>
+              '${statistics.movies} 部电影 · ${statistics.series} 部剧集 · ${statistics.total} 个媒体文件',
+          };
+    return Semantics(
+      button: isLibraryView,
+      label: isLibraryView
+          ? '当前媒体库：${library?.name ?? '未选择'}，点击切换媒体库'
+          : '$title，$subtitle',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: isLibraryView ? onTap : null,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.video_library_rounded,
+                  size: compact ? 20 : 19,
+                  color: cs.primary,
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: compact ? 15 : 14,
+                          height: 1.05,
+                          fontWeight: FontWeight.w700,
+                          color: cs.foreground,
+                        ),
+                      ),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (isLibraryView)
+                  Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 18,
+                    color: cs.mutedForeground,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaLibraryTopPopover extends StatefulWidget {
+  final MediaLibraryState state;
+  final bool compact;
+  final MediaLibraryBrowseFilter filter;
+  final bool homeSelected;
+  final ValueChanged<String> onSelected;
+
+  const _MediaLibraryTopPopover({
+    required this.state,
+    required this.compact,
+    required this.filter,
+    required this.homeSelected,
+    required this.onSelected,
+  });
+
+  @override
+  State<_MediaLibraryTopPopover> createState() =>
+      _MediaLibraryTopPopoverState();
+}
+
+class _MediaLibraryTopPopoverState extends State<_MediaLibraryTopPopover> {
+  final _controller = ShadPopoverController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isLibraryView =
+        !widget.homeSelected && widget.filter == MediaLibraryBrowseFilter.all;
+    final child = _MediaLibraryTopIdentity(
+      state: widget.state,
+      compact: widget.compact,
+      filter: widget.filter,
+      homeSelected: widget.homeSelected,
+      onTap: _controller.toggle,
+    );
+    if (!isLibraryView || widget.state.libraries.isEmpty) return child;
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadPopover(
+      controller: _controller,
+      popover: (_) => SizedBox(
+        width: 248,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 280),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.all(6),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+                child: Text(
+                  '切换媒体库',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: cs.mutedForeground,
+                  ),
+                ),
+              ),
+              for (final library in widget.state.libraries)
+                ShadButton.ghost(
+                  width: double.infinity,
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  leading: Icon(
+                    library.kind == MediaLibraryKind.series
+                        ? Icons.live_tv_rounded
+                        : Icons.movie_rounded,
+                    size: 16,
+                  ),
+                  trailing: library.id == widget.state.selectedLibraryID
+                      ? Icon(Icons.check_rounded, size: 16, color: cs.primary)
+                      : null,
+                  onPressed: () {
+                    _controller.hide();
+                    widget.onSelected(library.id);
+                  },
+                  child: Text(
+                    library.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      child: child,
     );
   }
 }
@@ -1122,7 +1832,7 @@ class _CloudSidebar extends StatelessWidget {
         opacity: showBrand ? 0.56 : 0,
         border: showBrand ? null : const Border(),
         applyBlur: showBrand,
-        padding: EdgeInsets.fromLTRB(14, showBrand ? 18 : 14, 14, 12),
+        padding: EdgeInsets.fromLTRB(14, showBrand ? 14 : 12, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1135,7 +1845,7 @@ class _CloudSidebar extends StatelessWidget {
                 onSwitchMode: () => onModeChanged(WorkspaceMode.media),
                 onSettings: onSettings,
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
             ],
             Expanded(
               child: ListView(
@@ -1216,6 +1926,13 @@ class _MediaSidebar extends ConsumerWidget {
   final VoidCallback onSettings;
   final VoidCallback onCreate;
   final ValueChanged<WorkspaceTool> onTool;
+  final MediaLibraryBrowseFilter selectedFilter;
+  final ValueChanged<MediaLibraryBrowseFilter> onFilter;
+  final bool homeSelected;
+  final VoidCallback onHome;
+  final ValueChanged<String> onSelectLibrary;
+  final bool isManagingLibrary;
+  final VoidCallback onOpenCurrentLibrary;
 
   const _MediaSidebar({
     this.width = 250,
@@ -1224,12 +1941,18 @@ class _MediaSidebar extends ConsumerWidget {
     required this.onSettings,
     required this.onCreate,
     required this.onTool,
+    required this.selectedFilter,
+    required this.onFilter,
+    required this.homeSelected,
+    required this.onHome,
+    required this.onSelectLibrary,
+    required this.isManagingLibrary,
+    required this.onOpenCurrentLibrary,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(mediaLibraryProvider);
-    final notifier = ref.read(mediaLibraryProvider.notifier);
     return SizedBox(
       width: width,
       child: OS26Glass(
@@ -1237,7 +1960,7 @@ class _MediaSidebar extends ConsumerWidget {
         opacity: showBrand ? 0.56 : 0,
         border: showBrand ? null : const Border(),
         applyBlur: showBrand,
-        padding: EdgeInsets.fromLTRB(14, showBrand ? 18 : 14, 14, 12),
+        padding: EdgeInsets.fromLTRB(14, showBrand ? 14 : 12, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1249,34 +1972,34 @@ class _MediaSidebar extends ConsumerWidget {
                 onSwitchMode: () => onModeChanged(WorkspaceMode.cloud),
                 onSettings: onSettings,
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
             ],
             _SidebarTile(
               icon: Icons.home_rounded,
               label: '首页',
-              selected: true,
-              onTap: () => onTool(WorkspaceTool.tmdb),
+              selected: homeSelected,
+              onTap: onHome,
             ),
             _SidebarTile(
               icon: Icons.movie_creation_rounded,
               label: '电影',
-              count: state.statistics.movies,
-              selected: false,
-              onTap: () => onTool(WorkspaceTool.tmdb),
+              count: state.globalStatistics.movies,
+              selected: selectedFilter == MediaLibraryBrowseFilter.movies,
+              onTap: () => onFilter(MediaLibraryBrowseFilter.movies),
             ),
             _SidebarTile(
               icon: Icons.live_tv_rounded,
               label: '电视剧',
-              count: state.statistics.series,
-              selected: false,
-              onTap: () {},
+              count: state.globalStatistics.series,
+              selected: selectedFilter == MediaLibraryBrowseFilter.series,
+              onTap: () => onFilter(MediaLibraryBrowseFilter.series),
             ),
             _SidebarTile(
               icon: Icons.help_outline_rounded,
               label: '未识别',
-              count: state.statistics.unmatched,
-              selected: false,
-              onTap: () {},
+              count: state.globalStatistics.unmatched,
+              selected: selectedFilter == MediaLibraryBrowseFilter.unmatched,
+              onTap: () => onFilter(MediaLibraryBrowseFilter.unmatched),
             ),
             const Padding(
               padding: EdgeInsets.fromLTRB(8, 18, 8, 8),
@@ -1294,8 +2017,13 @@ class _MediaSidebar extends ConsumerWidget {
                           ? Icons.live_tv_rounded
                           : Icons.smart_display_rounded,
                       label: library.name,
-                      selected: state.selectedLibrary?.id == library.id,
-                      onTap: () => notifier.selectLibrary(library.id),
+                      selected:
+                          !homeSelected &&
+                          selectedFilter == MediaLibraryBrowseFilter.all &&
+                          state.selectedLibrary?.id == library.id,
+                      onTap: isManagingLibrary
+                          ? onOpenCurrentLibrary
+                          : () => onSelectLibrary(library.id),
                     ),
                 ],
               ),
@@ -1516,11 +2244,13 @@ class _CloudWorkspace extends ConsumerStatefulWidget {
   final FileState state;
   final bool sidePanelOpen;
   final VoidCallback onToggleSidePanel;
+  final VoidCallback? onReturnToSearch;
 
   const _CloudWorkspace({
     required this.state,
     required this.sidePanelOpen,
     required this.onToggleSidePanel,
+    this.onReturnToSearch,
   });
 
   @override
@@ -1556,6 +2286,7 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                 onToggleSidePanel: compact
                     ? () => _showMobileDetails(context)
                     : widget.onToggleSidePanel,
+                onReturnToSearch: widget.onReturnToSearch,
               ),
               SizedBox(height: compact ? 8 : 12),
               Expanded(
@@ -1638,6 +2369,7 @@ class _CloudToolbar extends ConsumerWidget {
   final ValueChanged<_FileViewMode> onViewModeChanged;
   final bool sidePanelOpen;
   final VoidCallback onToggleSidePanel;
+  final VoidCallback? onReturnToSearch;
 
   const _CloudToolbar({
     required this.state,
@@ -1648,6 +2380,7 @@ class _CloudToolbar extends ConsumerWidget {
     required this.onViewModeChanged,
     required this.sidePanelOpen,
     required this.onToggleSidePanel,
+    this.onReturnToSearch,
   });
 
   @override
@@ -1656,6 +2389,15 @@ class _CloudToolbar extends ConsumerWidget {
     final controls = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (onReturnToSearch != null) ...[
+          _ToolbarButton(
+            icon: Icons.arrow_back_rounded,
+            label: '返回搜索结果',
+            compact: compact,
+            onTap: onReturnToSearch,
+          ),
+          const SizedBox(width: 8),
+        ],
         SortMenu(
           currentSort: state.serverSort,
           currentDirection: state.serverSortDirection,
@@ -2015,7 +2757,11 @@ class _UploadProgressPopover extends StatelessWidget {
               '已完成 ${value.completedFiles} / ${value.totalFiles} · ${_formatUploadBytes(value.transferredBytes)} / ${_formatUploadBytes(value.totalBytes)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+              style: TextStyle(
+                fontSize: 10,
+                height: 1.05,
+                color: cs.mutedForeground,
+              ),
             ),
             if (value.failedFiles > 0) ...[
               const SizedBox(height: 4),
@@ -2104,17 +2850,24 @@ class _PrimaryFilePane extends ConsumerWidget {
       );
     }
     final notifier = ref.read(fileProvider.notifier);
-    final files = state.files;
+    final files = _filterCurrentFolderFiles(
+      state.files,
+      state.currentListSearchQuery,
+    );
     return _FilePaneFrame(
       title: title,
       itemCount: files.length,
       isLoading: state.isLoading,
       errorMessage: state.errorMessage,
-      emptyLabel: '没有文件',
+      emptyLabel: state.currentListSearchQuery.isEmpty ? '没有文件' : '当前文件夹没有匹配项',
       breadcrumbPath: state.folderPath,
       onBreadcrumbNavigate: (index) =>
           ref.read(fileProvider.notifier).navigateToPathIndex(index),
-      header: const _FilePaneHeader(),
+      header: _FilePaneHeader(
+        trailing: _ClipboardPasteButton(
+          parentID: state.folderPath.isEmpty ? null : state.folderPath.last.id,
+        ),
+      ),
       dropParentID: state.folderPath.isEmpty ? null : state.folderPath.last.id,
       onMoveCloudFiles: (files, parentID) =>
           notifier.moveFilesTo(files, parentID: parentID),
@@ -2130,7 +2883,12 @@ class _PrimaryFilePane extends ConsumerWidget {
           ? null
           : notifier.nextPage,
       onPageSizeChanged: notifier.setPageSize,
-      trailing: _PaneViewToggle(value: viewMode, onChanged: onViewModeChanged),
+      // The global toolbar already owns the view switch. Keep the pane header
+      // focused on the current folder by using its trailing slot for search.
+      trailing: SizedBox(
+        width: MediaQuery.sizeOf(context).width < 720 ? 148 : 236,
+        child: _CurrentFolderFileSearch(value: state.currentListSearchQuery),
+      ),
       child: RefreshIndicator(
         onRefresh: () => notifier.loadFiles(),
         child: _FilePaneCollection(
@@ -2174,6 +2932,14 @@ class _PrimaryFilePane extends ConsumerWidget {
               },
               onCopy: () => notifier.copyToClipboard([file]),
               onCut: () => notifier.cutToClipboard([file]),
+              onCopyTo: () => unawaited(
+                _copyOrMoveFilesToDestination(context, ref, [
+                  file,
+                ], move: false),
+              ),
+              onMoveTo: () => unawaited(
+                _copyOrMoveFilesToDestination(context, ref, [file], move: true),
+              ),
               onDownload: () => notifier.downloadFile(file),
               onShare: () => unawaited(
                 showShareLinkDialog(
@@ -2236,6 +3002,18 @@ class _PrimaryFilePane extends ConsumerWidget {
                 child: _FastTransferContextMenu(
                   file: file,
                   onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
+                  onCopy: () => notifier.copyToClipboard([file]),
+                  onCut: () => notifier.cutToClipboard([file]),
+                  onCopyTo: () => unawaited(
+                    _copyOrMoveFilesToDestination(context, ref, [
+                      file,
+                    ], move: false),
+                  ),
+                  onMoveTo: () => unawaited(
+                    _copyOrMoveFilesToDestination(context, ref, [
+                      file,
+                    ], move: true),
+                  ),
                   child: _FileGridCard(
                     file: file,
                     isSelected: selected,
@@ -2249,6 +3027,91 @@ class _PrimaryFilePane extends ConsumerWidget {
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+List<CloudFile> _filterCurrentFolderFiles(List<CloudFile> files, String query) {
+  final normalized = query.trim().toLowerCase();
+  if (normalized.isEmpty) return files;
+  return files
+      .where(
+        (file) =>
+            file.name.toLowerCase().contains(normalized) ||
+            file.cloudPath.toLowerCase().contains(normalized),
+      )
+      .toList();
+}
+
+class _CurrentFolderFileSearch extends ConsumerStatefulWidget {
+  final String value;
+
+  const _CurrentFolderFileSearch({required this.value});
+
+  @override
+  ConsumerState<_CurrentFolderFileSearch> createState() =>
+      _CurrentFolderFileSearchState();
+}
+
+class _CurrentFolderFileSearchState
+    extends ConsumerState<_CurrentFolderFileSearch> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.value);
+    _focusNode = FocusNode(debugLabel: 'current-folder-file-search');
+  }
+
+  @override
+  void didUpdateWidget(covariant _CurrentFolderFileSearch oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value &&
+        _controller.text != widget.value &&
+        !_focusNode.hasFocus) {
+      _controller.value = TextEditingValue(
+        text: widget.value,
+        selection: TextSelection.collapsed(offset: widget.value.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Semantics(
+      textField: true,
+      label: '搜索当前文件夹',
+      child: ShadInput(
+        controller: _controller,
+        focusNode: _focusNode,
+        placeholder: const Text('搜索当前文件夹'),
+        leading: Icon(
+          Icons.search_rounded,
+          size: 16,
+          color: cs.mutedForeground,
+        ),
+        trailing: widget.value.isEmpty
+            ? null
+            : ShadButton.ghost(
+                size: ShadButtonSize.sm,
+                onPressed: () {
+                  _controller.clear();
+                  ref.read(fileProvider.notifier).setCurrentListSearchQuery('');
+                },
+                child: const Icon(Icons.close_rounded, size: 16),
+              ),
+        onChanged: ref.read(fileProvider.notifier).setCurrentListSearchQuery,
       ),
     );
   }
@@ -3325,6 +4188,7 @@ class _FinderColumnContextMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     return ShadContextMenuRegion(
+      tapEnabled: false,
       constraints: const BoxConstraints(minWidth: 190),
       items: [
         ShadContextMenuItem.inset(
@@ -3522,18 +4386,48 @@ class _FileGridCard extends StatelessWidget {
 class _FastTransferContextMenu extends StatelessWidget {
   final CloudFile file;
   final VoidCallback onCopyFastTransfer;
+  final VoidCallback? onCopy;
+  final VoidCallback? onCut;
+  final VoidCallback? onCopyTo;
+  final VoidCallback? onMoveTo;
   final Widget child;
 
   const _FastTransferContextMenu({
     required this.file,
     required this.onCopyFastTransfer,
+    this.onCopy,
+    this.onCut,
+    this.onCopyTo,
+    this.onMoveTo,
     required this.child,
   });
 
   @override
   Widget build(BuildContext context) {
     return ShadContextMenuRegion(
+      tapEnabled: false,
       items: [
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.copy, size: 16),
+          onPressed: onCopy,
+          child: const Text('复制'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.scissors, size: 16),
+          onPressed: onCut,
+          child: const Text('剪切'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.copyPlus, size: 16),
+          onPressed: onCopyTo,
+          child: const Text('复制到…'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.folderInput, size: 16),
+          onPressed: onMoveTo,
+          child: const Text('移动到…'),
+        ),
+        const Divider(height: 8),
         ShadContextMenuItem.inset(
           leading: const Icon(Icons.bolt_rounded, size: 16),
           onPressed: onCopyFastTransfer,
@@ -3856,7 +4750,14 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
                 _load(parentID: _path.isEmpty ? null : _path.last.id);
               },
             ),
-          const Expanded(child: _FilePaneHeader()),
+          Expanded(
+            child: _FilePaneHeader(
+              trailing: _ClipboardPasteButton(
+                parentID: _currentParentID,
+                onCompleted: () => _load(parentID: _currentParentID),
+              ),
+            ),
+          ),
         ],
       ),
       currentPage: _page,
@@ -3927,6 +4828,28 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
                   ref.read(fileProvider.notifier).copyToClipboard([file]),
               onCut: () =>
                   ref.read(fileProvider.notifier).cutToClipboard([file]),
+              onCopyTo: () => unawaited(() async {
+                final completed = await _copyOrMoveFilesToDestination(
+                  context,
+                  ref,
+                  [file],
+                  move: false,
+                );
+                if (completed && mounted) {
+                  await _load(parentID: _currentParentID);
+                }
+              }()),
+              onMoveTo: () => unawaited(() async {
+                final completed = await _copyOrMoveFilesToDestination(
+                  context,
+                  ref,
+                  [file],
+                  move: true,
+                );
+                if (completed && mounted) {
+                  await _load(parentID: _currentParentID);
+                }
+              }()),
               onRenameConfirm: (name) async {
                 final renamed = await ref
                     .read(fileProvider.notifier)
@@ -3986,6 +4909,32 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               file: file,
               onCopyFastTransfer: () =>
                   ref.read(fileProvider.notifier).copyFastTransferJSON(file),
+              onCopy: () =>
+                  ref.read(fileProvider.notifier).copyToClipboard([file]),
+              onCut: () =>
+                  ref.read(fileProvider.notifier).cutToClipboard([file]),
+              onCopyTo: () => unawaited(() async {
+                final completed = await _copyOrMoveFilesToDestination(
+                  context,
+                  ref,
+                  [file],
+                  move: false,
+                );
+                if (completed && mounted) {
+                  await _load(parentID: _currentParentID);
+                }
+              }()),
+              onMoveTo: () => unawaited(() async {
+                final completed = await _copyOrMoveFilesToDestination(
+                  context,
+                  ref,
+                  [file],
+                  move: true,
+                );
+                if (completed && mounted) {
+                  await _load(parentID: _currentParentID);
+                }
+              }()),
               child: _FileGridCard(
                 file: file,
                 isSelected: selected,
@@ -4283,38 +5232,47 @@ class _FilePaneFrame extends StatelessWidget {
         child: Column(
           children: [
             Container(
-              height: 42,
+              // ShadInput uses a 48px touch target. Keep it inline while
+              // reserving enough height for typed text and its decoration.
+              height: 56,
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w800,
-                              color: cs.foreground,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final compactHeader = constraints.maxWidth < 520;
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                  color: cs.foreground,
+                                ),
+                              ),
                             ),
-                          ),
+                            if (!compactHeader) ...[
+                              const SizedBox(width: 8),
+                              Text(
+                                '$folderCount 个文件夹 · $fileCount 个文件',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: cs.mutedForeground,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '$folderCount 个文件夹 · $fileCount 个文件',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: cs.mutedForeground,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (trailing case final Widget trailing) trailing,
-                ],
+                      ),
+                      if (trailing case final Widget trailing) trailing,
+                    ],
+                  );
+                },
               ),
             ),
             Divider(height: 1, color: cs.border.withValues(alpha: 0.62)),
@@ -4543,7 +5501,9 @@ class _DragFeedback extends StatelessWidget {
 }
 
 class _FilePaneHeader extends StatelessWidget {
-  const _FilePaneHeader();
+  final Widget? trailing;
+
+  const _FilePaneHeader({this.trailing});
 
   @override
   Widget build(BuildContext context) {
@@ -4568,6 +5528,10 @@ class _FilePaneHeader extends StatelessWidget {
             width: 116,
             child: Text('修改时间', textAlign: TextAlign.right, style: style),
           ),
+          if (trailing case final Widget trailing) ...[
+            const SizedBox(width: 8),
+            trailing,
+          ],
         ],
       ),
     );

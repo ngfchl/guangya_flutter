@@ -12,9 +12,11 @@ import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../providers/watch_history_provider.dart';
+import '../models/watch_history.dart';
 import '../widgets/media_player_dialog.dart';
 
-enum _MediaWallFilter { all, movies, series, collections, unmatched }
+enum MediaLibraryBrowseFilter { all, movies, series, collections, unmatched }
 
 String _tmdbImageURL(String path, {required String size}) {
   final source = _tmdbDirectImageURL(path, size: size);
@@ -46,6 +48,12 @@ String? _parentDirectoryName(String cloudPath) {
   return segments.length < 2 ? null : segments[segments.length - 2];
 }
 
+String _parentCloudPath(String cloudPath) {
+  final normalized = cloudPath.replaceAll('\\', '/');
+  final index = normalized.lastIndexOf('/');
+  return index <= 0 ? '' : normalized.substring(0, index);
+}
+
 Widget _tmdbDirectFallback({
   required String path,
   required String size,
@@ -66,12 +74,18 @@ Widget _tmdbDirectFallback({
 class MediaLibraryPage extends ConsumerStatefulWidget {
   final bool showLibrarySidebar;
   final bool showManagementToolbar;
+  final bool showBrowseHeader;
+  final bool showHomePanel;
+  final MediaLibraryBrowseFilter browseFilter;
   final String? searchTitle;
 
   const MediaLibraryPage({
     super.key,
     this.showLibrarySidebar = true,
     this.showManagementToolbar = false,
+    this.showBrowseHeader = true,
+    this.showHomePanel = false,
+    this.browseFilter = MediaLibraryBrowseFilter.all,
     this.searchTitle,
   });
 
@@ -242,24 +256,69 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   bool _backupBusy = false;
   bool _detailSyncing = false;
   bool _manualMatchPreparing = false;
+  bool _manualMatchApplying = false;
   _MediaWork? _detailWork;
-  final _MediaWallFilter _wallFilter = _MediaWallFilter.all;
+  var _detailSession = 0;
+  late MediaLibraryBrowseFilter _wallFilter;
+  late final MediaLibraryNotifier _mediaNotifier;
+  void Function(MediaDetailHeader?) _setDetailHeader = (_) {};
   String? _activeCollectionKey;
   final _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    _wallFilter = widget.browseFilter;
+    _mediaNotifier = ref.read(mediaLibraryProvider.notifier);
+    final detailHeaderNotifier = ref.read(
+      activeMediaDetailHeaderProvider.notifier,
+    );
+    _setDetailHeader = (value) => detailHeaderNotifier.state = value;
+    final api = ref.read(authProvider.notifier).api;
     Future.microtask(() {
-      ref.read(mediaLibraryProvider.notifier).api = ref
-          .read(authProvider.notifier)
-          .api;
-      ref.read(mediaLibraryProvider.notifier).load();
+      if (!mounted) return;
+      _mediaNotifier.api = api;
+      _mediaNotifier.load();
     });
   }
 
   @override
+  void didUpdateWidget(covariant MediaLibraryPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.browseFilter != widget.browseFilter) {
+      _wallFilter = widget.browseFilter;
+      _activeCollectionKey = null;
+      _detailWork = null;
+      _detailSession += 1;
+      _setDetailHeader(null);
+    }
+  }
+
+  void _openDetail(_MediaWork work) {
+    setState(() {
+      _detailSession += 1;
+      _detailWork = work;
+    });
+    _setDetailHeader(
+      MediaDetailHeader(
+        title: work.primary.title,
+        mediaKind: work.primary.mediaKind,
+        year: work.primary.year,
+      ),
+    );
+  }
+
+  void _closeDetail() {
+    setState(() {
+      _detailSession += 1;
+      _detailWork = null;
+    });
+    _setDetailHeader(null);
+  }
+
+  @override
   void dispose() {
+    _setDetailHeader(null);
     _searchController.dispose();
     super.dispose();
   }
@@ -267,6 +326,12 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(mediaLibraryProvider);
+    ref.listen<MediaDetailHeader?>(activeMediaDetailHeaderProvider, (
+      previous,
+      next,
+    ) {
+      if (next == null && _detailWork != null) _closeDetail();
+    });
     final compact = MediaQuery.sizeOf(context).width < 720;
     ref.listen<MediaLibraryState>(mediaLibraryProvider, (previous, next) {
       final message = next.errorMessage ?? next.statusMessage;
@@ -306,11 +371,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       ),
       child: Column(
         children: [
-          if (!widget.showManagementToolbar) ...[
+          if (!widget.showManagementToolbar && widget.showBrowseHeader) ...[
             _buildHeader(context, state, compact: compact),
             SizedBox(height: compact ? 8 : 12),
           ],
-          if (widget.showManagementToolbar || _detailWork != null) ...[
+          if (widget.showManagementToolbar && _detailWork == null) ...[
             _buildToolbar(context, state),
             SizedBox(height: compact ? 8 : 12),
           ],
@@ -342,7 +407,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     required bool compact,
   }) {
     final cs = ShadTheme.of(context).colorScheme;
-    final statistics = state.statistics;
+    final useGlobalStatistics =
+        widget.showHomePanel || _wallFilter != MediaLibraryBrowseFilter.all;
+    final statistics = useGlobalStatistics
+        ? state.globalStatistics
+        : state.statistics;
     final library = state.selectedLibrary;
     final title = Row(
       children: [
@@ -382,7 +451,25 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           ref.read(mediaLibraryProvider.notifier).setSearchQuery(value),
       onSubmitted: _searchTMDB,
     );
-    if (_detailWork != null) return title;
+    if (_detailWork != null) {
+      return SizedBox(
+        height: compact ? 42 : 46,
+        child: Row(
+          children: [
+            ShadTooltip(
+              builder: (_) => const Text('返回影视库'),
+              child: ShadButton.ghost(
+                size: ShadButtonSize.sm,
+                onPressed: _closeDetail,
+                child: const Icon(Icons.arrow_back_rounded, size: 18),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(child: title),
+          ],
+        ),
+      );
+    }
     if (compact) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -410,7 +497,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               if (detailWork != null) ...[
                 ShadButton.ghost(
                   size: ShadButtonSize.sm,
-                  onPressed: () => setState(() => _detailWork = null),
+                  onPressed: _closeDetail,
                   child: const Icon(Icons.arrow_back_rounded, size: 18),
                 ),
                 const SizedBox(width: 6),
@@ -453,7 +540,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         if (detailWork != null) ...[
           ShadButton.ghost(
             size: ShadButtonSize.sm,
-            onPressed: () => setState(() => _detailWork = null),
+            onPressed: _closeDetail,
             child: const Icon(Icons.arrow_back_rounded, size: 18),
           ),
           const SizedBox(width: 8),
@@ -613,23 +700,31 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     if (_tmdbSearching || _tmdbResults.isNotEmpty || _tmdbError != null) {
       return _tmdbResultPanel(context);
     }
-    final visibleItems = state.visibleItems;
+    final useGlobalBrowse =
+        widget.showHomePanel ||
+        _wallFilter == MediaLibraryBrowseFilter.movies ||
+        _wallFilter == MediaLibraryBrowseFilter.series ||
+        _wallFilter == MediaLibraryBrowseFilter.unmatched;
+    final visibleItems = useGlobalBrowse
+        ? state.globalVisibleItems
+        : state.visibleItems;
     final collections = _MediaCollection.fromItems(visibleItems);
     final activeCollection = collections
         .where((collection) => collection.key == _activeCollectionKey)
         .firstOrNull;
     final filteredItems = switch (_wallFilter) {
-      _MediaWallFilter.all => visibleItems,
-      _MediaWallFilter.movies =>
+      MediaLibraryBrowseFilter.all => visibleItems,
+      MediaLibraryBrowseFilter.movies =>
         visibleItems
             .where((item) => item.mediaKind == TMDBMediaKind.movie)
             .toList(),
-      _MediaWallFilter.series =>
+      MediaLibraryBrowseFilter.series =>
         visibleItems
             .where((item) => item.mediaKind == TMDBMediaKind.tv)
             .toList(),
-      _MediaWallFilter.collections => activeCollection?.resources ?? const [],
-      _MediaWallFilter.unmatched =>
+      MediaLibraryBrowseFilter.collections =>
+        activeCollection?.resources ?? const [],
+      MediaLibraryBrowseFilter.unmatched =>
         visibleItems.where((item) => !item.isMatched).toList(),
     };
     final works = _MediaWork.fromItems(filteredItems);
@@ -672,11 +767,12 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             onRecognize: () =>
                 unawaited(_refreshAndRecognizeDetail(selectedWork)),
             onManualMatch: () => unawaited(_showManualTMDBMatch(selectedWork)),
+            manualMatchLoading: _manualMatchPreparing || _manualMatchApplying,
           ),
-          if (_detailSyncing || _manualMatchPreparing)
+          if (_detailSyncing)
             _detailLoadingOverlay(
               context,
-              message: _manualMatchPreparing ? '正在同步标题信息' : '正在识别并匹配媒体信息',
+              message: '正在识别并匹配媒体信息',
               onCancel: _detailSyncing
                   ? () => ref
                         .read(mediaLibraryProvider.notifier)
@@ -687,15 +783,23 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       );
     }
     final showingCollectionOverview =
-        _wallFilter == _MediaWallFilter.collections && activeCollection == null;
-    final wallContent = showingCollectionOverview
+        _wallFilter == MediaLibraryBrowseFilter.collections &&
+        activeCollection == null;
+    final wallContent =
+        widget.showHomePanel &&
+            _wallFilter == MediaLibraryBrowseFilter.all &&
+            works.isNotEmpty
+        ? _homePanel(context, works)
+        : showingCollectionOverview
         ? _collectionOverview(context, collections)
         : works.isEmpty
         ? _mainEmpty(
             context,
             state.isScanning
                 ? '正在扫描媒体库'
-                : (_wallFilter == _MediaWallFilter.all ? '没有扫描结果' : '当前筛选没有结果'),
+                : (_wallFilter == MediaLibraryBrowseFilter.all
+                      ? '没有扫描结果'
+                      : '当前筛选没有结果'),
             state.isScanning ? '发现并入库的资源会立即显示在这里' : '点击扫描读取该媒体库下的视频文件',
           )
         : LayoutBuilder(
@@ -712,18 +816,18 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 itemCount: works.length,
                 itemBuilder: (context, index) => _MediaPosterTile(
                   work: works[index],
-                  onOpen: () => setState(() => _detailWork = works[index]),
+                  onOpen: () => _openDetail(works[index]),
                   onDownload: () => ref
                       .read(fileProvider.notifier)
                       .downloadFile(works[index].primary.file),
                   onRecognize: state.isScanning
                       ? null
                       : () {
-                          setState(() => _detailWork = works[index]);
+                          _openDetail(works[index]);
                           unawaited(_refreshAndRecognizeDetail(works[index]));
                         },
                   onManualMatch: () {
-                    setState(() => _detailWork = works[index]);
+                    _openDetail(works[index]);
                     unawaited(_showManualTMDBMatch(works[index]));
                   },
                 ),
@@ -755,6 +859,146 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     );
   }
 
+  Widget _homePanel(BuildContext context, List<_MediaWork> works) {
+    final history = ref.watch(watchHistoryProvider);
+    final itemByID = {
+      for (final work in works)
+        for (final item in work.resources) item.id: item,
+    };
+    final workByItemID = {
+      for (final work in works)
+        for (final item in work.resources) item.id: work,
+    };
+    final continuing = <_ContinueWatchingWork>[];
+    final seenWorks = <String>{};
+    for (final entry in history) {
+      final item = itemByID[entry.fileID];
+      final work = item == null ? null : workByItemID[item.id];
+      if (entry.completed ||
+          item == null ||
+          work == null ||
+          !seenWorks.add(work.key)) {
+        continue;
+      }
+      continuing.add(
+        _ContinueWatchingWork(work: work, item: item, entry: entry),
+      );
+    }
+    final movies = works
+        .where((work) => work.primary.mediaKind == TMDBMediaKind.movie)
+        .toList();
+    final series = works
+        .where((work) => work.primary.mediaKind == TMDBMediaKind.tv)
+        .toList();
+    final unmatched = works.where((work) => !work.primary.isMatched).toList();
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        if (continuing.isNotEmpty) ...[
+          _homeSectionTitle(context, '继续观看', '${continuing.take(10).length} 项'),
+          SizedBox(
+            height: 178,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: continuing.take(10).length,
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (_, index) {
+                final value = continuing.take(10).elementAt(index);
+                return _ContinueWatchingTile(
+                  value: value,
+                  onContinue: () => unawaited(
+                    showMediaPlayerDialog(
+                      context,
+                      value.item.file,
+                      episodeCandidates: value.work.resources
+                          .map((item) => item.file)
+                          .toList(),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+        _homePosterSection(context, '电影', movies),
+        if (series.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _homePosterSection(context, '电视剧', series),
+        ],
+        if (unmatched.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _homePosterSection(context, '未识别', unmatched),
+        ],
+      ],
+    );
+  }
+
+  Widget _homeSectionTitle(BuildContext context, String title, String count) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: cs.foreground,
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            count,
+            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _homePosterSection(
+    BuildContext context,
+    String title,
+    List<_MediaWork> works,
+  ) {
+    if (works.isEmpty) return const SizedBox.shrink();
+    final visibleWorks = works.take(10).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _homeSectionTitle(context, title, '${visibleWorks.length} 部'),
+        SizedBox(
+          height: 272,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: visibleWorks.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 12),
+            itemBuilder: (_, index) => SizedBox(
+              width: 142,
+              child: _MediaPosterTile(
+                work: visibleWorks[index],
+                onOpen: () => _openDetail(visibleWorks[index]),
+                onDownload: () => ref
+                    .read(fileProvider.notifier)
+                    .downloadFile(visibleWorks[index].primary.file),
+                onRecognize: () {
+                  _openDetail(visibleWorks[index]);
+                  unawaited(_refreshAndRecognizeDetail(visibleWorks[index]));
+                },
+                onManualMatch: () {
+                  _openDetail(visibleWorks[index]);
+                  unawaited(_showManualTMDBMatch(visibleWorks[index]));
+                },
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _collectionOverview(
     BuildContext context,
     List<_MediaCollection> collections,
@@ -779,6 +1023,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             onOpen: () => setState(() {
               _activeCollectionKey = collections[index].key;
               _detailWork = null;
+              _detailSession += 1;
             }),
           ),
         );
@@ -1067,6 +1312,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       builder: (dialogContext) => ShadDialog(
         title: const Text('从云盘恢复刮削数据'),
         description: const Text('选择一个 SQLite 备份，恢复会合并到当前本地媒体库。'),
+        scrollable: false,
         actions: [
           ShadButton.outline(
             onPressed: () => Navigator.of(dialogContext).pop(),
@@ -1075,7 +1321,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ],
         child: SizedBox(
           width: (MediaQuery.sizeOf(dialogContext).width - 32)
-              .clamp(280.0, 620.0)
+              .clamp(300.0, 520.0)
               .toDouble(),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1104,43 +1350,53 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     required CloudFile backup,
   }) {
     final cs = ShadTheme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ShadButton.ghost(
-          expands: false,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          leading: Icon(
-            Icons.storage_rounded,
-            size: 18,
-            color: cs.mutedForeground,
-          ),
-          trailing: Icon(
-            Icons.chevron_right_rounded,
-            color: cs.mutedForeground,
-          ),
-          onPressed: () => Navigator.of(context).pop(backup),
-          child: Text(
-            backup.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: cs.foreground,
+    return LayoutBuilder(
+      builder: (context, constraints) => Container(
+        decoration: BoxDecoration(
+          color: cs.muted.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: cs.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ShadButton.ghost(
+              width: constraints.maxWidth,
+              expands: false,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              leading: Icon(
+                Icons.storage_rounded,
+                size: 18,
+                color: cs.mutedForeground,
+              ),
+              trailing: Icon(
+                Icons.chevron_right_rounded,
+                color: cs.mutedForeground,
+              ),
+              onPressed: () => Navigator.of(context).pop(backup),
+              child: Text(
+                backup.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: cs.foreground,
+                ),
+              ),
             ),
-          ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(38, 0, 10, 9),
+              child: Text(
+                '${backup.formattedSize} · ${backup.modifiedAt}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+              ),
+            ),
+          ],
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(38, 0, 10, 8),
-          child: Text(
-            '${backup.formattedSize} · ${backup.modifiedAt}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -1186,39 +1442,96 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
 
   Future<void> _refreshAndRecognizeDetail(_MediaWork selected) async {
     if (_detailSyncing) return;
+    final detailSession = _detailSession;
     setState(() => _detailSyncing = true);
     try {
       final notifier = ref.read(mediaLibraryProvider.notifier);
-      final pendingMatches = await notifier.refreshAndRecognizeItems(
-        selected.resources,
-      );
+      final resources = _recognitionResources(selected);
+      final pendingMatches = await notifier.refreshAndRecognizeItems(resources);
+      final groupedMatches = <String, MediaTMDBMatchRequest>{};
       for (final request in pendingMatches) {
+        final first = request.items.first;
+        final parsed = ParsedMediaName.parse(
+          first.file.name,
+          directoryName: _parentDirectoryName(first.file.cloudPath),
+        );
+        final key =
+            '${first.libraryID}:${_parentCloudPath(first.file.cloudPath)}:'
+            '${parsed.title.toLowerCase()}:${first.mediaKind?.name ?? 'auto'}';
+        final existing = groupedMatches[key];
+        groupedMatches[key] = MediaTMDBMatchRequest(
+          items: [...?existing?.items, ...request.items],
+          candidates: existing?.candidates ?? request.candidates,
+        );
+      }
+      for (final request in groupedMatches.values) {
         if (!mounted) return;
-        final candidate = await showShadDialog<Map<String, dynamic>>(
-          context: context,
-          builder: (_) => _ManualTMDBMatchDialog(
-            initialQuery: request.items.first.title,
-            initialResults: request.candidates,
-          ),
+        final candidate = await _showManualMatchPopover(
+          initialQuery: request.items.first.title,
+          initialResults: request.candidates,
         );
         if (candidate == null) continue;
         for (final resource in request.items) {
           await notifier.applyTMDBMatch(resource, candidate);
         }
       }
-      if (!mounted || _detailWork == null) return;
-      final selectedIDs = selected.resources.map((item) => item.id).toSet();
+      if (!mounted || _detailWork == null || _detailSession != detailSession) {
+        return;
+      }
+      final selectedIDs = resources.map((item) => item.id).toSet();
+      final selectedGCIDs = resources
+          .map((item) => item.file.gcid)
+          .whereType<String>()
+          .where((value) => value.isNotEmpty)
+          .toSet();
+      final selectedParentPaths = resources
+          .map((item) => _parentCloudPath(item.file.cloudPath))
+          .where((value) => value.isNotEmpty)
+          .toSet();
       final refreshed =
           _MediaWork.fromItems(ref.read(mediaLibraryProvider).items)
               .where(
-                (work) =>
-                    work.resources.any((item) => selectedIDs.contains(item.id)),
+                (work) => work.resources.any(
+                  (item) =>
+                      selectedIDs.contains(item.id) ||
+                      (item.file.gcid != null &&
+                          selectedGCIDs.contains(item.file.gcid)) ||
+                      selectedParentPaths.contains(
+                        _parentCloudPath(item.file.cloudPath),
+                      ),
+                ),
               )
               .firstOrNull;
-      if (refreshed != null) setState(() => _detailWork = refreshed);
+      if (refreshed != null) {
+        setState(() => _detailWork = refreshed);
+      } else if (mounted) {
+        _closeDetail();
+      }
     } finally {
       if (mounted) setState(() => _detailSyncing = false);
     }
+  }
+
+  List<MediaLibraryItem> _recognitionResources(_MediaWork selected) {
+    final first = selected.primary;
+    final parsed = ParsedMediaName.parse(
+      first.file.name,
+      directoryName: _parentDirectoryName(first.file.cloudPath),
+    );
+    if (!parsed.isEpisode) return selected.resources;
+    final parentPath = _parentCloudPath(first.file.cloudPath);
+    final title = parsed.title.toLowerCase();
+    final siblings = ref.read(mediaLibraryProvider).items.where((item) {
+      if (_parentCloudPath(item.file.cloudPath) != parentPath) return false;
+      final candidate = ParsedMediaName.parse(
+        item.file.name,
+        directoryName: _parentDirectoryName(item.file.cloudPath),
+      );
+      return candidate.isEpisode && candidate.title.toLowerCase() == title;
+    });
+    return {
+      for (final item in [...selected.resources, ...siblings]) item.id: item,
+    }.values.toList();
   }
 
   Widget _detailLoadingOverlay(
@@ -1259,6 +1572,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
 
   Future<void> _showManualTMDBMatch(_MediaWork work) async {
     if (_manualMatchPreparing) return;
+    final detailSession = _detailSession;
     final notifier = ref.read(mediaLibraryProvider.notifier);
     setState(() => _manualMatchPreparing = true);
     late final List<MediaLibraryItem> resources;
@@ -1272,26 +1586,98 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       resources.first.file.name,
       directoryName: _parentDirectoryName(resources.first.file.cloudPath),
     );
-    final candidate = await showShadDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (_) => _ManualTMDBMatchDialog(
-        initialQuery: resources.first.title,
-        initialYear: parsed.year,
-        initialMediaKind: parsed.isEpisode ? 'tv' : 'auto',
-        initialSeason: parsed.season,
-        initialEpisode: parsed.episode,
-      ),
+    final candidate = await _showManualMatchPopover(
+      initialQuery: parsed.title,
+      initialYear: parsed.year,
+      initialMediaKind: 'auto',
+      initialSeason: parsed.season,
+      initialEpisode: parsed.episode,
     );
     if (candidate == null || !mounted) return;
-    final updated = <MediaLibraryItem>[];
-    for (final resource in resources) {
-      updated.add(await notifier.applyTMDBMatch(resource, candidate));
+    setState(() => _manualMatchApplying = true);
+    try {
+      for (final resource in resources) {
+        await notifier.applyTMDBMatch(resource, candidate);
+      }
+      if (!mounted || _detailSession != detailSession || _detailWork == null) {
+        return;
+      }
+      final resourceIDs = resources.map((item) => item.id).toSet();
+      final refreshed =
+          _MediaWork.fromItems(ref.read(mediaLibraryProvider).items)
+              .where(
+                (candidate) => candidate.resources.any(
+                  (item) => resourceIDs.contains(item.id),
+                ),
+              )
+              .firstOrNull;
+      if (refreshed != null) setState(() => _detailWork = refreshed);
+    } finally {
+      if (mounted) setState(() => _manualMatchApplying = false);
     }
-    if (mounted) {
-      setState(() {
-        _detailWork = _MediaWork.fromItems(updated).first;
-      });
+  }
+
+  Future<Map<String, dynamic>?> _showManualMatchPopover({
+    required String initialQuery,
+    List<Map<String, dynamic>>? initialResults,
+    int? initialYear,
+    String initialMediaKind = 'auto',
+    int? initialSeason,
+    int? initialEpisode,
+  }) {
+    final overlay = Overlay.of(context, rootOverlay: true);
+    final controller = ShadPopoverController();
+    final completer = Completer<Map<String, dynamic>?>();
+    late final OverlayEntry entry;
+    late final VoidCallback onVisibilityChanged;
+    void close([Map<String, dynamic>? value]) {
+      if (!completer.isCompleted) completer.complete(value);
+      controller.removeListener(onVisibilityChanged);
+      controller.dispose();
+      entry.remove();
     }
+
+    onVisibilityChanged = () {
+      if (!controller.isOpen) close();
+    };
+
+    final size = MediaQuery.sizeOf(context);
+    entry = OverlayEntry(
+      builder: (overlayContext) => Positioned(
+        left: 0,
+        top: 0,
+        child: ShadPopover(
+          controller: controller,
+          closeOnTapOutside: true,
+          padding: EdgeInsets.zero,
+          decoration: ShadDecoration.none,
+          shadows: const [],
+          anchor: ShadGlobalAnchor(
+            Offset((size.width * 0.5).clamp(280.0, size.width - 280.0), 96),
+          ),
+          popover: (_) => SizedBox(
+            width: (size.width - 32).clamp(360.0, 820.0).toDouble(),
+            height: (size.height - 140).clamp(420.0, 680.0).toDouble(),
+            child: _ManualTMDBMatchDialog(
+              initialQuery: initialQuery,
+              initialResults: initialResults,
+              initialYear: initialYear,
+              initialMediaKind: initialMediaKind,
+              initialSeason: initialSeason,
+              initialEpisode: initialEpisode,
+              onSelected: close,
+              onDismiss: close,
+              embedded: true,
+            ),
+          ),
+          child: const SizedBox(width: 1, height: 1),
+        ),
+      ),
+    );
+    controller.addListener(onVisibilityChanged);
+    overlay.insert(entry);
+    controller.show();
+    return completer.future;
   }
 }
 
@@ -2081,6 +2467,115 @@ class _MediaCollectionTile extends ConsumerWidget {
   }
 }
 
+class _ContinueWatchingWork {
+  final _MediaWork work;
+  final MediaLibraryItem item;
+  final WatchHistoryEntry entry;
+
+  const _ContinueWatchingWork({
+    required this.work,
+    required this.item,
+    required this.entry,
+  });
+}
+
+class _ContinueWatchingTile extends StatelessWidget {
+  final _ContinueWatchingWork value;
+  final VoidCallback onContinue;
+
+  const _ContinueWatchingTile({required this.value, required this.onContinue});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final item = value.work.primary;
+    final episode = ParsedMediaName.parse(value.item.file.name);
+    final episodeLabel =
+        item.mediaKind == TMDBMediaKind.tv && episode.episode != null
+        ? '第 ${episode.season ?? 1} 季第 ${episode.episode} 集'
+        : '继续观看';
+    final percent = (value.entry.progress * 100).round();
+    final backdrop = item.backdropPath?.isNotEmpty == true
+        ? _tmdbImageURL(item.backdropPath!, size: 'w780')
+        : null;
+    return Semantics(
+      button: true,
+      label: '${item.title}，$episodeLabel，已观看 $percent%',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onContinue,
+          borderRadius: BorderRadius.circular(7),
+          child: SizedBox(
+            width: 244,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Container(
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          color: cs.muted,
+                          borderRadius: BorderRadius.circular(7),
+                          border: Border.all(color: cs.border),
+                        ),
+                        child: backdrop == null
+                            ? Center(
+                                child: Icon(
+                                  Icons.play_circle_outline_rounded,
+                                  color: cs.mutedForeground,
+                                  size: 30,
+                                ),
+                              )
+                            : CachedNetworkImage(
+                                imageUrl: backdrop,
+                                fit: BoxFit.cover,
+                              ),
+                      ),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: LinearProgressIndicator(
+                          value: value.entry.progress,
+                          minHeight: 3,
+                          color: cs.primary,
+                          backgroundColor: Colors.black.withValues(alpha: 0.34),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: cs.foreground,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$episodeLabel · 已观看 $percent%',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _MediaPosterTile extends ConsumerWidget {
   final _MediaWork work;
   final VoidCallback onOpen;
@@ -2192,14 +2687,17 @@ class _MediaPosterTile extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  item.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: cs.foreground,
+                ShadTooltip(
+                  builder: (_) => Text(item.title),
+                  child: Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: cs.foreground,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 3),
@@ -2233,6 +2731,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final ValueChanged<MediaLibraryItem> onExternalPlay;
   final VoidCallback onRecognize;
   final VoidCallback onManualMatch;
+  final bool manualMatchLoading;
 
   const _MediaDetailPanel({
     required this.work,
@@ -2241,6 +2740,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onExternalPlay,
     required this.onRecognize,
     required this.onManualMatch,
+    this.manualMatchLoading = false,
   });
 
   @override
@@ -2256,6 +2756,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   String? _selectedEpisodeID;
   bool _loadingTMDBDetails = false;
   bool _loadingEpisodeDetails = false;
+  bool _initialEpisodeSelectionRequested = false;
   final _backdropController = PageController();
   Timer? _backdropTimer;
   var _backdropIndex = 0;
@@ -2264,11 +2765,18 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   void initState() {
     super.initState();
     Future.microtask(_loadTMDBDetails);
+    Future.microtask(_selectInitialEpisode);
   }
 
   @override
   void didUpdateWidget(covariant _MediaDetailPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.work.primary.id != widget.work.primary.id) {
+      _initialEpisodeSelectionRequested = false;
+      _selectedEpisodeID = null;
+      _episodeDetails = null;
+      Future.microtask(_selectInitialEpisode);
+    }
     final updatedResource = widget.work.resources
         .where((item) => item.id == _resource.id)
         .firstOrNull;
@@ -2377,6 +2885,54 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     }
   }
 
+  Future<void> _selectInitialEpisode() async {
+    if (_initialEpisodeSelectionRequested ||
+        widget.work.primary.mediaKind != TMDBMediaKind.tv) {
+      return;
+    }
+    _initialEpisodeSelectionRequested = true;
+    final episodes =
+        widget.work.resources
+            .map(
+              (resource) => (
+                resource: resource,
+                parsed: ParsedMediaName.parse(
+                  resource.file.name,
+                  directoryName: _parentDirectoryName(resource.file.cloudPath),
+                ),
+              ),
+            )
+            .where((entry) => entry.parsed.episode != null)
+            .toList()
+          ..sort((left, right) {
+            final season = (left.parsed.season ?? 1).compareTo(
+              right.parsed.season ?? 1,
+            );
+            if (season != 0) return season;
+            return (left.parsed.episode ?? 0).compareTo(
+              right.parsed.episode ?? 0,
+            );
+          });
+    if (episodes.isEmpty) return;
+    final historyByID = {
+      for (final entry in ref.read(watchHistoryProvider)) entry.fileID: entry,
+    };
+    final lastPlayed = episodes
+        .where((entry) => historyByID.containsKey(entry.resource.id))
+        .fold<({MediaLibraryItem resource, ParsedMediaName parsed})?>(null, (
+          current,
+          entry,
+        ) {
+          if (current == null) return entry;
+          final currentHistory = historyByID[current.resource.id]!;
+          final candidateHistory = historyByID[entry.resource.id]!;
+          return candidateHistory.updatedAt.isAfter(currentHistory.updatedAt)
+              ? entry
+              : current;
+        });
+    await _selectEpisode((lastPlayed ?? episodes.first).resource);
+  }
+
   List<String> _heroBackdropPaths(MediaLibraryItem item) {
     final images = _tmdbDetails?['images'];
     final paths = <String>[
@@ -2420,13 +2976,17 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               children: [
                 _detailInformation(context, item, isSeries),
                 const SizedBox(height: 22),
-                _fileInformation(context, item),
+                if (item.isMatched) ...[
+                  _tmdbEnrichment(context, showPosters: false),
+                  const SizedBox(height: 22),
+                ],
+                _resourceList(context, cs),
                 if (item.isMatched) ...[
                   const SizedBox(height: 22),
-                  _tmdbEnrichment(context),
+                  _tmdbEnrichment(context, showCast: false),
                 ],
-                const SizedBox(height: 26),
-                _resourceList(context, cs),
+                const SizedBox(height: 22),
+                _fileInformation(context, item),
               ],
             ),
           ),
@@ -2449,7 +3009,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 600;
         return SizedBox(
-          height: compact ? 500 : 340,
+          height: compact ? 560 : 370,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: Stack(
@@ -2555,6 +3115,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                                 color: Colors.white.withValues(alpha: 0.82),
                               ),
                             ),
+                            const SizedBox(height: 14),
+                            _mediaActions(),
                           ],
                         ),
                       ),
@@ -2585,43 +3147,6 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             fontWeight: FontWeight.w700,
             color: cs.foreground,
           ),
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            ShadButton(
-              size: ShadButtonSize.sm,
-              onPressed: () => widget.onPlay(_resource),
-              leading: const Icon(Icons.play_arrow_rounded, size: 16),
-              child: const Text('播放'),
-            ),
-            ShadButton.outline(
-              size: ShadButtonSize.sm,
-              onPressed: () => widget.onExternalPlay(_resource),
-              leading: const Icon(Icons.launch_rounded, size: 16),
-              child: const Text('外部播放'),
-            ),
-            ShadButton.outline(
-              size: ShadButtonSize.sm,
-              onPressed: () => widget.onDownload(_resource),
-              leading: const Icon(Icons.download_rounded, size: 16),
-              child: const Text('下载'),
-            ),
-            ShadButton.outline(
-              size: ShadButtonSize.sm,
-              onPressed: widget.onRecognize,
-              leading: const Icon(Icons.auto_awesome_rounded, size: 16),
-              child: const Text('媒体识别'),
-            ),
-            ShadButton.outline(
-              size: ShadButtonSize.sm,
-              onPressed: widget.onManualMatch,
-              leading: const Icon(Icons.manage_search_rounded, size: 16),
-              child: const Text('手动匹配'),
-            ),
-          ],
         ),
         const SizedBox(height: 14),
         Wrap(
@@ -2654,6 +3179,51 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     );
   }
 
+  Widget _mediaActions() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        ShadButton(
+          size: ShadButtonSize.sm,
+          onPressed: () => widget.onPlay(_resource),
+          leading: const Icon(Icons.play_arrow_rounded, size: 16),
+          child: const Text('播放'),
+        ),
+        ShadButton.outline(
+          size: ShadButtonSize.sm,
+          onPressed: () => widget.onExternalPlay(_resource),
+          leading: const Icon(Icons.launch_rounded, size: 16),
+          child: const Text('外部播放'),
+        ),
+        ShadButton.outline(
+          size: ShadButtonSize.sm,
+          onPressed: () => widget.onDownload(_resource),
+          leading: const Icon(Icons.download_rounded, size: 16),
+          child: const Text('下载'),
+        ),
+        ShadButton.outline(
+          size: ShadButtonSize.sm,
+          onPressed: widget.onRecognize,
+          leading: const Icon(Icons.auto_awesome_rounded, size: 16),
+          child: const Text('媒体识别'),
+        ),
+        ShadButton.outline(
+          size: ShadButtonSize.sm,
+          onPressed: widget.manualMatchLoading ? null : widget.onManualMatch,
+          leading: widget.manualMatchLoading
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.manage_search_rounded, size: 16),
+          child: Text(widget.manualMatchLoading ? '正在匹配' : '手动匹配'),
+        ),
+      ],
+    );
+  }
+
   Widget _metadataPill(BuildContext context, String label, String value) {
     final cs = ShadTheme.of(context).colorScheme;
     return Row(
@@ -2675,7 +3245,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     );
   }
 
-  Widget _tmdbEnrichment(BuildContext context) {
+  Widget _tmdbEnrichment(
+    BuildContext context, {
+    bool showPosters = true,
+    bool showCast = true,
+  }) {
     final cs = ShadTheme.of(context).colorScheme;
     if (_loadingTMDBDetails && _tmdbDetails == null) {
       return const Padding(
@@ -2699,13 +3273,13 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             .take(12)
             .toList() ??
         const <Map<String, dynamic>>[];
-    if (posters.isEmpty && cast.isEmpty) {
+    if ((!showPosters || posters.isEmpty) && (!showCast || cast.isEmpty)) {
       return const SizedBox.shrink();
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (posters.isNotEmpty) ...[
+        if (showPosters && posters.isNotEmpty) ...[
           Text(
             '更多海报',
             style: TextStyle(
@@ -2739,7 +3313,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           ),
           const SizedBox(height: 18),
         ],
-        if (cast.isNotEmpty) ...[
+        if (showCast && cast.isNotEmpty) ...[
           Text(
             '演职员',
             style: TextStyle(
@@ -2922,15 +3496,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         if (isSeries && episodesBySeason.isNotEmpty) ...[
           _seasonPicker(episodesBySeason, cs),
           const SizedBox(height: 10),
-          ...episodesBySeason[_activeSeason(episodesBySeason)]!.map(
-            (resource) => _resourceTile(
-              resource,
-              cs,
-              episode: ParsedMediaName.parse(
-                resource.file.name,
-                directoryName: _parentDirectoryName(resource.file.cloudPath),
-              ).episode,
-            ),
+          _episodePicker(
+            episodesBySeason[_activeSeason(episodesBySeason)]!,
+            cs,
           ),
           _episodeIntroduction(context, cs),
         ] else
@@ -2980,6 +3548,41 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _episodePicker(List<MediaLibraryItem> episodes, ShadColorScheme cs) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final resource in episodes)
+          Builder(
+            builder: (context) {
+              final parsed = ParsedMediaName.parse(
+                resource.file.name,
+                directoryName: _parentDirectoryName(resource.file.cloudPath),
+              );
+              final episode = parsed.episode;
+              final selected = _selectedEpisodeID == resource.id;
+              final label = episode == null
+                  ? '未编号'
+                  : 'E${episode.toString().padLeft(2, '0')}';
+              return ShadTooltip(
+                builder: (_) =>
+                    Text(episode == null ? '未识别集号' : '第 $episode 集'),
+                child: ShadButton.outline(
+                  size: ShadButtonSize.sm,
+                  width: 58,
+                  backgroundColor: selected ? cs.primary : null,
+                  foregroundColor: selected ? cs.primaryForeground : null,
+                  onPressed: () => unawaited(_selectEpisode(resource)),
+                  child: Text(label),
+                ),
+              );
+            },
+          ),
+      ],
     );
   }
 
@@ -3080,6 +3683,16 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                     style: TextStyle(fontSize: 12, color: cs.mutedForeground),
                   ),
                 ],
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: ShadButton(
+                    size: ShadButtonSize.sm,
+                    onPressed: () => widget.onPlay(_resource),
+                    leading: const Icon(Icons.play_arrow_rounded, size: 16),
+                    child: const Text('播放本集'),
+                  ),
+                ),
               ],
             ),
           ),
@@ -3173,6 +3786,13 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                       size: 16,
                       color: cs.primary,
                     ),
+                  const SizedBox(width: 10),
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: () => widget.onPlay(resource),
+                    leading: const Icon(Icons.play_arrow_rounded, size: 15),
+                    child: const Text('播放'),
+                  ),
                 ],
               ),
             ),
@@ -3190,6 +3810,9 @@ class _ManualTMDBMatchDialog extends ConsumerStatefulWidget {
   final String initialMediaKind;
   final int? initialSeason;
   final int? initialEpisode;
+  final ValueChanged<Map<String, dynamic>>? onSelected;
+  final VoidCallback? onDismiss;
+  final bool embedded;
 
   const _ManualTMDBMatchDialog({
     required this.initialQuery,
@@ -3198,6 +3821,9 @@ class _ManualTMDBMatchDialog extends ConsumerStatefulWidget {
     this.initialMediaKind = 'auto',
     this.initialSeason,
     this.initialEpisode,
+    this.onSelected,
+    this.onDismiss,
+    this.embedded = false,
   });
 
   @override
@@ -3213,8 +3839,10 @@ class _ManualTMDBMatchDialogState
   late final TextEditingController _episodeController;
   late String _mediaKind;
   bool _searching = false;
+  bool _loadingDetail = false;
   String? _error;
   List<Map<String, dynamic>> _results = const [];
+  Map<String, dynamic>? _detailCandidate;
 
   @override
   void initState() {
@@ -3279,6 +3907,18 @@ class _ManualTMDBMatchDialogState
           (result['results'] as List?)
               ?.whereType<Map>()
               .map(Map<String, dynamic>.from)
+              .map((item) {
+                // TMDB 的 movie/tv 专用搜索接口不会返回 media_type；
+                // 只有 multi 搜索才有该字段。补上用户选择的类型后再用
+                // 同一份候选渲染逻辑，避免把所有专用搜索结果过滤为空。
+                final type =
+                    item['media_type']?.toString() ??
+                    (_mediaKind == 'movie' || _mediaKind == 'tv'
+                        ? _mediaKind
+                        : null);
+                if (type == null) return item;
+                return {...item, 'media_type': type};
+              })
               .where(
                 (item) =>
                     item['id'] != null &&
@@ -3299,105 +3939,112 @@ class _ManualTMDBMatchDialogState
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final viewport = MediaQuery.sizeOf(context);
-    return ShadDialog(
-      title: const Text('手动匹配 TMDB'),
-      description: const Text('选择一个结果后，会应用到该作品的全部资源版本。'),
-      actions: [
-        ShadButton.outline(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        ShadButton(
-          onPressed: _searching ? null : _search,
-          leading: const Icon(Icons.search_rounded, size: 16),
-          child: const Text('搜索'),
-        ),
-      ],
-      child: SizedBox(
-        width: (viewport.width - 32).clamp(280.0, 620.0).toDouble(),
-        height: (viewport.height - 210).clamp(340.0, 560.0).toDouble(),
-        child: Column(
-          children: [
-            _manualMatchField(
-              label: '标题',
-              child: ShadInput(
-                controller: _queryController,
-                placeholder: const Text('输入片名'),
-                onSubmitted: (_) => _search(),
-                leading: Icon(
-                  Icons.search_rounded,
-                  size: 16,
-                  color: cs.mutedForeground,
-                ),
+    final detail = _detailCandidate;
+    final content = ShadDialog(
+      title: Text(detail == null ? '手动匹配 TMDB' : 'TMDB 详情'),
+      description: Text(
+        detail == null ? '查看或选中匹配结果后，会应用到该作品的全部资源版本。' : '确认信息无误后使用此匹配项。',
+      ),
+      actions: detail == null
+          ? [
+              ShadButton.outline(onPressed: _dismiss, child: const Text('取消')),
+              ShadButton(
+                onPressed: _searching ? null : _search,
+                leading: const Icon(Icons.search_rounded, size: 16),
+                child: const Text('搜索'),
               ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(child: _mediaKindPills(cs)),
-                const SizedBox(width: 12),
-                SizedBox(
-                  width: 100,
-                  child: ShadInput(
-                    controller: _yearController,
-                    keyboardType: TextInputType.number,
-                    placeholder: const Text('年份（可选）'),
-                  ),
-                ),
-              ],
-            ),
-            if (_mediaKind == 'tv') ...[
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: ShadInput(
-                      controller: _seasonController,
-                      keyboardType: TextInputType.number,
-                      placeholder: const Text('季号'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: ShadInput(
-                      controller: _episodeController,
-                      keyboardType: TextInputType.number,
-                      placeholder: const Text('集号'),
-                    ),
-                  ),
-                ],
+            ]
+          : [
+              ShadButton.outline(
+                onPressed: () => setState(() => _detailCandidate = null),
+                leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                child: const Text('返回'),
+              ),
+              ShadButton(
+                onPressed: () => _select(detail),
+                leading: const Icon(Icons.check_rounded, size: 16),
+                child: const Text('使用'),
               ),
             ],
-            const SizedBox(height: 12),
-            Expanded(
-              child: _searching
-                  ? const Center(child: ShadProgress())
-                  : _error != null
-                  ? Center(
-                      child: Text(
-                        _error!,
-                        style: TextStyle(color: cs.destructive),
+      child: SizedBox(
+        width: (viewport.width - 32).clamp(340.0, 800.0).toDouble(),
+        height: (viewport.height - 170).clamp(400.0, 640.0).toDouble(),
+        child: detail == null
+            ? Column(
+                children: [
+                  _manualMatchField(
+                    label: '标题',
+                    child: ShadInput(
+                      controller: _queryController,
+                      placeholder: const Text('输入片名'),
+                      onSubmitted: (_) => _search(),
+                      leading: Icon(
+                        Icons.search_rounded,
+                        size: 16,
+                        color: cs.mutedForeground,
                       ),
-                    )
-                  : _results.isEmpty
-                  ? Center(
-                      child: Text(
-                        '没有匹配结果',
-                        style: TextStyle(color: cs.mutedForeground),
-                      ),
-                    )
-                  : ListView.separated(
-                      itemCount: _results.length,
-                      separatorBuilder: (_, _) =>
-                          Divider(height: 1, color: cs.border),
-                      itemBuilder: (context, index) =>
-                          _candidateRow(context, cs, _results[index]),
                     ),
-            ),
-          ],
-        ),
+                  ),
+                  const SizedBox(height: 10),
+                  _matchFilters(cs),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _manualMatchField(
+                          label: '季',
+                          child: ShadInput(
+                            controller: _seasonController,
+                            keyboardType: TextInputType.number,
+                            placeholder: const Text('例如 1'),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _manualMatchField(
+                          label: '集',
+                          child: ShadInput(
+                            controller: _episodeController,
+                            keyboardType: TextInputType.number,
+                            placeholder: const Text('例如 1'),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: _searching
+                        ? const Center(child: ShadProgress())
+                        : _error != null
+                        ? Center(
+                            child: Text(
+                              _error!,
+                              style: TextStyle(color: cs.destructive),
+                            ),
+                          )
+                        : _results.isEmpty
+                        ? Center(
+                            child: Text(
+                              '没有匹配结果',
+                              style: TextStyle(color: cs.mutedForeground),
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: _results.length,
+                            separatorBuilder: (_, _) =>
+                                Divider(height: 1, color: cs.border),
+                            itemBuilder: (context, index) =>
+                                _candidateRow(context, cs, _results[index]),
+                          ),
+                  ),
+                ],
+              )
+            : _detailContent(cs, detail),
       ),
     );
+    return widget.embedded ? content : content;
   }
 
   Widget _candidateRow(
@@ -3419,7 +4066,7 @@ class _ManualTMDBMatchDialogState
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () => Navigator.of(context).pop(_selectionFor(candidate)),
+        onTap: () => unawaited(_viewDetails(candidate)),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
@@ -3510,7 +4157,29 @@ class _ManualTMDBMatchDialogState
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right_rounded, color: cs.mutedForeground),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 68,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ShadButton.outline(
+                      size: ShadButtonSize.sm,
+                      onPressed: _loadingDetail
+                          ? null
+                          : () => unawaited(_viewDetails(candidate)),
+                      child: const Text('查看'),
+                    ),
+                    const SizedBox(height: 6),
+                    ShadButton(
+                      size: ShadButtonSize.sm,
+                      onPressed: () => _select(candidate),
+                      child: const Text('选中'),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -3518,51 +4187,290 @@ class _ManualTMDBMatchDialogState
     );
   }
 
-  Widget _mediaKindPills(ShadColorScheme cs) {
-    const values = [('auto', '自动'), ('movie', '电影'), ('tv', '电视剧')];
-    return Container(
-      height: 40,
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: cs.muted,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: cs.border),
-      ),
-      child: Row(
+  Future<void> _viewDetails(Map<String, dynamic> candidate) async {
+    final id = int.tryParse(candidate['id']?.toString() ?? '');
+    final type = candidate['media_type']?.toString();
+    final mediaKind = type == 'tv'
+        ? 'tv'
+        : type == 'movie'
+        ? 'movie'
+        : null;
+    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    if (id == null || mediaKind == null || apiKey.isEmpty) {
+      setState(() => _error = '无法获取该 TMDB 条目的详细信息');
+      return;
+    }
+    setState(() {
+      _loadingDetail = true;
+      _error = null;
+    });
+    try {
+      final details = await ref
+          .read(authProvider.notifier)
+          .api
+          .tmdbDetails(
+            id,
+            mediaKind: mediaKind,
+            apiKey: apiKey,
+            proxyHost:
+                StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+            proxyPort:
+                StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+          );
+      if (mounted) {
+        setState(
+          () =>
+              _detailCandidate = {...candidate, ...details, 'media_type': type},
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = '获取 TMDB 详情失败：$error');
+    } finally {
+      if (mounted) setState(() => _loadingDetail = false);
+    }
+  }
+
+  Widget _detailContent(ShadColorScheme cs, Map<String, dynamic> detail) {
+    final title = (detail['title'] ?? detail['name'] ?? '未知标题').toString();
+    final originalTitle =
+        (detail['original_title'] ?? detail['original_name'] ?? '').toString();
+    final release = (detail['release_date'] ?? detail['first_air_date'] ?? '')
+        .toString();
+    final mediaType = detail['media_type'] == 'tv' ? '电视剧' : '电影';
+    final posterPath = detail['poster_path']?.toString();
+    final genres = _detailList(detail['genres'], 'name');
+    final cast = _detailList(
+      detail['credits'] is Map ? detail['credits']['cast'] : null,
+      'name',
+      limit: 12,
+    );
+    final facts = <String, String>{
+      '类型': mediaType,
+      '上映': release.isEmpty ? '未知' : release,
+      '状态': detail['status']?.toString() ?? '未知',
+      '时长': _detailRuntime(detail),
+      '语言': detail['original_language']?.toString() ?? '未知',
+      '评分': detail['vote_average']?.toString() ?? '暂无',
+      '投票': detail['vote_count']?.toString() ?? '0',
+      'TMDB': detail['id']?.toString() ?? '-',
+    };
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(right: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          for (final option in values)
-            Expanded(
-              child: ShadButton.ghost(
-                size: ShadButtonSize.sm,
-                padding: EdgeInsets.zero,
-                onPressed: () => setState(() => _mediaKind = option.$1),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 140),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: _mediaKind == option.$1 ? cs.background : null,
-                    borderRadius: BorderRadius.circular(999),
-                    border: _mediaKind == option.$1
-                        ? Border.all(color: cs.border)
-                        : null,
-                  ),
-                  child: Text(
-                    option.$2,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: _mediaKind == option.$1
-                          ? FontWeight.w700
-                          : FontWeight.w500,
-                      color: _mediaKind == option.$1
-                          ? cs.foreground
-                          : cs.mutedForeground,
-                    ),
-                  ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 138,
+                height: 202,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: posterPath == null || posterPath.isEmpty
+                      ? Container(
+                          color: cs.muted,
+                          child: Icon(
+                            Icons.movie_rounded,
+                            size: 34,
+                            color: cs.mutedForeground,
+                          ),
+                        )
+                      : CachedNetworkImage(
+                          imageUrl: _tmdbImageURL(posterPath, size: 'w342'),
+                          fit: BoxFit.cover,
+                          errorWidget: (_, _, _) => _tmdbDirectFallback(
+                            path: posterPath,
+                            size: 'w342',
+                            fallback: Container(color: cs.muted),
+                          ),
+                        ),
                 ),
               ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: cs.foreground,
+                      ),
+                    ),
+                    if (originalTitle.isNotEmpty && originalTitle != title) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        originalTitle,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 7,
+                      runSpacing: 7,
+                      children: [
+                        for (final fact in facts.entries)
+                          ShadBadge.outline(
+                            child: Text('${fact.key} ${fact.value}'),
+                          ),
+                      ],
+                    ),
+                    if (genres.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        genres.join(' · '),
+                        style: TextStyle(fontSize: 13, color: cs.foreground),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if ((detail['tagline']?.toString() ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(
+              detail['tagline'].toString(),
+              style: TextStyle(fontSize: 13, color: cs.mutedForeground),
             ),
+          ],
+          const SizedBox(height: 18),
+          Text(
+            '剧情简介',
+            style: TextStyle(fontWeight: FontWeight.w700, color: cs.foreground),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            (detail['overview']?.toString().trim().isNotEmpty == true)
+                ? detail['overview'].toString()
+                : '暂无剧情简介',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.45,
+              color: cs.mutedForeground,
+            ),
+          ),
+          if (cast.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            Text(
+              '演职员',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: cs.foreground,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              cast.join(' · '),
+              style: TextStyle(fontSize: 13, color: cs.mutedForeground),
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  List<String> _detailList(dynamic values, String key, {int limit = 30}) {
+    if (values is! List) return const [];
+    return values
+        .whereType<Map>()
+        .map((value) => value[key]?.toString().trim() ?? '')
+        .where((value) => value.isNotEmpty)
+        .take(limit)
+        .toList();
+  }
+
+  String _detailRuntime(Map<String, dynamic> detail) {
+    final minutes = int.tryParse(detail['runtime']?.toString() ?? '');
+    if (minutes != null && minutes > 0) return '$minutes 分钟';
+    final episodes = detail['number_of_episodes']?.toString();
+    final seasons = detail['number_of_seasons']?.toString();
+    if (episodes != null && episodes.isNotEmpty) {
+      return '${seasons ?? '?'} 季 · $episodes 集';
+    }
+    return '未知';
+  }
+
+  void _dismiss() {
+    if (widget.onDismiss != null) {
+      widget.onDismiss!();
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
+  void _select(Map<String, dynamic> candidate) {
+    final value = _selectionFor(candidate);
+    if (widget.onSelected != null) {
+      widget.onSelected!(value);
+    } else {
+      Navigator.of(context).pop(value);
+    }
+  }
+
+  Widget _mediaKindPills(ShadColorScheme cs) {
+    const values = [
+      ('auto', '自动', Icons.auto_awesome_rounded),
+      ('movie', '电影', Icons.movie_outlined),
+      ('tv', '电视剧', Icons.live_tv_outlined),
+    ];
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final option in values)
+          ShadButton.outline(
+            size: ShadButtonSize.sm,
+            backgroundColor: _mediaKind == option.$1 ? cs.primary : null,
+            foregroundColor: _mediaKind == option.$1
+                ? cs.primaryForeground
+                : cs.mutedForeground,
+            onPressed: () => setState(() => _mediaKind = option.$1),
+            leading: Icon(option.$3, size: 14),
+            trailing: _mediaKind == option.$1
+                ? const Icon(Icons.check_rounded, size: 14)
+                : null,
+            child: Text(option.$2),
+          ),
+      ],
+    );
+  }
+
+  Widget _matchFilters(ShadColorScheme cs) {
+    final yearInput = SizedBox(
+      width: 108,
+      child: ShadInput(
+        controller: _yearController,
+        keyboardType: TextInputType.number,
+        placeholder: const Text('年份'),
+      ),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 400) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _mediaKindPills(cs),
+              const SizedBox(height: 8),
+              SizedBox(width: double.infinity, child: yearInput),
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: _mediaKindPills(cs)),
+            const SizedBox(width: 12),
+            yearInput,
+          ],
+        );
+      },
     );
   }
 
@@ -3571,7 +4479,7 @@ class _ManualTMDBMatchDialogState
     if (_mediaKind != 'auto') selected['media_type'] = _mediaKind;
     final year = int.tryParse(_yearController.text.trim());
     if (year != null) selected['_manualYear'] = year;
-    if (_mediaKind == 'tv') {
+    if (_mediaKind != 'movie') {
       final season = int.tryParse(_seasonController.text.trim());
       final episode = int.tryParse(_episodeController.text.trim());
       if (season != null && season > 0) selected['_manualSeason'] = season;
