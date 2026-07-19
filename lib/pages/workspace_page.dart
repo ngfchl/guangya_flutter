@@ -238,7 +238,6 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   @override
   Widget build(BuildContext context) {
     final fp = ref.watch(fileProvider);
-    final auth = ref.watch(authProvider);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -257,7 +256,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                 onSearch: _submitSearch,
                 onToggleSearch: _toggleSearch,
                 onSettings: () => _showSettings(context),
-                onOpenMenu: () => _showMobileMenu(context, auth),
+                onOpenMenu: () => _showMobileMenu(context),
+                uploadProgress: fp.uploadProgress,
               );
               final content = IndexedStack(
                 index: _mode == WorkspaceMode.cloud ? 0 : 1,
@@ -265,7 +265,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
               );
               if (compact) {
                 return _MobileDrawerSwipeArea(
-                  onOpen: () => _showMobileMenu(context, auth),
+                  onOpen: () => _showMobileMenu(context),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
                     child: Column(
@@ -373,46 +373,88 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     );
   }
 
-  void _showMobileMenu(BuildContext context, AuthState auth) {
+  void _showMobileMenu(BuildContext context) {
+    final width = (MediaQuery.sizeOf(context).width * 0.86)
+        .clamp(280.0, 340.0)
+        .toDouble();
     showShadSheet(
       context: context,
       side: ShadSheetSide.left,
-      builder: (context) => _MobileWorkspaceMenu(
-        mode: _mode,
-        userName: auth.userName,
-        memberLevel: auth.memberLevel,
-        capacityText: auth.capacityText,
-        onSection: (section) {
-          Navigator.of(context).pop();
-          if (section == WorkspaceSection.mediaLibrary) {
-            _changeMode(WorkspaceMode.media);
-            return;
-          }
-          if (_mode != WorkspaceMode.cloud) {
-            _changeMode(WorkspaceMode.cloud);
-          }
-          ref.read(fileProvider.notifier).setSection(section);
-        },
-        onTool: (tool) {
-          Navigator.of(context).pop();
-          _openTool(tool);
-        },
-        onCreateLibrary: () {
-          Navigator.of(context).pop();
-          MediaLibraryPage.showCreateDialog(this.context, ref);
-        },
-        onSettings: () {
-          Navigator.of(context).pop();
-          _showSettings(this.context);
-        },
-        onSearch: () {
-          Navigator.of(context).pop();
-          if (!_searchOpen) _toggleSearch();
-        },
-        onSignOut: () {
-          Navigator.of(context).pop();
-          ref.read(authProvider.notifier).signOut();
-        },
+      builder: (sheetContext) => ShadSheet(
+        constraints: BoxConstraints.tightFor(width: width),
+        padding: EdgeInsets.zero,
+        scrollable: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _SegmentButton(
+                      icon: Icons.folder_rounded,
+                      label: '光鸭云盘',
+                      compact: false,
+                      selected: _mode == WorkspaceMode.cloud,
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        _changeMode(WorkspaceMode.cloud);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _SegmentButton(
+                      icon: Icons.movie_rounded,
+                      label: '光鸭影视',
+                      compact: false,
+                      selected: _mode == WorkspaceMode.media,
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        _changeMode(WorkspaceMode.media);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const ShadSeparator.horizontal(),
+            Expanded(
+              child: _mode == WorkspaceMode.cloud
+                  ? _CloudSidebar(
+                      state: ref.read(fileProvider),
+                      width: width,
+                      onSection: (section) {
+                        Navigator.of(sheetContext).pop();
+                        ref.read(fileProvider.notifier).setSection(section);
+                      },
+                      onSettings: () {
+                        Navigator.of(sheetContext).pop();
+                        _showSettings(context);
+                      },
+                      onSignOut: () {
+                        Navigator.of(sheetContext).pop();
+                        ref.read(authProvider.notifier).signOut();
+                      },
+                      onTool: (tool) {
+                        Navigator.of(sheetContext).pop();
+                        _openTool(tool);
+                      },
+                    )
+                  : _MediaSidebar(
+                      width: width,
+                      onCreate: () {
+                        Navigator.of(sheetContext).pop();
+                        MediaLibraryPage.showCreateDialog(context, ref);
+                      },
+                      onTool: (tool) {
+                        Navigator.of(sheetContext).pop();
+                        _openTool(tool);
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -516,6 +558,7 @@ class _TopBar extends StatelessWidget {
   final VoidCallback onToggleSearch;
   final VoidCallback onSettings;
   final VoidCallback onOpenMenu;
+  final UploadProgress? uploadProgress;
 
   const _TopBar({
     required this.mode,
@@ -528,6 +571,7 @@ class _TopBar extends StatelessWidget {
     required this.onToggleSearch,
     required this.onSettings,
     required this.onOpenMenu,
+    required this.uploadProgress,
   });
 
   @override
@@ -546,20 +590,6 @@ class _TopBar extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _SegmentButton(
-                  icon: Icons.folder_rounded,
-                  label: '光鸭云盘',
-                  compact: true,
-                  selected: mode == WorkspaceMode.cloud,
-                  onTap: () => onModeChanged(WorkspaceMode.cloud),
-                ),
-                _SegmentButton(
-                  icon: Icons.movie_rounded,
-                  label: '光鸭影视',
-                  compact: true,
-                  selected: mode == WorkspaceMode.media,
-                  onTap: () => onModeChanged(WorkspaceMode.media),
-                ),
                 _TopBarIconButton(
                   tooltip: '打开菜单',
                   icon: Icons.menu_rounded,
@@ -607,6 +637,10 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
+          if (mode == WorkspaceMode.cloud) ...[
+            _UploadListTopButton(progress: uploadProgress),
+            const SizedBox(width: 8),
+          ],
           AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             width: searchOpen ? 280 : 42,
@@ -689,13 +723,13 @@ class _SegmentButton extends StatelessWidget {
         button: true,
         selected: selected,
         label: label,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: onTap,
+        child: ShadButton.ghost(
+          width: compact ? 38 : 120,
+          height: compact ? 38 : 32,
+          padding: EdgeInsets.zero,
+          onPressed: onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
-            width: compact ? 38 : 126,
-            height: compact ? 38 : 32,
             decoration: BoxDecoration(
               color: selected ? cs.secondary : Colors.transparent,
               borderRadius: BorderRadius.circular(10),
@@ -753,17 +787,45 @@ class _TopBarIconButton extends StatelessWidget {
     final cs = ShadTheme.of(context).colorScheme;
     return ShadTooltip(
       builder: (_) => Text(tooltip),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: SizedBox(
-          width: 38,
-          height: 38,
-          child: Icon(icon, size: 18, color: cs.mutedForeground),
-        ),
+      child: ShadButton.ghost(
+        width: 38,
+        height: 38,
+        padding: EdgeInsets.zero,
+        onPressed: onTap,
+        child: Icon(icon, size: 18, color: cs.mutedForeground),
       ),
     );
   }
+}
+
+class _UploadListTopButton extends StatefulWidget {
+  final UploadProgress? progress;
+
+  const _UploadListTopButton({required this.progress});
+
+  @override
+  State<_UploadListTopButton> createState() => _UploadListTopButtonState();
+}
+
+class _UploadListTopButtonState extends State<_UploadListTopButton> {
+  final _controller = ShadPopoverController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ShadPopover(
+    controller: _controller,
+    popover: (_) => _UploadProgressPopover(progress: widget.progress),
+    child: _TopBarIconButton(
+      tooltip: '上传列表',
+      icon: Icons.upload_file_rounded,
+      onTap: _controller.toggle,
+    ),
+  );
 }
 
 class _MobileFloatingSearch extends StatelessWidget {
@@ -886,6 +948,7 @@ class _MobileDrawerSwipeAreaState extends State<_MobileDrawerSwipeArea> {
   );
 }
 
+// ignore: unused_element
 class _MobileWorkspaceMenu extends StatelessWidget {
   final WorkspaceMode mode;
   final String userName;
@@ -1153,6 +1216,7 @@ class _MobileMenuRow extends StatelessWidget {
 
 class _CloudSidebar extends StatelessWidget {
   final FileState state;
+  final double width;
   final ValueChanged<WorkspaceSection> onSection;
   final VoidCallback onSettings;
   final VoidCallback onSignOut;
@@ -1160,6 +1224,7 @@ class _CloudSidebar extends StatelessWidget {
 
   const _CloudSidebar({
     required this.state,
+    this.width = 250,
     required this.onSection,
     required this.onSettings,
     required this.onSignOut,
@@ -1172,7 +1237,7 @@ class _CloudSidebar extends StatelessWidget {
         .where((section) => section != WorkspaceSection.mediaLibrary)
         .toList();
     return SizedBox(
-      width: 250,
+      width: width,
       child: OS26Glass(
         radius: 24,
         opacity: 0.56,
@@ -1266,17 +1331,22 @@ class _CloudSidebar extends StatelessWidget {
 }
 
 class _MediaSidebar extends ConsumerWidget {
+  final double width;
   final VoidCallback onCreate;
   final ValueChanged<WorkspaceTool> onTool;
 
-  const _MediaSidebar({required this.onCreate, required this.onTool});
+  const _MediaSidebar({
+    this.width = 250,
+    required this.onCreate,
+    required this.onTool,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(mediaLibraryProvider);
     final notifier = ref.read(mediaLibraryProvider.notifier);
     return SizedBox(
-      width: 250,
+      width: width,
       child: OS26Glass(
         radius: 24,
         opacity: 0.56,
@@ -1942,8 +2012,29 @@ class _UploadProgressPopover extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = progress;
-    if (value == null) return const SizedBox.shrink();
     final cs = ShadTheme.of(context).colorScheme;
+    if (value == null) {
+      return SizedBox(
+        width: 260,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              Icon(
+                Icons.cloud_done_rounded,
+                size: 17,
+                color: cs.mutedForeground,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '暂无上传任务',
+                style: TextStyle(fontSize: 13, color: cs.mutedForeground),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     final percentage = (value.fraction * 100).round();
     return Semantics(
       label: '上传进度',

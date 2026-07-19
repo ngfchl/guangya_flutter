@@ -36,6 +36,27 @@ class MediaTMDBMatchRequest {
   const MediaTMDBMatchRequest({required this.items, required this.candidates});
 }
 
+class CloudBackupSyncProgress {
+  final String phase;
+  final String destination;
+  final int transferredBytes;
+  final int totalBytes;
+  final bool isActive;
+  final String? error;
+
+  const CloudBackupSyncProgress({
+    required this.phase,
+    required this.destination,
+    required this.transferredBytes,
+    required this.totalBytes,
+    required this.isActive,
+    this.error,
+  });
+
+  double get fraction =>
+      totalBytes <= 0 ? 0 : (transferredBytes / totalBytes).clamp(0.0, 1.0);
+}
+
 class MediaLibraryState {
   final List<MediaLibraryDefinition> libraries;
   final String? selectedLibraryID;
@@ -43,6 +64,7 @@ class MediaLibraryState {
   final bool isLoading;
   final bool isScanning;
   final bool isRefreshingCloudIndex;
+  final CloudBackupSyncProgress? cloudBackupSync;
   final MediaLibraryScanProgress progress;
   final List<MediaLibraryScanLog> scanLogs;
   final String searchQuery;
@@ -56,6 +78,7 @@ class MediaLibraryState {
     this.isLoading = false,
     this.isScanning = false,
     this.isRefreshingCloudIndex = false,
+    this.cloudBackupSync,
     this.progress = const MediaLibraryScanProgress(),
     this.scanLogs = const [],
     this.searchQuery = '',
@@ -91,6 +114,8 @@ class MediaLibraryState {
     bool? isLoading,
     bool? isScanning,
     bool? isRefreshingCloudIndex,
+    CloudBackupSyncProgress? cloudBackupSync,
+    bool clearCloudBackupSync = false,
     MediaLibraryScanProgress? progress,
     List<MediaLibraryScanLog>? scanLogs,
     String? searchQuery,
@@ -109,6 +134,9 @@ class MediaLibraryState {
       isScanning: isScanning ?? this.isScanning,
       isRefreshingCloudIndex:
           isRefreshingCloudIndex ?? this.isRefreshingCloudIndex,
+      cloudBackupSync: clearCloudBackupSync
+          ? null
+          : (cloudBackupSync ?? this.cloudBackupSync),
       progress: progress ?? this.progress,
       scanLogs: scanLogs ?? this.scanLogs,
       searchQuery: searchQuery ?? this.searchQuery,
@@ -284,34 +312,121 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
   }
 
-  Future<void> exportScrapedDataToCloud({String? parentID}) async {
+  Future<void> exportScrapedDataToCloud() async {
     if (_api == null || state.isLoading || state.isScanning) return;
     state = state.copyWith(
-      isLoading: true,
       clearError: true,
       clearStatus: true,
+      cloudBackupSync: const CloudBackupSyncProgress(
+        phase: '正在准备备份',
+        destination: '云盘根目录/小黄鸭备份',
+        transferredBytes: 0,
+        totalBytes: 0,
+        isActive: true,
+      ),
     );
     Directory? temporaryDirectory;
     try {
+      final destination = await _resolveCloudBackupDestination();
+      state = state.copyWith(
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '正在导出本地数据库',
+          destination: destination.path,
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: true,
+        ),
+      );
       temporaryDirectory = await Directory.systemTemp.createTemp(
         'guangya-media-',
       );
-      final backup = File('${temporaryDirectory.path}/media-library.sqlite3');
+      final backup = File(
+        '${temporaryDirectory.path}/media-library-${DateTime.now().millisecondsSinceEpoch}.sqlite3',
+      );
       await _store.exportBackupTo(backup.path);
+      final size = await backup.length();
+      state = state.copyWith(
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '正在上传备份',
+          destination: '${destination.path}/${backup.uri.pathSegments.last}',
+          transferredBytes: 0,
+          totalBytes: size,
+          isActive: true,
+        ),
+      );
       await _api!.fileUpload(
         backup,
-        parentID: parentID,
+        parentID: destination.id,
         contentType: 'application/vnd.sqlite3',
+        onProgress: (sent, total) {
+          state = state.copyWith(
+            cloudBackupSync: CloudBackupSyncProgress(
+              phase: '正在上传备份',
+              destination:
+                  '${destination.path}/${backup.uri.pathSegments.last}',
+              transferredBytes: sent,
+              totalBytes: total,
+              isActive: true,
+            ),
+          );
+        },
       );
-      state = state.copyWith(statusMessage: '刮削数据已同步到云盘');
+      final uploadedPath =
+          '${destination.path}/${backup.uri.pathSegments.last}';
+      state = state.copyWith(
+        statusMessage: '刮削数据已同步到：$uploadedPath',
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '同步完成',
+          destination: uploadedPath,
+          transferredBytes: size,
+          totalBytes: size,
+          isActive: false,
+        ),
+      );
     } catch (error) {
-      state = state.copyWith(errorMessage: '同步到云盘失败：$error');
+      final destination = state.cloudBackupSync?.destination ?? '云盘根目录/小黄鸭备份';
+      state = state.copyWith(
+        errorMessage: '同步到云盘失败：$error',
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '同步失败',
+          destination: destination,
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+          error: '$error',
+        ),
+      );
     } finally {
       if (temporaryDirectory != null && await temporaryDirectory.exists()) {
         await temporaryDirectory.delete(recursive: true);
       }
-      state = state.copyWith(isLoading: false);
     }
+  }
+
+  Future<_CloudBackupDestination> _resolveCloudBackupDestination() async {
+    const folderName = '小黄鸭备份';
+    final storedID = StorageManager.get<String>(
+      StorageKeys.cloudScrapedBackupFolderID,
+    )?.trim();
+    if (storedID != null && storedID.isNotEmpty) {
+      return _CloudBackupDestination(id: storedID, path: '云盘根目录/小黄鸭备份');
+    }
+    final root = await _api!.fsFiles(parentID: null, pageSize: 1000);
+    final existing = _extractFiles(
+      root,
+    ).where((file) => file.isDirectory && file.name == folderName);
+    final folder = existing.isEmpty ? null : existing.first;
+    final folderID =
+        folder?.id ??
+        _findStringDeep(
+          await _api!.fsCreateDir(folderName, parentID: null),
+          const ['fileId', 'file_id', 'resId', 'res_id', 'id'],
+        );
+    if (folderID == null || folderID.isEmpty) {
+      throw Exception('无法创建云盘备份目录「$folderName」');
+    }
+    await StorageManager.set(StorageKeys.cloudScrapedBackupFolderID, folderID);
+    return _CloudBackupDestination(id: folderID, path: '云盘根目录/$folderName');
   }
 
   Future<List<CloudFile>> cloudScrapedBackups() async {
@@ -649,7 +764,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       AppLogger.debug('CloudIndex', '全盘文件索引正在刷新，本次请求已合并');
       return;
     }
-    AppLogger.info('CloudIndex', force ? '正在强制刷新全盘文件索引' : '正在检查全盘文件索引缓存');
     final minutes =
         (int.tryParse(
                   StorageManager.get<String>(
@@ -662,7 +776,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final lastUpdated = int.tryParse(
       StorageManager.get<String>(StorageKeys.cloudIndexLastUpdatedAt) ?? '',
     );
-    if (!force && lastUpdated != null) {
+    final rootSnapshot = await FileMetadataCache.folderChildren(null);
+    final needsFullRebuild =
+        force || lastUpdated == null || rootSnapshot == null;
+    if (!force && !needsFullRebuild) {
       final elapsed = DateTime.now().difference(
         DateTime.fromMillisecondsSinceEpoch(lastUpdated),
       );
@@ -679,19 +796,32 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     _refreshingCloudIndex = true;
     state = state.copyWith(isRefreshingCloudIndex: true);
     try {
-      AppLogger.info('CloudIndex', '开始刷新全盘文件索引');
-      final files = await _allGlobalRemoteFiles();
-      final folders = <String?, List<CloudFile>>{};
-      for (final file in files) {
-        (folders[file.parentID] ??= []).add(file);
+      late _CloudIndexRefreshResult result;
+      if (needsFullRebuild) {
+        final reason = force ? '用户手动触发' : '本地缓存为空';
+        AppLogger.info('CloudIndex', '开始建立全盘文件索引：$reason');
+        result = await _rebuildGlobalCloudIndex();
+        AppLogger.info(
+          'CloudIndex',
+          '全盘文件索引建立完成：${result.updatedFolders} 个目录，${result.updatedEntries} 项',
+        );
+      } else {
+        AppLogger.info('CloudIndex', '开始按目录修改时间增量检查全盘索引');
+        result = await _refreshChangedCloudIndex();
+        AppLogger.info(
+          'CloudIndex',
+          '全盘索引增量检查完成：检查 ${result.checkedFolders} 个目录，更新 ${result.updatedFolders} 个目录、${result.updatedEntries} 项',
+        );
       }
-      await FileMetadataCache.cacheFolderChildrenBatch(folders);
       await StorageManager.set(
         StorageKeys.cloudIndexLastUpdatedAt,
         DateTime.now().millisecondsSinceEpoch.toString(),
       );
-      AppLogger.info('CloudIndex', '全盘文件索引刷新完成，共 ${files.length} 项');
-      _appendScanLog('[云盘索引] 已刷新 ${files.length} 个文件与目录缓存');
+      _appendScanLog(
+        needsFullRebuild
+            ? '[云盘索引] 已建立 ${result.updatedFolders} 个目录、${result.updatedEntries} 项缓存'
+            : '[云盘索引] 已检查 ${result.checkedFolders} 个目录，更新 ${result.updatedFolders} 个目录',
+      );
     } catch (error) {
       AppLogger.error('CloudIndex', '刷新全盘文件索引失败', error: error);
       _appendScanLog('[云盘索引] 刷新失败：$error', isError: true);
@@ -705,7 +835,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   void _scheduleCloudIndexRefresh(int minutes) {
     _cloudIndexTimer?.cancel();
     _cloudIndexTimer = Timer(Duration(minutes: minutes), () {
-      unawaited(refreshGlobalCloudIndex(force: true));
+      unawaited(refreshGlobalCloudIndex());
     });
   }
 
@@ -721,6 +851,176 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             .clamp(5, 1440);
     _scheduleCloudIndexRefresh(minutes);
   }
+
+  Future<_CloudIndexRefreshResult> _rebuildGlobalCloudIndex() async {
+    await FileMetadataCache.clearFolderChildrenIndex();
+    final folders = <_CloudIndexFolder>[const _CloudIndexFolder(null, '根目录')];
+    final visited = <String>{};
+    var updatedFolders = 0;
+    var updatedEntries = 0;
+
+    for (var index = 0; index < folders.length; index++) {
+      final folder = folders[index];
+      final key = folder.id ?? '@root';
+      if (!visited.add(key)) continue;
+      final snapshot = await _loadCloudIndexFolder(folder);
+      await FileMetadataCache.cacheFolderChildren(folder.id, snapshot);
+      updatedFolders += 1;
+      updatedEntries += snapshot.length;
+      for (final child in snapshot.where((file) => file.isDirectory)) {
+        folders.add(_CloudIndexFolder(child.id, child.name));
+      }
+    }
+    return _CloudIndexRefreshResult(
+      checkedFolders: updatedFolders,
+      updatedFolders: updatedFolders,
+      updatedEntries: updatedEntries,
+    );
+  }
+
+  Future<_CloudIndexRefreshResult> _refreshChangedCloudIndex() async {
+    final root = const _CloudIndexFolder(null, '根目录');
+    final rootCached =
+        await FileMetadataCache.folderChildren(root.id) ?? const <CloudFile>[];
+    final rootRemote = await _loadCloudIndexFolder(root);
+    final folders = <_CloudIndexFolder>[];
+    final queued = <String>{};
+    var checkedFolders = 1;
+    var updatedFolders = 0;
+    var updatedEntries = 0;
+
+    final rootUpdate = await _replaceCloudIndexFolder(
+      folderID: root.id,
+      previous: rootCached,
+      current: rootRemote,
+    );
+    if (rootUpdate.changed) {
+      updatedFolders += 1;
+      updatedEntries += rootRemote.length;
+    }
+    _queueChangedIndexFolders(
+      folders: folders,
+      queued: queued,
+      previous: rootCached,
+      current: rootRemote,
+    );
+
+    for (var index = 0; index < folders.length; index++) {
+      final folder = folders[index];
+      final previous =
+          await FileMetadataCache.folderChildren(folder.id) ??
+          const <CloudFile>[];
+      final current = await _loadCloudIndexFolder(folder);
+      checkedFolders += 1;
+      final update = await _replaceCloudIndexFolder(
+        folderID: folder.id,
+        previous: previous,
+        current: current,
+      );
+      if (update.changed) {
+        updatedFolders += 1;
+        updatedEntries += current.length;
+      }
+      _queueChangedIndexFolders(
+        folders: folders,
+        queued: queued,
+        previous: previous,
+        current: current,
+      );
+    }
+    return _CloudIndexRefreshResult(
+      checkedFolders: checkedFolders,
+      updatedFolders: updatedFolders,
+      updatedEntries: updatedEntries,
+    );
+  }
+
+  Future<List<CloudFile>> _loadCloudIndexFolder(
+    _CloudIndexFolder folder,
+  ) async {
+    const pageSize = 1000;
+    final values = <CloudFile>[];
+    final ids = <String>{};
+    for (var page = 0; ; page++) {
+      AppLogger.info('CloudIndex', '正在检查目录「${folder.label}」第 ${page + 1} 页');
+      final response = await _api!.fsFiles(
+        parentID: folder.id,
+        page: page,
+        pageSize: pageSize,
+        orderBy: 0,
+        sortType: 0,
+      );
+      final batch = _extractFiles(response);
+      final added = batch.where((file) => ids.add(file.id)).toList();
+      values.addAll(added);
+      AppLogger.info(
+        'CloudIndex',
+        '目录「${folder.label}」第 ${page + 1} 页检查完成，获取 ${batch.length} 项',
+      );
+      if (batch.length < pageSize || added.isEmpty) break;
+    }
+    return values;
+  }
+
+  Future<({bool changed})> _replaceCloudIndexFolder({
+    required String? folderID,
+    required List<CloudFile> previous,
+    required List<CloudFile> current,
+  }) async {
+    if (_sameCloudIndexSnapshot(previous, current)) {
+      return (changed: false);
+    }
+    final currentIDs = current.map((file) => file.id).toSet();
+    final removedFolders = previous
+        .where((file) => file.isDirectory && !currentIDs.contains(file.id))
+        .map((file) => file.id)
+        .toList();
+    await FileMetadataCache.cacheFolderChildren(folderID, current);
+    if (removedFolders.isNotEmpty) {
+      await FileMetadataCache.removeFolderChildrenSubtrees(removedFolders);
+    }
+    return (changed: true);
+  }
+
+  void _queueChangedIndexFolders({
+    required List<_CloudIndexFolder> folders,
+    required Set<String> queued,
+    required List<CloudFile> previous,
+    required List<CloudFile> current,
+  }) {
+    final previousByID = {for (final file in previous) file.id: file};
+    for (final folder in current.where((file) => file.isDirectory)) {
+      final prior = previousByID[folder.id];
+      if (prior == null || _cloudIndexEntryChanged(prior, folder)) {
+        if (queued.add(folder.id)) {
+          folders.add(_CloudIndexFolder(folder.id, folder.name));
+        }
+      }
+    }
+  }
+
+  bool _sameCloudIndexSnapshot(
+    List<CloudFile> previous,
+    List<CloudFile> current,
+  ) {
+    if (previous.length != current.length) return false;
+    final previousByID = {for (final file in previous) file.id: file};
+    if (previousByID.length != current.length) return false;
+    return current.every(
+      (file) =>
+          previousByID[file.id] != null &&
+          !_cloudIndexEntryChanged(previousByID[file.id]!, file),
+    );
+  }
+
+  bool _cloudIndexEntryChanged(CloudFile previous, CloudFile current) =>
+      previous.name != current.name ||
+      previous.isDirectory != current.isDirectory ||
+      previous.size != current.size ||
+      previous.gcid != current.gcid ||
+      previous.modifiedAt != current.modifiedAt ||
+      previous.subDirectoryCount != current.subDirectoryCount ||
+      previous.subFileCount != current.subFileCount;
 
   @override
   void dispose() {
@@ -2508,6 +2808,32 @@ class _ScanFolder {
   final String path;
 
   const _ScanFolder(this.id, this.path);
+}
+
+class _CloudIndexFolder {
+  final String? id;
+  final String label;
+
+  const _CloudIndexFolder(this.id, this.label);
+}
+
+class _CloudIndexRefreshResult {
+  final int checkedFolders;
+  final int updatedFolders;
+  final int updatedEntries;
+
+  const _CloudIndexRefreshResult({
+    required this.checkedFolders,
+    required this.updatedFolders,
+    required this.updatedEntries,
+  });
+}
+
+class _CloudBackupDestination {
+  final String id;
+  final String path;
+
+  const _CloudBackupDestination({required this.id, required this.path});
 }
 
 class _SyncedMediaItem {

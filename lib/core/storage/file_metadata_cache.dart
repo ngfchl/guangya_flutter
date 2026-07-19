@@ -17,6 +17,13 @@ class FileMetadataCache {
     Map<String?, List<CloudFile>> folders,
   ) => _store.cacheFolderChildrenBatch(folders);
 
+  static Future<void> clearFolderChildrenIndex() =>
+      _store.clearFolderChildrenIndex();
+
+  static Future<void> removeFolderChildrenSubtrees(
+    Iterable<String> folderIDs,
+  ) => _store.removeFolderChildrenSubtrees(folderIDs);
+
   static Future<List<CloudFile>?> folderChildren(String? folderID) =>
       _store.folderChildren(folderID);
 

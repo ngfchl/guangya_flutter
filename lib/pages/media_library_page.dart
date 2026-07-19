@@ -81,6 +81,109 @@ class MediaLibraryPage extends ConsumerStatefulWidget {
   ConsumerState<MediaLibraryPage> createState() => _MediaLibraryPageState();
 }
 
+class _BackupActionsMenu extends StatefulWidget {
+  final bool compact;
+  final bool disabled;
+  final CloudBackupSyncProgress? progress;
+  final VoidCallback onExport;
+  final VoidCallback onImport;
+  final VoidCallback onSyncToCloud;
+  final VoidCallback onRestoreFromCloud;
+
+  const _BackupActionsMenu({
+    required this.compact,
+    required this.disabled,
+    required this.progress,
+    required this.onExport,
+    required this.onImport,
+    required this.onSyncToCloud,
+    required this.onRestoreFromCloud,
+  });
+
+  @override
+  State<_BackupActionsMenu> createState() => _BackupActionsMenuState();
+}
+
+class _BackupActionsMenuState extends State<_BackupActionsMenu> {
+  final _controller = ShadPopoverController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = widget.progress;
+    final active = progress?.isActive == true;
+    final percentage = ((progress?.fraction ?? 0) * 100).round();
+    final label = active
+        ? '${progress!.phase} $percentage%'
+        : progress?.error != null
+        ? '数据备份失败'
+        : '数据备份';
+    return ShadPopover(
+      controller: _controller,
+      popover: (_) => SizedBox(
+        width: 220,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _item(
+              icon: Icons.save_alt_rounded,
+              label: '导出数据',
+              onPressed: widget.onExport,
+            ),
+            _item(
+              icon: Icons.upload_file_rounded,
+              label: '导入数据',
+              onPressed: widget.onImport,
+            ),
+            _item(
+              icon: Icons.cloud_upload_rounded,
+              label: '同步到云盘',
+              onPressed: widget.onSyncToCloud,
+            ),
+            _item(
+              icon: Icons.cloud_download_rounded,
+              label: '从云盘恢复',
+              onPressed: widget.onRestoreFromCloud,
+            ),
+          ],
+        ),
+      ),
+      child: ShadButton.outline(
+        size: widget.compact ? ShadButtonSize.sm : null,
+        onPressed: widget.disabled || active ? null : _controller.toggle,
+        leading: active
+            ? SizedBox(
+                width: 44,
+                child: ShadProgress(value: progress!.fraction, minHeight: 5),
+              )
+            : const Icon(Icons.storage_rounded, size: 16),
+        trailing: const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
+        child: Text(label),
+      ),
+    );
+  }
+
+  Widget _item({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) => ShadButton.ghost(
+    width: double.infinity,
+    mainAxisAlignment: MainAxisAlignment.start,
+    leading: Icon(icon, size: 16),
+    onPressed: () {
+      _controller.hide();
+      onPressed();
+    },
+    child: Text(label),
+  );
+}
+
 class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   final String _tmdbApiKey =
       StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
@@ -379,38 +482,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                     leading: const Icon(Icons.add_rounded, size: 16),
                     child: const Text('媒体库'),
                   ),
-                  ShadButton.outline(
-                    size: ShadButtonSize.sm,
-                    onPressed: _backupBusy || state.isScanning
-                        ? null
-                        : _exportScrapedData,
-                    leading: const Icon(Icons.save_alt_rounded, size: 16),
-                    child: const Text('导出'),
-                  ),
-                  ShadButton.outline(
-                    size: ShadButtonSize.sm,
-                    onPressed: _backupBusy || state.isScanning
-                        ? null
-                        : _importScrapedData,
-                    leading: const Icon(Icons.upload_file_rounded, size: 16),
-                    child: const Text('导入'),
-                  ),
-                  ShadButton.outline(
-                    size: ShadButtonSize.sm,
-                    onPressed: _backupBusy || state.isScanning
-                        ? null
-                        : _syncScrapedDataToCloud,
-                    leading: const Icon(Icons.cloud_upload_rounded, size: 16),
-                    child: const Text('上传云盘'),
-                  ),
-                  ShadButton.outline(
-                    size: ShadButtonSize.sm,
-                    onPressed: _backupBusy || state.isScanning
-                        ? null
-                        : _syncScrapedDataFromCloud,
-                    leading: const Icon(Icons.cloud_download_rounded, size: 16),
-                    child: const Text('云盘恢复'),
-                  ),
+                  _backupActionsMenu(state, compact: true),
                   ShadButton.outline(
                     size: ShadButtonSize.sm,
                     onPressed: state.selectedLibrary == null || state.isScanning
@@ -492,37 +564,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             child: const Text('媒体库'),
           ),
           const SizedBox(width: 8),
-          ShadButton.outline(
-            onPressed: _backupBusy || state.isScanning
-                ? null
-                : _exportScrapedData,
-            leading: const Icon(Icons.save_alt_rounded, size: 16),
-            child: const Text('导出数据'),
-          ),
-          const SizedBox(width: 8),
-          ShadButton.outline(
-            onPressed: _backupBusy || state.isScanning
-                ? null
-                : _importScrapedData,
-            leading: const Icon(Icons.upload_file_rounded, size: 16),
-            child: const Text('导入数据'),
-          ),
-          const SizedBox(width: 8),
-          ShadButton.outline(
-            onPressed: _backupBusy || state.isScanning
-                ? null
-                : _syncScrapedDataToCloud,
-            leading: const Icon(Icons.cloud_upload_rounded, size: 16),
-            child: const Text('同步云盘'),
-          ),
-          const SizedBox(width: 8),
-          ShadButton.outline(
-            onPressed: _backupBusy || state.isScanning
-                ? null
-                : _syncScrapedDataFromCloud,
-            leading: const Icon(Icons.cloud_download_rounded, size: 16),
-            child: const Text('云盘恢复'),
-          ),
+          _backupActionsMenu(state),
           const SizedBox(width: 8),
           ShadButton.outline(
             onPressed: state.selectedLibrary == null || state.isScanning
@@ -1130,18 +1172,24 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   }
 
   Future<void> _syncScrapedDataToCloud() async {
-    final fileState = ref.read(fileProvider);
-    final parentID = fileState.folderPath.isEmpty
-        ? null
-        : fileState.folderPath.last.id;
     setState(() => _backupBusy = true);
     try {
-      await ref
-          .read(mediaLibraryProvider.notifier)
-          .exportScrapedDataToCloud(parentID: parentID);
+      await ref.read(mediaLibraryProvider.notifier).exportScrapedDataToCloud();
     } finally {
       if (mounted) setState(() => _backupBusy = false);
     }
+  }
+
+  Widget _backupActionsMenu(MediaLibraryState state, {bool compact = false}) {
+    return _BackupActionsMenu(
+      compact: compact,
+      disabled: _backupBusy || state.isScanning,
+      progress: state.cloudBackupSync,
+      onExport: _exportScrapedData,
+      onImport: _importScrapedData,
+      onSyncToCloud: _syncScrapedDataToCloud,
+      onRestoreFromCloud: _syncScrapedDataFromCloud,
+    );
   }
 
   Future<void> _syncScrapedDataFromCloud() async {

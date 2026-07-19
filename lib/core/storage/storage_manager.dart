@@ -34,6 +34,8 @@ class StorageKeys {
       'guangya.cloudIndexRefreshMinutes';
   static const String cloudIndexLastUpdatedAt =
       'guangya.cloudIndexLastUpdatedAt';
+  static const String cloudScrapedBackupFolderID =
+      'guangya.cloudScrapedBackupFolderID';
 }
 
 class StorageManager {

@@ -376,6 +376,56 @@ class MediaLibraryStore {
     });
   }
 
+  /// Removes only directory listing snapshots. GCID metadata deliberately
+  /// remains available for permanent file-detail caching.
+  Future<void> clearFolderChildrenIndex() async {
+    await (await _db).delete('folder_children');
+  }
+
+  /// Clears cached snapshots for removed folders and every cached descendant.
+  /// File/GCID metadata is retained because it can be reused by fast transfer.
+  Future<void> removeFolderChildrenSubtrees(Iterable<String> folderIDs) async {
+    final pending = folderIDs.where((id) => id.isNotEmpty).toList();
+    if (pending.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      final visited = <String>{};
+      for (var index = 0; index < pending.length; index++) {
+        final folderID = pending[index];
+        if (!visited.add(folderID)) continue;
+        final rows = await txn.query(
+          'folder_children',
+          columns: const ['children_json'],
+          where: 'folder_id = ?',
+          whereArgs: [_folderID(folderID)],
+          limit: 1,
+        );
+        if (rows.isNotEmpty) {
+          try {
+            final raw = jsonDecode(
+              rows.first['children_json']?.toString() ?? '[]',
+            );
+            if (raw is List) {
+              for (final value in raw.whereType<Map>()) {
+                final child = CloudFile.fromJson(
+                  Map<String, dynamic>.from(value),
+                );
+                if (child.isDirectory) pending.add(child.id);
+              }
+            }
+          } catch (_) {
+            // A malformed stale snapshot can simply be discarded.
+          }
+        }
+        await txn.delete(
+          'folder_children',
+          where: 'folder_id = ?',
+          whereArgs: [_folderID(folderID)],
+        );
+      }
+    });
+  }
+
   Future<List<CloudFile>?> folderChildren(String? folderID) async {
     final rows = await (await _db).query(
       'folder_children',
