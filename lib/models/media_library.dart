@@ -339,8 +339,13 @@ class MediaLibraryItem {
     final parsed = ParsedMediaName.parse(
       file.name,
       directoryName: directoryName,
+      directoryPath: file.cloudPath,
     );
-    final kind = parsed.isEpisode ? TMDBMediaKind.tv : TMDBMediaKind.movie;
+    // A season pack may not carry an individual episode number. It is still
+    // a TV resource and must use the TV TMDB endpoint rather than movie.
+    final kind = parsed.isEpisode || parsed.season != null
+        ? TMDBMediaKind.tv
+        : TMDBMediaKind.movie;
     return MediaLibraryItem(
       libraryID: libraryID,
       file: file,
@@ -513,9 +518,16 @@ class ParsedMediaName {
     this.dynamicRange,
   });
 
-  factory ParsedMediaName.parse(String name, {String? directoryName}) {
+  factory ParsedMediaName.parse(
+    String name, {
+    String? directoryName,
+    String? directoryPath,
+  }) {
     final stem = name.replaceFirst(RegExp(r'\.[^.]+$'), '');
-    final normalized = stem.replaceAll(RegExp(r'[._]+'), ' ');
+    final normalized = stem
+        .replaceAll('&', ' and ')
+        .replaceAll('＆', ' and ')
+        .replaceAll(RegExp(r'''[._!@#\$%^*+=|~`｜，、；？！…<>?"':;]+'''), ' ');
     final episodeMatch = RegExp(
       r'\bS(\d{1,2})[ ._-]*E(\d{1,3})\b|\b(\d{1,2})x(\d{1,3})\b|第\s*(\d{1,2})\s*季\s*第?\s*(\d{1,3})\s*[集话]',
       caseSensitive: false,
@@ -580,16 +592,24 @@ class ParsedMediaName {
       title = title.replaceFirst(RegExp(r'^\s*\d{4}[ ._-]+'), '');
     }
     title = _cleanTitle(title);
+    // A trailing season marker is release metadata, never part of the TMDB
+    // query title. It can appear with or without an episode marker.
+    title = title
+        .replaceFirst(
+          RegExp(r'(?:\s|[._-])+S\s*0?\d{1,2}$', caseSensitive: false),
+          '',
+        )
+        .trim();
     final genericName =
         title.isEmpty ||
         RegExp(r'^\d+$').hasMatch(title) ||
         RegExp(r'^S\d{1,2}E\d{1,3}$', caseSensitive: false).hasMatch(title);
     ParsedMediaName? parent;
     if (genericName &&
-        directoryName != null &&
-        directoryName.trim().isNotEmpty) {
-      parent = ParsedMediaName.parse(directoryName);
-      if (parent.title.isNotEmpty) title = parent.title;
+        ((directoryName != null && directoryName.trim().isNotEmpty) ||
+            (directoryPath != null && directoryPath.trim().isNotEmpty))) {
+      parent = _bestParentContext(directoryName, directoryPath);
+      if (parent?.title.isNotEmpty == true) title = parent!.title;
     }
     final seasonOnly = RegExp(
       r'\b(?:Season|S)\s*0?(\d{1,2})\b',
@@ -601,12 +621,21 @@ class ParsedMediaName {
     // Disc/episode files are frequently named only "0102" or "02". Use an
     // explicit season from the parent directory first; otherwise only infer
     // the unambiguous SS EE form to avoid treating years as episode numbers.
-    final numericOnly = RegExp(r'^\d{1,4}$').hasMatch(stem.trim());
-    if (episode == null && numericOnly && directoryName != null) {
-      final digits = stem.trim();
+    final numericPrefix = RegExp(r'^\s*(\d{1,4})(?=$|[ ._-])').firstMatch(stem);
+    final numericOnly = numericPrefix != null && genericName;
+    if (episode == null &&
+        numericOnly &&
+        (directoryName != null || directoryPath != null) &&
+        !RegExp(r'^(?:19|20)\d{2}$').hasMatch(numericPrefix.group(1)!)) {
+      final digits = numericPrefix.group(1)!;
       final parentSeason = parent?.season;
       if (parentSeason != null) {
         season = parentSeason;
+        episode = int.tryParse(digits);
+      } else if (digits.length <= 2 && parent != null) {
+        // A bare file such as `13.mkv` inside a meaningful series directory is
+        // an episode even when the folder omits an explicit season marker.
+        season = 1;
         episode = int.tryParse(digits);
       } else if (digits.length == 3 || digits.length == 4) {
         final split = digits.length - 2;
@@ -622,7 +651,7 @@ class ParsedMediaName {
         }
       }
     }
-    if (title.isEmpty) title = normalized.trim();
+    if (title.isEmpty) title = _cleanTitle(normalized);
 
     return ParsedMediaName(
       title: title,
@@ -647,6 +676,18 @@ class ParsedMediaName {
   static String _cleanTitle(String value) {
     var title = value.trim();
 
+    // Some folders are named as `2008见龙卸甲` (or `2008 见龙卸甲`) while
+    // the file itself contains only the year. The year remains available to
+    // the parser, but it must not become part of the TMDB search title.
+    title = title.replaceFirst(
+      RegExp(r'^\s*(?:19|20)\d{2}(?=[ ._-]*(?!年)[\u4e00-\u9fff])[ ._-]*'),
+      '',
+    );
+
+    // Paths often preserve an already-known TMDB identifier. It is handled by
+    // the recognizer directly and must never become part of the search title.
+    title = title.replaceAll(RegExp(r'\{\s*tmdb\s*[-_:]?\s*\d+\s*\}'), ' ');
+
     // Release collectors often prepend their collection date. It has no
     // relation to the movie year and degrades a TMDB query substantially.
     title = title.replaceFirst(
@@ -665,6 +706,17 @@ class ParsedMediaName {
         ).hasMatch(bracket.group(1) ?? '')) {
       title = title.substring(0, bracket.start);
     }
+
+    // Episode totals, subtitle notes and bitrate labels are folder metadata,
+    // not part of a work title. Unlike a localized title in parentheses, these
+    // markers are safe to discard wherever they appear.
+    title = title.replaceAll(
+      RegExp(
+        r'[\[【{](?:[^\]】}]*)(?:全\s*\d+\s*集|更新至\s*\d+\s*集|高码|帧率|无字|字幕|音轨|杜比|HDR|WEB[- ]?DL|Blu[- ]?ray|REMUX)[^\]】}]*[\]】}]',
+        caseSensitive: false,
+      ),
+      ' ',
+    );
 
     // A few release tags are written without brackets. They are never part of
     // a searchable title and should terminate the human-readable name.
@@ -698,9 +750,66 @@ class ParsedMediaName {
           ' ',
         )
         .replaceAll(RegExp(r'[\[\]【】{}()（）]'), ' ')
+        .replaceFirst(RegExp(r'^\s*[A-Za-z]\s+(?=[\u4e00-\u9fff])'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
     return title;
+  }
+
+  static ParsedMediaName? _bestParentContext(
+    String? directoryName,
+    String? directoryPath,
+  ) {
+    final candidates = <String>{
+      if (directoryName?.trim().isNotEmpty == true) directoryName!.trim(),
+    };
+    if (directoryPath?.trim().isNotEmpty == true) {
+      final segments = directoryPath!
+          .split(RegExp(r'[\\/]'))
+          .where((segment) => segment.trim().isNotEmpty)
+          .toList();
+      // The final segment is the file name. Inspect a few ancestors so a
+      // numeric episode inside a resolution/season folder can inherit the
+      // actual series title from the enclosing release directory.
+      for (
+        var index = segments.length - 2;
+        index >= 0 && index >= segments.length - 6;
+        index--
+      ) {
+        candidates.add(segments[index]);
+      }
+    }
+
+    ParsedMediaName? best;
+    var bestScore = -1;
+    for (final candidate in candidates) {
+      final parsed = ParsedMediaName.parse(candidate);
+      final score = _parentTitleScore(parsed.title);
+      if (score > bestScore) {
+        best = parsed;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  static int _parentTitleScore(String value) {
+    final title = value.trim();
+    final compact = title.replaceAll(RegExp(r'[^a-zA-Z0-9\u4e00-\u9fff]'), '');
+    if (compact.length < 2 || RegExp(r'^\d+$').hasMatch(compact)) return -1;
+    var score = compact.length;
+    if (RegExp(r'[\u4e00-\u9fff]').hasMatch(compact)) score += 8;
+    if (RegExp(
+      r'\b(?:4k|2160p|1080p|720p|web|bluray|remux|hdtv|season)\b',
+      caseSensitive: false,
+    ).hasMatch(title)) {
+      score -= 18;
+    }
+    if (RegExp(r'^(?:电影|电视剧|国产剧|日韩剧|外语电影|综艺)$').hasMatch(title)) {
+      score -= 30;
+    }
+    if (RegExp(r'(?:系列|合集|收藏|分类)$').hasMatch(title)) score -= 12;
+    return score;
   }
 }
 

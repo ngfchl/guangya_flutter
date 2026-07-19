@@ -305,6 +305,7 @@ class MediaLibraryStore {
   ) async {
     final db = await _db;
     await db.transaction((txn) async {
+      await _removeStaleFolderFileIndex(txn, folderID, files);
       for (final file in files) {
         final gcid = file.gcid?.trim();
         if (gcid == null || gcid.isEmpty) continue;
@@ -353,6 +354,7 @@ class MediaLibraryStore {
     await db.transaction((txn) async {
       for (final entry in folders.entries) {
         final files = entry.value;
+        await _removeStaleFolderFileIndex(txn, entry.key, files);
         for (final file in files) {
           final gcid = file.gcid?.trim();
           if (gcid == null || gcid.isEmpty) continue;
@@ -376,10 +378,84 @@ class MediaLibraryStore {
     });
   }
 
-  /// Removes only directory listing snapshots. GCID metadata deliberately
-  /// remains available for permanent file-detail caching.
+  /// Removes traversal snapshots and the current file-id mapping. The GCID
+  /// detail cache remains available permanently.
   Future<void> clearFolderChildrenIndex() async {
-    await (await _db).delete('folder_children');
+    final db = await _db;
+    await db.transaction((txn) async {
+      await txn.delete('folder_children');
+      await txn.delete('file_index');
+    });
+  }
+
+  Future<Map<String, List<CloudFile>>> liveFilesByGCIDs(
+    Iterable<String> values,
+  ) async {
+    final requested = values.where((value) => value.isNotEmpty).toSet();
+    if (requested.isEmpty) return const {};
+    final rows = await (await _db).rawQuery(
+      '''SELECT i.file_id, i.gcid, d.file_json
+         FROM file_index i
+         JOIN gcid_details d ON d.gcid = i.gcid''',
+    );
+    final result = <String, List<CloudFile>>{};
+    for (final row in rows) {
+      final gcid = row['gcid']?.toString();
+      final fileID = row['file_id']?.toString();
+      if (gcid == null || fileID == null || !requested.contains(gcid)) {
+        continue;
+      }
+      try {
+        final raw = jsonDecode(row['file_json']?.toString() ?? '{}');
+        if (raw is! Map) continue;
+        final file = CloudFile.fromJson(Map<String, dynamic>.from(raw));
+        (result[gcid] ??= []).add(file.copyWith(id: fileID, gcid: gcid));
+      } catch (_) {
+        // Ignore malformed retained GCID details.
+      }
+    }
+    return result;
+  }
+
+  Future<void> removeLiveFileIDs(Iterable<String> values) async {
+    final ids = values.where((value) => value.isNotEmpty).toSet();
+    if (ids.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final id in ids) {
+        await txn.delete('file_index', where: 'file_id = ?', whereArgs: [id]);
+      }
+    });
+  }
+
+  Future<void> _removeStaleFolderFileIndex(
+    DatabaseExecutor txn,
+    String? folderID,
+    List<CloudFile> files,
+  ) async {
+    final rows = await txn.query(
+      'folder_children',
+      columns: const ['child_ids'],
+      where: 'folder_id = ?',
+      whereArgs: [_folderID(folderID)],
+      limit: 1,
+    );
+    if (rows.isEmpty) return;
+    try {
+      final raw = jsonDecode(rows.first['child_ids']?.toString() ?? '[]');
+      if (raw is! List) return;
+      final current = files.map((file) => file.id).toSet();
+      for (final oldID in raw.map((value) => value.toString())) {
+        if (current.contains(oldID)) continue;
+        await txn.delete(
+          'file_index',
+          where: 'file_id = ?',
+          whereArgs: [oldID],
+        );
+      }
+    } catch (_) {
+      // Replacing the folder snapshot repairs malformed index data.
+    }
   }
 
   /// Clears cached snapshots for removed folders and every cached descendant.
@@ -409,6 +485,11 @@ class MediaLibraryStore {
               for (final value in raw.whereType<Map>()) {
                 final child = CloudFile.fromJson(
                   Map<String, dynamic>.from(value),
+                );
+                await txn.delete(
+                  'file_index',
+                  where: 'file_id = ?',
+                  whereArgs: [child.id],
                 );
                 if (child.isDirectory) pending.add(child.id);
               }

@@ -35,6 +35,13 @@ class FileMetadataCache {
 
   static Future<CloudFile?> file(String fileID) => _store.cachedFile(fileID);
 
+  static Future<Map<String, List<CloudFile>>> liveFilesByGCIDs(
+    Iterable<String> gcids,
+  ) => _store.liveFilesByGCIDs(gcids);
+
+  static Future<void> removeLiveFileIDs(Iterable<String> fileIDs) =>
+      _store.removeLiveFileIDs(fileIDs);
+
   static Future<void> updateFolderChildren(
     String? folderID, {
     Iterable<String> removeIDs = const [],

@@ -107,5 +107,75 @@ void main() {
       expect(legacy.title, '野兽之瞳');
       expect(legacy.resolution, '1024x576');
     });
+
+    test('uses a Chinese movie title after a leading year in its folder', () {
+      final value = ParsedMediaName.parse(
+        '2008.mkv',
+        directoryName: '2008见龙卸甲',
+      );
+
+      expect(value.title, '见龙卸甲');
+      expect(value.year, 2008);
+      expect(value.isEpisode, isFalse);
+    });
+
+    test('removes a season marker from a numeric series title', () {
+      final compact = ParsedMediaName.parse('1883.S01E01.1080p.WEB-DL.mkv');
+      final separated = ParsedMediaName.parse('1883 S01 E01 1080p WEB-DL.mkv');
+
+      expect(compact.title, '1883');
+      expect(compact.season, 1);
+      expect(compact.episode, 1);
+      expect(separated.title, '1883');
+      expect(separated.season, 1);
+      expect(separated.episode, 1);
+    });
+
+    test('keeps a season-only pack searchable as its series title', () {
+      final value = ParsedMediaName.parse('1883 S01.mkv');
+
+      expect(value.title, '1883');
+      expect(value.season, 1);
+      expect(value.episode, isNull);
+    });
+
+    test(
+      'uses a meaningful ancestor for a numeric episode in nested folders',
+      () {
+        final value = ParsedMediaName.parse(
+          '01.mkv',
+          directoryPath:
+              '/电影/七龙珠 系列/L 龙!珠!大!魔!（2024）[更新至20集]4K EDR高码率/4K 高码率[更新至20集]/01.mkv',
+        );
+
+        expect(value.title, '龙 珠 大 魔');
+        expect(value.year, 2024);
+      },
+    );
+
+    test('treats ASCII and full-width punctuation as title separators', () {
+      final value = ParsedMediaName.parse(
+        'All｜Creatures，Great……＆Small.2020.S01E01.1080p.mkv',
+      );
+
+      expect(value.title, 'All Creatures Great and Small');
+      expect(value.year, 2020);
+      expect(value.season, 1);
+      expect(value.episode, 1);
+    });
+
+    test('treats a short numeric file in a named folder as an episode', () {
+      final value = ParsedMediaName.parse(
+        '13.2160p.HD国语中字无水印.mkv',
+        directoryName: '女神蒙上眼',
+        directoryPath: '/电视剧/女神蒙上眼/13.2160p.HD国语中字无水印.mkv',
+      );
+
+      expect(value.title, '女神蒙上眼');
+      expect(value.year, isNull);
+      expect(value.season, 1);
+      expect(value.episode, 13);
+      expect(value.isEpisode, isTrue);
+    });
   });
 }

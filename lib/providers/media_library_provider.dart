@@ -6,12 +6,14 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 import '../api/guangya_api.dart';
+import '../core/http/http_error.dart';
 import '../core/logging/app_logger.dart';
 import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/media_library_store.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
+import 'watch_history_provider.dart';
 
 /// Blu-ray and DVD folders contain transport streams rather than standalone
 /// media. They must be handled as a disc structure, never as individual files.
@@ -36,6 +38,24 @@ class MediaTMDBMatchRequest {
 
   const MediaTMDBMatchRequest({required this.items, required this.candidates});
 }
+
+class MediaDetailHeader {
+  final String title;
+  final TMDBMediaKind? mediaKind;
+  final String year;
+
+  const MediaDetailHeader({
+    required this.title,
+    required this.mediaKind,
+    required this.year,
+  });
+}
+
+/// Lets the workspace title bar reflect the media detail currently open in
+/// the content pane, without rendering a second detail-specific header.
+final activeMediaDetailHeaderProvider = StateProvider<MediaDetailHeader?>(
+  (ref) => null,
+);
 
 class CloudBackupSyncProgress {
   final String phase;
@@ -62,6 +82,7 @@ class MediaLibraryState {
   final List<MediaLibraryDefinition> libraries;
   final String? selectedLibraryID;
   final List<MediaLibraryItem> items;
+  final List<MediaLibraryItem> allItems;
   final bool isLoading;
   final bool isScanning;
   final bool isRefreshingCloudIndex;
@@ -76,6 +97,7 @@ class MediaLibraryState {
     this.libraries = const [],
     this.selectedLibraryID,
     this.items = const [],
+    this.allItems = const [],
     this.isLoading = false,
     this.isScanning = false,
     this.isRefreshingCloudIndex = false,
@@ -107,11 +129,25 @@ class MediaLibraryState {
   MediaLibraryStatistics get statistics =>
       MediaLibraryStatistics.fromItems(items);
 
+  List<MediaLibraryItem> get globalVisibleItems {
+    final query = searchQuery.trim().toLowerCase();
+    if (query.isEmpty) return allItems;
+    return allItems.where((item) {
+      return item.title.toLowerCase().contains(query) ||
+          item.file.name.toLowerCase().contains(query) ||
+          item.file.cloudPath.toLowerCase().contains(query);
+    }).toList();
+  }
+
+  MediaLibraryStatistics get globalStatistics =>
+      MediaLibraryStatistics.fromItems(allItems);
+
   MediaLibraryState copyWith({
     List<MediaLibraryDefinition>? libraries,
     String? selectedLibraryID,
     bool clearSelectedLibrary = false,
     List<MediaLibraryItem>? items,
+    List<MediaLibraryItem>? allItems,
     bool? isLoading,
     bool? isScanning,
     bool? isRefreshingCloudIndex,
@@ -131,6 +167,7 @@ class MediaLibraryState {
           ? null
           : (selectedLibraryID ?? this.selectedLibraryID),
       items: items ?? this.items,
+      allItems: allItems ?? this.allItems,
       isLoading: isLoading ?? this.isLoading,
       isScanning: isScanning ?? this.isScanning,
       isRefreshingCloudIndex:
@@ -148,6 +185,7 @@ class MediaLibraryState {
 }
 
 class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
+  final Future<void> Function(Set<String>)? _removeWatchHistory;
   GuangyaAPI? _api;
   final _store = MediaLibraryStore();
   final _tmdbDetailsRequests = <String, Future<Map<String, dynamic>>>{};
@@ -157,14 +195,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   bool _cancelScan = false;
   bool _cancelDetailSync = false;
   bool _refreshingCloudIndex = false;
+  bool _reconcilingMediaGCIDs = false;
   Timer? _cloudIndexTimer;
 
-  MediaLibraryNotifier() : super(const MediaLibraryState());
+  MediaLibraryNotifier({Future<void> Function(Set<String>)? removeWatchHistory})
+    : _removeWatchHistory = removeWatchHistory,
+      super(const MediaLibraryState());
 
   set api(GuangyaAPI value) => _api = value;
 
   Future<void> load() async {
-    if (_loaded) return;
+    if (_loaded) {
+      if (state.allItems.isEmpty) unawaited(_refreshAllItemsState());
+      return;
+    }
     _loaded = true;
     state = state.copyWith(isLoading: true, clearError: true);
     try {
@@ -176,11 +220,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final items = selectedID == null
           ? <MediaLibraryItem>[]
           : await _loadItems(selectedID);
+      final allItems = await _loadAllItems();
       final logs = _loadScanHistory();
       state = state.copyWith(
         libraries: libraries,
         selectedLibraryID: selectedID,
         items: items,
+        allItems: allItems,
         scanLogs: logs,
         statusMessage: removedDiscStreams == 0
             ? null
@@ -194,6 +240,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       state = state.copyWith(errorMessage: e.toString());
     } finally {
       state = state.copyWith(isLoading: false);
+    }
+  }
+
+  Future<void> _refreshAllItemsState() async {
+    try {
+      await _store.initialize();
+      final allItems = await _loadAllItems();
+      if (allItems.isNotEmpty || state.allItems.isEmpty) {
+        state = state.copyWith(allItems: allItems);
+      }
+    } catch (_) {
+      // The normal load path reports initialization failures. This compatibility
+      // refresh is best effort for an already-mounted provider instance.
     }
   }
 
@@ -262,6 +321,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       selectedLibraryID: selectedID,
       clearSelectedLibrary: selectedID == null,
       items: selectedID == null ? const [] : await _loadItems(selectedID),
+      allItems: allItems,
       statusMessage: '媒体库已删除',
     );
   }
@@ -613,11 +673,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final stats = await _store.importBackup(backupPath);
     final libraries = await _loadLibraries();
     final selectedID = libraries.isEmpty ? null : libraries.first.id;
+    final allItems = await _loadAllItems();
     state = state.copyWith(
       libraries: libraries,
       selectedLibraryID: selectedID,
       clearSelectedLibrary: selectedID == null,
       items: selectedID == null ? const [] : await _loadItems(selectedID),
+      allItems: allItems,
       statusMessage: '刮削数据已导入，已回收 ${_formatBytes(stats.reclaimedBytes)}',
     );
     if (selectedID != null) {
@@ -646,7 +708,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
   }
 
-  Future<void> scanSelectedLibrary({bool forceRemote = false}) async {
+  /// Scans only the folders configured by the selected media library. A
+  /// rescan bypasses the directory cache, but deliberately never falls back
+  /// to the account-wide cloud index: that index is slow and cannot provide
+  /// useful per-library progress or cancellation.
+  Future<void> scanSelectedLibrary({bool refreshSources = false}) async {
     final library = state.selectedLibrary;
     if (library == null || _api == null || state.isScanning) return;
 
@@ -657,7 +723,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       scanLogs: [
         MediaLibraryScanLog(
           createdAt: DateTime.now(),
-          message: forceRemote
+          message: refreshSources
               ? '任务已创建，正在重新扫描「${library.name}」'
               : '任务已创建，开始扫描「${library.name}」',
         ),
@@ -682,7 +748,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final initialItems = await _loadAllItems()
         ..removeWhere((item) => item.libraryID == library.id);
       final unique = <String, MediaLibraryItem>{
-        if (!forceRemote)
+        if (!refreshSources)
           for (final item in previousLibraryItems) item.file.id: item,
       };
       state = state.copyWith(items: unique.values.toList());
@@ -694,6 +760,63 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
       var completed = 0;
       Future<void> pendingPersistence = Future.value();
+      final seriesMatches = <String, MediaLibraryItem>{};
+      // Multiple episodes in one directory are discovered together, and the
+      // scanner processes that batch concurrently. Keep the first TMDB
+      // recognition in flight so siblings wait for it instead of starting
+      // duplicate TMDB requests before [seriesMatches] has been populated.
+      final seriesRecognitionTasks = <String, Future<MediaLibraryItem>>{};
+      final aggregatedSeriesKeys = <String>{};
+
+      MediaLibraryItem applySeriesMetadata(
+        MediaLibraryItem matched,
+        MediaLibraryItem target,
+      ) {
+        // Scraped show metadata is shared by episodes, but technical flags are
+        // properties of each individual file and must not be copied from the
+        // episode that happened to match first.
+        return matched.copyWith(
+          file: target.file,
+          hasChineseAudio: target.hasChineseAudio,
+          hasChineseSubtitle: target.hasChineseSubtitle,
+          updatedAt: DateTime.now(),
+        );
+      }
+
+      Future<void> aggregateRecognizedSeries(
+        String seriesKey,
+        MediaLibraryItem matched,
+      ) async {
+        if (!aggregatedSeriesKeys.add(seriesKey)) return;
+
+        // Include records already stored for the directory as well as rows
+        // discovered earlier in this scan. This makes all known episodes show
+        // as recognized immediately; when their file is reached later it only
+        // needs per-episode canonical renaming, never another TMDB lookup.
+        final siblings = <String, MediaLibraryItem>{
+          for (final item in previousLibraryItems)
+            if (_seriesRecognitionKey(item) == seriesKey) item.id: item,
+          for (final item in unique.values)
+            if (_seriesRecognitionKey(item) == seriesKey) item.id: item,
+        };
+        if (siblings.isEmpty) return;
+
+        final updates = siblings.values
+            .map((item) => applySeriesMetadata(matched, item))
+            .toList();
+        for (final item in updates) {
+          unique[item.id] = item;
+        }
+        pendingPersistence = pendingPersistence.then(
+          (_) => _upsertItems(updates),
+        );
+        await pendingPersistence;
+        _searchResultsCache.clear();
+        _appendScanLog(
+          '剧集已聚合：${matched.title}，已将 ${updates.length} 集标记为已识别，'
+          '其余集将跳过 TMDB 识别队列',
+        );
+      }
 
       Future<void> indexBatch(List<CloudFile> files) async {
         final pending = files.toList();
@@ -707,6 +830,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               file,
               directoryName: _parentDirectoryName(file.cloudPath),
             );
+            final seriesKey = _seriesRecognitionKey(fallback);
             final existing =
                 unique[file.id] ??
                 existingByID[file.id] ??
@@ -726,19 +850,66 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 existing == null ||
                 !sameCloudResource ||
                 _needsMediaRefresh(existing);
-            var item = shouldRecognize
-                ? await _recognizeMediaItem(
+            var item =
+                existing?.copyWith(file: file, updatedAt: DateTime.now()) ??
+                fallback;
+            final cachedSeriesMatch = seriesKey == null
+                ? null
+                : seriesMatches[seriesKey];
+            if (cachedSeriesMatch != null) {
+              item = applySeriesMetadata(cachedSeriesMatch, item);
+            } else if (shouldRecognize) {
+              if (seriesKey == null) {
+                item = await _recognizeMediaItem(
+                  fallback,
+                  tmdbApiKey,
+                  proxyHost: tmdbProxyHost,
+                  proxyPort: tmdbProxyPort,
+                );
+              } else {
+                final inFlight = seriesRecognitionTasks[seriesKey];
+                late final MediaLibraryItem recognized;
+                if (inFlight != null) {
+                  recognized = await inFlight;
+                } else {
+                  final task = _recognizeMediaItem(
                     fallback,
                     tmdbApiKey,
                     proxyHost: tmdbProxyHost,
                     proxyPort: tmdbProxyPort,
-                  )
-                : existing.copyWith(file: file, updatedAt: DateTime.now());
+                  );
+                  seriesRecognitionTasks[seriesKey] = task;
+                  recognized = await task;
+                }
+                if (inFlight == null) {
+                  // The first episode owns this request. Remove failed tasks
+                  // so a differently named sibling can still try a fallback
+                  // match, while successful matches stay in seriesMatches.
+                  seriesRecognitionTasks.remove(seriesKey);
+                }
+                if (recognized.tmdbID != null &&
+                    recognized.mediaKind == TMDBMediaKind.tv) {
+                  seriesMatches[seriesKey] = recognized;
+                  await aggregateRecognizedSeries(seriesKey, recognized);
+                  item = applySeriesMetadata(recognized, item);
+                } else {
+                  item = recognized.copyWith(
+                    file: file,
+                    updatedAt: DateTime.now(),
+                  );
+                }
+              }
+            }
             if (_cancelScan) return;
             // Do not lose an existing match solely because a transient TMDB
             // lookup failed while filling an incomplete record.
             if (item.tmdbID == null && existing?.tmdbID != null) {
               item = existing!.copyWith(file: file, updatedAt: DateTime.now());
+            }
+            if (seriesKey != null &&
+                item.tmdbID != null &&
+                item.mediaKind == TMDBMediaKind.tv) {
+              seriesMatches[seriesKey] = item;
             }
             item = await _renameMatchedMediaFile(item);
             if (_cancelScan) return;
@@ -782,57 +953,34 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         await Future.wait(List.generate(concurrency, (_) => worker()));
       }
 
-      if (forceRemote) {
-        _appendScanLog('正在获取云盘全量文件索引…');
-        await refreshGlobalCloudIndex(force: true);
-        if (_cancelScan) return;
-        final globalFiles = await _cachedGlobalFiles();
-        final seen = <String>{};
-        final mediaFiles = <CloudFile>[];
-        for (final source in library.sources) {
-          for (final file in globalFiles) {
-            if (!file.isVideo ||
-                (file.size ?? 0) < library.minimumSizeMB * 1024 * 1024 ||
-                !_isWithinLibrarySource(file, source) ||
-                !seen.add(file.id)) {
-              continue;
-            }
-            final path = _globalCloudPath(file, globalFiles, source.path);
-            if (!isMediaScanDiscInternalPath(path)) {
-              mediaFiles.add(_withPath(file, path));
-            }
-          }
-        }
-        _appendScanLog('全量索引完成，发现 ${mediaFiles.length} 个媒体文件');
-        await indexBatch(mediaFiles);
-      } else {
-        for (final source in library.sources) {
-          if (_cancelScan) break;
-          _appendScanLog('扫描目录：${source.path}');
-          state = state.copyWith(
-            progress: MediaLibraryScanProgress(
-              phase: '扫描 ${source.path}',
-              completed: completed,
-            ),
-          );
-          await _scanSource(
-            source.rootID,
-            source.path,
-            recursive: library.recursive,
-            minimumSizeBytes: library.minimumSizeMB * 1024 * 1024,
-            forceRemote: false,
-            onMediaFiles: indexBatch,
-          );
-        }
+      for (final source in library.sources) {
+        if (_cancelScan) break;
+        final action = refreshSources ? '重新读取目录' : '扫描目录';
+        _appendScanLog('$action：${source.path}');
+        state = state.copyWith(
+          progress: MediaLibraryScanProgress(
+            phase: '$action ${source.path}',
+            completed: completed,
+          ),
+        );
+        await _scanSource(
+          source.rootID,
+          source.path,
+          recursive: library.recursive,
+          minimumSizeBytes: library.minimumSizeMB * 1024 * 1024,
+          forceRemote: refreshSources,
+          initialCompleted: completed,
+          onMediaFiles: indexBatch,
+        );
       }
       await pendingPersistence;
       var items = unique.values.toList()
         ..sort(
           (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
         );
-      // A cancelled full rescan has only seen a subset of the cloud tree. Keep
+      // A cancelled rescan has only seen part of the configured folders. Keep
       // unseen rows rather than incorrectly treating them as deleted.
-      if (_cancelScan && forceRemote) {
+      if (_cancelScan && refreshSources) {
         final merged = <String, MediaLibraryItem>{
           for (final item in previousLibraryItems) item.id: item,
           for (final item in items) item.id: item,
@@ -844,7 +992,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
       final allItems = [...initialItems, ...items];
       final discoveredIDs = items.map((item) => item.id).toSet();
-      final removedMissing = _cancelScan || !forceRemote
+      final removedMissing = _cancelScan || !refreshSources
           ? 0
           : previousLibraryItems
                 .where((item) => !discoveredIDs.contains(item.id))
@@ -859,6 +1007,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       state = state.copyWith(
         libraries: libraries,
         items: items,
+        allItems: allItems,
         statusMessage: _cancelScan
             ? '扫描已停止，已保留 ${items.length} 个项目'
             : removedMissing == 0
@@ -893,7 +1042,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> rescanSelectedLibrary() =>
-      scanSelectedLibrary(forceRemote: true);
+      scanSelectedLibrary(refreshSources: true);
 
   void cancelDetailSync() {
     _cancelDetailSync = true;
@@ -922,8 +1071,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       StorageManager.get<String>(StorageKeys.cloudIndexLastUpdatedAt) ?? '',
     );
     final rootSnapshot = await FileMetadataCache.folderChildren(null);
+    final liveGCIDIndexReady =
+        StorageManager.get<String>(StorageKeys.cloudIndexLiveGCIDVersion) ==
+        '1';
     final needsFullRebuild =
-        force || lastUpdated == null || rootSnapshot == null;
+        force ||
+        lastUpdated == null ||
+        rootSnapshot == null ||
+        !liveGCIDIndexReady;
     if (!force && !needsFullRebuild) {
       final elapsed = DateTime.now().difference(
         DateTime.fromMillisecondsSinceEpoch(lastUpdated),
@@ -935,6 +1090,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           '全盘文件索引缓存仍有效，已跳过本次刷新；约 ${remaining.inMinutes + 1} 分钟后自动更新',
         );
         _scheduleCloudIndexRefresh(minutes);
+        await _reconcileMediaItemsWithCloudIndex();
         return;
       }
     }
@@ -944,6 +1100,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       late _CloudIndexRefreshResult result;
       if (needsFullRebuild) {
         final reason = force ? '用户手动触发' : '本地缓存为空';
+        await StorageManager.delete(StorageKeys.cloudIndexLiveGCIDVersion);
         AppLogger.info('CloudIndex', '开始建立全盘文件索引：$reason');
         result = await _rebuildGlobalCloudIndex();
         AppLogger.info(
@@ -962,11 +1119,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         StorageKeys.cloudIndexLastUpdatedAt,
         DateTime.now().millisecondsSinceEpoch.toString(),
       );
+      await StorageManager.set(StorageKeys.cloudIndexLiveGCIDVersion, '1');
       _appendScanLog(
         needsFullRebuild
             ? '[云盘索引] 已建立 ${result.updatedFolders} 个目录、${result.updatedEntries} 项缓存'
             : '[云盘索引] 已检查 ${result.checkedFolders} 个目录，更新 ${result.updatedFolders} 个目录',
       );
+      await _reconcileMediaItemsWithCloudIndex();
     } catch (error) {
       AppLogger.error('CloudIndex', '刷新全盘文件索引失败', error: error);
       _appendScanLog('[云盘索引] 刷新失败：$error', isError: true);
@@ -982,6 +1141,113 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     _cloudIndexTimer = Timer(Duration(minutes: minutes), () {
       unawaited(refreshGlobalCloudIndex());
     });
+  }
+
+  Future<void> _reconcileMediaItemsWithCloudIndex() async {
+    if (_reconcilingMediaGCIDs) return;
+    _reconcilingMediaGCIDs = true;
+    try {
+      final allItems = await _loadAllItems();
+      final indexedItems = allItems
+          .where((item) => item.file.gcid?.trim().isNotEmpty == true)
+          .toList();
+      if (indexedItems.isEmpty) return;
+      final indexedFiles = (await FileMetadataCache.allCachedFolderChildren())
+          .where((file) => !file.isDirectory)
+          .toList();
+      final liveByID = {for (final file in indexedFiles) file.id: file};
+      final liveByGCID = <String, List<CloudFile>>{};
+      for (final file in indexedFiles) {
+        final gcid = file.gcid?.trim();
+        if (gcid == null || gcid.isEmpty) continue;
+        (liveByGCID[gcid] ??= []).add(file);
+      }
+      final missing = <MediaLibraryItem>[];
+      final replacements = <String, MediaLibraryItem>{};
+      final assignedFileIDs = <String, Set<String>>{};
+      for (final item in indexedItems) {
+        final gcid = item.file.gcid!.trim();
+        final liveFiles = liveByGCID[gcid] ?? const <CloudFile>[];
+        final assigned = assignedFileIDs[gcid] ??= <String>{};
+        CloudFile? live = liveByID[item.id];
+        live ??= liveFiles
+            .where(
+              (file) =>
+                  !assigned.contains(file.id) &&
+                  file.cloudPath.isNotEmpty &&
+                  file.cloudPath == item.file.cloudPath,
+            )
+            .firstOrNull;
+        live ??= liveFiles
+            .where(
+              (file) =>
+                  !assigned.contains(file.id) && file.name == item.file.name,
+            )
+            .firstOrNull;
+        live ??= liveFiles
+            .where((file) => !assigned.contains(file.id))
+            .firstOrNull;
+        if (live == null) {
+          var confirmedNotFound = false;
+          live = await _resolveCurrentCloudFile(
+            item.file,
+            libraryID: item.libraryID,
+            onConfirmedNotFound: () => confirmedNotFound = true,
+          );
+          if (live == null) {
+            if (confirmedNotFound) missing.add(item);
+            continue;
+          }
+        }
+        assigned.add(live.id);
+        if (live.id == item.id &&
+            (live.name.isEmpty || live.name == item.file.name) &&
+            (live.cloudPath.isEmpty || live.cloudPath == item.file.cloudPath)) {
+          continue;
+        }
+        replacements['${item.libraryID}:${item.id}'] = item.copyWith(
+          file: item.file.copyWith(
+            id: live.id,
+            name: live.name.isEmpty ? item.file.name : live.name,
+            size: live.size ?? item.file.size,
+            gcid: gcid,
+            modifiedAt: live.modifiedAt.isEmpty
+                ? item.file.modifiedAt
+                : live.modifiedAt,
+            cloudPath: live.cloudPath.isEmpty
+                ? item.file.cloudPath
+                : live.cloudPath,
+            parentID: live.parentID ?? item.file.parentID,
+            fullParentIDs: live.fullParentIDs ?? item.file.fullParentIDs,
+            fileType: live.fileType,
+          ),
+          updatedAt: DateTime.now(),
+        );
+      }
+      if (replacements.isNotEmpty) {
+        await _replaceItemsByPreviousIDs(replacements);
+      }
+      if (missing.isNotEmpty) {
+        await _removeMissingMediaItems(missing);
+      }
+      if (replacements.isNotEmpty || missing.isNotEmpty) {
+        final refreshed = await _loadAllItems();
+        state = state.copyWith(
+          allItems: refreshed,
+          items: refreshed
+              .where((item) => item.libraryID == state.selectedLibraryID)
+              .toList(),
+        );
+        _appendScanLog(
+          '[GCID 校验] 更新 ${replacements.length} 条资源映射，'
+          '移除 ${missing.length} 条已不存在的媒体记录；GCID 内容缓存已保留',
+        );
+      }
+    } catch (error) {
+      AppLogger.warning('Media', '定期 GCID 校验失败：$error');
+    } finally {
+      _reconcilingMediaGCIDs = false;
+    }
   }
 
   void updateCloudIndexRefreshSchedule() {
@@ -1271,6 +1537,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final parsed = ParsedMediaName.parse(
         item.file.name,
         directoryName: _parentDirectoryName(item.file.cloudPath),
+        directoryPath: item.file.cloudPath,
       );
       final key =
           '${item.mediaKind?.name ?? 'automatic'}:${parsed.title.toLowerCase()}';
@@ -1301,8 +1568,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final byID = {for (final item in updates) item.id: item};
     state = state.copyWith(
       items: state.items.map((item) => byID[item.id] ?? item).toList(),
+      allItems: await _loadAllItems(),
       statusMessage: '已识别 ${updates.length} 个资源（${groups.length} 个作品）',
     );
+    final aggregatedSeries = <String>{};
+    for (final item in updates) {
+      final seriesKey = _seriesRecognitionKey(item);
+      if (seriesKey != null &&
+          item.tmdbID != null &&
+          item.mediaKind == TMDBMediaKind.tv &&
+          aggregatedSeries.add(seriesKey)) {
+        await _aggregateStoredSeriesRecognition(seriesKey, item);
+      }
+    }
   }
 
   /// Pulls current file metadata from the cloud before parsing and matching it.
@@ -1318,6 +1596,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     state = state.copyWith(statusMessage: '正在同步云盘文件信息…', clearError: true);
     final synced = <_SyncedMediaItem>[];
     final failures = <String>[];
+    final missing = <MediaLibraryItem>[];
     for (final original in originals) {
       if (_cancelDetailSync) break;
       try {
@@ -1325,24 +1604,36 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           '[同步识别][调试] 开始：${original.file.name} '
           '(fileId=${original.id}, gcid=${original.file.gcid ?? '-'})',
         );
+        var confirmedNotFound = false;
         final latestFile = await _resolveCurrentCloudFile(
           original.file,
           libraryID: original.libraryID,
+          onConfirmedNotFound: () => confirmedNotFound = true,
         );
+        if (_cancelDetailSync) break;
         if (latestFile == null) {
-          throw StateError('云盘中未找到该文件');
+          if (!confirmedNotFound) {
+            throw StateError('文件定位失败，未确认 404，已保留媒体记录');
+          }
+          missing.add(original);
+          _appendScanLog(
+            '[同步识别][调试] GCID 与目录回查均未找到：${original.file.name}，'
+            '删除媒体库记录',
+          );
+          continue;
         }
         _appendScanLog(
           '[同步识别][调试] 云盘已同步：文件 ID ${original.id} -> '
           '${latestFile.id}，名称=${latestFile.name}，gcid=${latestFile.gcid ?? '-'}',
         );
+        final recognitionFile = _withRecognitionPath(latestFile, original.file);
         synced.add(
           _SyncedMediaItem(
             original: original,
             fallback: MediaLibraryItem.fromFile(
               original.libraryID,
-              latestFile,
-              directoryName: _parentDirectoryName(latestFile.cloudPath),
+              recognitionFile,
+              directoryName: _parentDirectoryName(recognitionFile.cloudPath),
             ),
           ),
         );
@@ -1354,15 +1645,25 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         );
       }
     }
+    if (missing.isNotEmpty && !_cancelDetailSync) {
+      await _removeMissingMediaItems(missing);
+      _appendScanLog('已删除 ${missing.length} 条云盘中不存在的媒体记录');
+    }
     if (synced.isEmpty) {
       state = state.copyWith(
-        errorMessage: _cancelDetailSync
+        errorMessage: _cancelDetailSync || failures.isEmpty
             ? null
-            : failures.isEmpty
-            ? '未能同步云盘文件信息'
             : '同步失败：${failures.first}',
-        statusMessage: _cancelDetailSync ? '同步识别已取消' : '未能同步云盘文件信息',
+        statusMessage: _cancelDetailSync
+            ? '同步识别已取消'
+            : missing.isNotEmpty && failures.isEmpty
+            ? '已清理 ${missing.length} 条云盘中不存在的媒体记录'
+            : '未能同步云盘文件信息',
       );
+      return const [];
+    }
+    if (_cancelDetailSync) {
+      state = state.copyWith(statusMessage: '同步识别已取消', clearError: true);
       return const [];
     }
 
@@ -1370,6 +1671,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final updates = <MediaLibraryItem>[];
     final replacements = <String, MediaLibraryItem>{};
     final pendingMatches = <MediaTMDBMatchRequest>[];
+    final automaticMatches = <String, MediaLibraryItem>{};
     var recognizedCount = 0;
     var renamedCount = 0;
     for (final entry in synced) {
@@ -1380,14 +1682,23 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         final parsed = ParsedMediaName.parse(
           fallback.file.name,
           directoryName: _parentDirectoryName(fallback.file.cloudPath),
+          directoryPath: fallback.file.cloudPath,
         );
+        final recognitionKey =
+            '${fallback.libraryID}:${_parentDirectoryName(fallback.file.cloudPath) ?? ''}:'
+            '${parsed.title.toLowerCase()}:${parsed.isEpisode}';
         _appendScanLog(
           '[同步识别][调试] 解析：${fallback.file.name} -> '
-          '标题=${parsed.title}，年份=${parsed.year ?? '-'}，'
+          '标题=${parsed.title}，年份=${parsed.year?.toString() ?? '未提供'}，'
           '类型=${fallback.mediaKind?.name ?? 'automatic'}',
         );
-        var updated = fallback;
-        if (apiKey.trim().isNotEmpty) {
+        var updated =
+            automaticMatches[recognitionKey]?.copyWith(
+              file: fallback.file,
+              updatedAt: DateTime.now(),
+            ) ??
+            fallback;
+        if (updated.tmdbID == null && apiKey.trim().isNotEmpty) {
           final candidates = await _tmdbCandidatesForItem(
             fallback,
             apiKey,
@@ -1396,16 +1707,27 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             proxyPort:
                 StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
           );
-          if (candidates.length == 1) {
+          if (_cancelDetailSync) break;
+          // A uniquely scored candidate is safe to apply automatically even
+          // when TMDB localizes or slightly expands the title. Ambiguous
+          // results still go to the manual picker below.
+          if (candidates.length == 1 ||
+              (candidates.isNotEmpty &&
+                  _isHighConfidenceTMDBCandidate(fallback, candidates.first))) {
             updated = await _applyTMDBCandidateAndDetails(
               fallback,
-              candidates.single,
+              candidates.first,
               apiKey,
               proxyHost:
                   StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
               proxyPort:
                   StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
             );
+            _appendScanLog(
+              '[同步识别][调试] 自动匹配 TMDB 候选：'
+              '${updated.title} (tmdbId=${updated.tmdbID ?? '-'})',
+            );
+            automaticMatches[recognitionKey] = updated;
           } else if (candidates.length > 1 && original.tmdbID == null) {
             pendingMatches.add(
               MediaTMDBMatchRequest(items: [fallback], candidates: candidates),
@@ -1424,7 +1746,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         } else {
           _appendScanLog(
             '[同步识别][调试] TMDB 未命中：${parsed.title} '
-            '(年份=${parsed.year ?? '-'})',
+            '(年份参数=${parsed.year?.toString() ?? '未提供'})',
           );
         }
         // A temporary TMDB or network failure must not erase a previously
@@ -1436,14 +1758,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           );
         }
         final beforeName = updated.file.name;
+        if (_cancelDetailSync) break;
         updated = await _renameMatchedMediaFile(updated);
+        if (_cancelDetailSync) break;
         if (updated.file.name != beforeName) {
           renamedCount++;
           _appendScanLog(
             '[同步识别][调试] 已规范命名：$beforeName -> ${updated.file.name}',
           );
         } else if (updated.tmdbID != null) {
-          _appendScanLog('[同步识别][调试] 跳过规范命名：未解析到分辨率或名称已符合规则');
+          _appendScanLog('[同步识别][调试] 跳过规范命名：名称已符合规则');
         }
         updates.add(updated);
         replacements['${original.libraryID}:${original.id}'] = updated;
@@ -1454,6 +1778,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           isError: true,
         );
       }
+    }
+    if (_cancelDetailSync) {
+      state = state.copyWith(statusMessage: '同步识别已取消', clearError: true);
+      return const [];
     }
     if (updates.isNotEmpty) {
       await _replaceItemsByPreviousIDs(replacements);
@@ -1468,6 +1796,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                   item,
             )
             .toList(),
+        allItems: await _loadAllItems(),
         statusMessage: apiKey.trim().isEmpty
             ? '已同步 ${updates.length} 个资源，未配置 TMDB，未执行自动识别'
             : _cancelDetailSync
@@ -1477,6 +1806,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             : '已同步 ${updates.length} 个资源，识别 $recognizedCount 个，规范命名 $renamedCount 个，${failures.length} 个失败',
         errorMessage: failures.isEmpty ? null : failures.first,
       );
+      final aggregatedSeries = <String>{};
+      for (final item in updates) {
+        final seriesKey = _seriesRecognitionKey(item);
+        if (seriesKey != null &&
+            item.tmdbID != null &&
+            item.mediaKind == TMDBMediaKind.tv &&
+            aggregatedSeries.add(seriesKey)) {
+          await _aggregateStoredSeriesRecognition(seriesKey, item);
+        }
+      }
     }
     return pendingMatches;
   }
@@ -1537,6 +1876,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       items: state.items
           .map((item) => replacements['${item.libraryID}:${item.id}'] ?? item)
           .toList(),
+      allItems: await _loadAllItems(),
     );
   }
 
@@ -1579,11 +1919,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 : current,
           )
           .toList(),
+      allItems: await _loadAllItems(),
       statusMessage: updated.file.name == item.file.name
           ? '已匹配《${updated.title}》'
           : '已匹配并规范命名《${updated.title}》',
       clearError: true,
     );
+    final seriesKey = _seriesRecognitionKey(item);
+    if (seriesKey != null &&
+        updated.tmdbID != null &&
+        updated.mediaKind == TMDBMediaKind.tv) {
+      await _aggregateStoredSeriesRecognition(seriesKey, updated);
+    }
     return updated;
   }
 
@@ -1628,6 +1975,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       items: state.items
           .map((item) => replacements['${item.libraryID}:${item.id}'] ?? item)
           .toList(),
+      allItems: await _loadAllItems(),
     );
     return updates;
   }
@@ -1734,14 +2082,26 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final parsed = ParsedMediaName.parse(
         fallback.file.name,
         directoryName: _parentDirectoryName(fallback.file.cloudPath),
+        directoryPath: fallback.file.cloudPath,
       );
-      final requestedKind = fallback.mediaKind == TMDBMediaKind.tv
-          ? 'tv'
-          : fallback.mediaKind == TMDBMediaKind.movie
-          ? 'movie'
-          : 'auto';
+      // Automatic recognition deliberately uses TMDB multi-search. The
+      // filename-derived kind is only a hint and may be wrong for legacy rows.
+      final requestedKind = 'auto';
+      final searchTitle = parsed.title.trim().isEmpty
+          ? fallback.title
+          : parsed.title;
+      final taggedCandidate = await _tmdbCandidateFromPathTag(
+        fallback,
+        apiKey,
+        proxyHost: proxyHost,
+        proxyPort: proxyPort,
+      );
+      if (taggedCandidate != null) {
+        final item = _itemFromTMDBCandidate(fallback, taggedCandidate);
+        return _itemFromTMDBDetails(item, taggedCandidate);
+      }
       final result = await _api!.tmdbSearch(
-        fallback.title,
+        searchTitle,
         apiKey: apiKey,
         mediaKind: requestedKind,
         proxyHost: proxyHost,
@@ -1751,8 +2111,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final values = result['results'];
       if (values is! List) return fallback;
       final expectedType = requestedKind == 'auto' ? null : requestedKind;
-      final normalizedTitle = _normalizeMediaTitle(fallback.title);
-      if (normalizedTitle.isEmpty) return fallback;
+      if (_normalizeMediaTitle(searchTitle).isEmpty) return fallback;
       Map<String, dynamic>? candidate;
       var bestScore = -1;
       for (final value in values) {
@@ -1767,22 +2126,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         if (parsed.year != null && !releaseDate.startsWith('${parsed.year}')) {
           continue;
         }
-        final candidateTitle = _normalizeMediaTitle(
-          (map['title'] ?? map['name'] ?? '').toString(),
+        final titleMatch = _bestMediaTitleMatch(
+          searchTitle,
+          title: (map['title'] ?? map['name'] ?? '').toString(),
+          originalTitle: (map['original_title'] ?? map['original_name'] ?? '')
+              .toString(),
         );
-        final originalTitle = _normalizeMediaTitle(
-          (map['original_title'] ?? map['original_name'] ?? '').toString(),
-        );
-        var score = 0;
-        if (candidateTitle == normalizedTitle ||
-            originalTitle == normalizedTitle) {
-          score += 100;
-        } else if (candidateTitle.contains(normalizedTitle) ||
-            normalizedTitle.contains(candidateTitle) ||
-            originalTitle.contains(normalizedTitle) ||
-            normalizedTitle.contains(originalTitle)) {
-          score += 40;
-        }
+        var score = titleMatch.score;
         if (score == 0) continue;
         if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
           score += 30;
@@ -1825,6 +2175,71 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         item.backdropPath?.isEmpty != false;
   }
 
+  /// fs_detail/search responses sometimes return only a bare filename. Keep
+  /// the persisted parent path in that case so parser rules based on folder
+  /// names (for example `2008见龙卸甲/2008.mkv`) still participate in TMDB
+  /// recognition.
+  CloudFile _withRecognitionPath(CloudFile latest, CloudFile known) {
+    final latestParent = _parentDirectoryName(latest.cloudPath);
+    final knownParent = _parentDirectoryName(known.cloudPath);
+    if (latestParent != null || knownParent == null) return latest;
+    return latest.copyWith(cloudPath: '$knownParent/${latest.name}');
+  }
+
+  String? _seriesRecognitionKey(MediaLibraryItem item) {
+    final parsed = ParsedMediaName.parse(
+      item.file.name,
+      directoryName: _parentDirectoryName(item.file.cloudPath),
+      directoryPath: item.file.cloudPath,
+    );
+    if (!parsed.isEpisode || parsed.title.trim().isEmpty) return null;
+    final parent = item.file.parentID?.trim().isNotEmpty == true
+        ? item.file.parentID!
+        : _parentDirectoryName(item.file.cloudPath) ?? '';
+    if (parent.isEmpty) return null;
+    return '${item.libraryID}:$parent:${_normalizeMediaTitle(parsed.title)}';
+  }
+
+  /// A TV match describes the show, not merely the selected episode. Mark
+  /// every already-indexed sibling in the same directory as identified as
+  /// soon as one episode has been matched manually.
+  Future<void> _aggregateStoredSeriesRecognition(
+    String seriesKey,
+    MediaLibraryItem matched,
+  ) async {
+    final siblings = (await _loadItems(
+      matched.libraryID,
+    )).where((item) => _seriesRecognitionKey(item) == seriesKey).toList();
+    if (siblings.length <= 1) return;
+
+    final now = DateTime.now();
+    final replacements = <String, MediaLibraryItem>{};
+    for (final sibling in siblings) {
+      replacements['${sibling.libraryID}:${sibling.id}'] =
+          sibling.id == matched.id
+          ? matched
+          : matched.copyWith(
+              file: sibling.file,
+              // These flags belong to the individual file rather than the
+              // show, so retain the sibling's values.
+              hasChineseAudio: sibling.hasChineseAudio,
+              hasChineseSubtitle: sibling.hasChineseSubtitle,
+              updatedAt: now,
+            );
+    }
+    await _replaceItemsByPreviousIDs(replacements);
+    _searchResultsCache.clear();
+    if (state.selectedLibraryID == matched.libraryID) {
+      state = state.copyWith(
+        items: state.items
+            .map((item) => replacements['${item.libraryID}:${item.id}'] ?? item)
+            .toList(),
+        allItems: await _loadAllItems(),
+      );
+    }
+    _appendScanLog('剧集已聚合：${matched.title}，同目录 ${siblings.length} 集已标记为已识别');
+  }
+
   Future<List<Map<String, dynamic>>> _tmdbCandidatesForItem(
     MediaLibraryItem fallback,
     String apiKey, {
@@ -1835,14 +2250,29 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final parsed = ParsedMediaName.parse(
       fallback.file.name,
       directoryName: _parentDirectoryName(fallback.file.cloudPath),
+      directoryPath: fallback.file.cloudPath,
     );
-    final requestedKind = fallback.mediaKind == TMDBMediaKind.tv
-        ? 'tv'
-        : fallback.mediaKind == TMDBMediaKind.movie
-        ? 'movie'
-        : 'auto';
+    // Automatic recognition deliberately uses TMDB multi-search. The
+    // filename-derived kind is only a hint and may be wrong for legacy rows.
+    final requestedKind = 'auto';
+    final searchTitle = parsed.title.trim().isEmpty
+        ? fallback.title
+        : parsed.title;
+    final taggedCandidate = await _tmdbCandidateFromPathTag(
+      fallback,
+      apiKey,
+      proxyHost: proxyHost,
+      proxyPort: proxyPort,
+    );
+    if (taggedCandidate != null) {
+      _appendScanLog(
+        '[同步识别][调试] TMDB 路径标记命中：'
+        'id=${taggedCandidate['id']}，类型=${taggedCandidate['media_type']}',
+      );
+      return [taggedCandidate];
+    }
     final result = await _api!.tmdbSearch(
-      fallback.title,
+      searchTitle,
       apiKey: apiKey,
       mediaKind: requestedKind,
       proxyHost: proxyHost,
@@ -1850,46 +2280,155 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       year: parsed.year,
     );
     final values = result['results'];
-    if (values is! List) return const [];
+    if (values is! List) {
+      _appendScanLog(
+        '[同步识别][调试] TMDB 原始结果格式异常：查询="$searchTitle"，'
+        '类型=$requestedKind，年份参数=${parsed.year?.toString() ?? '未提供'}，'
+        'results=${values.runtimeType}',
+        isError: true,
+      );
+      return const [];
+    }
     final expectedType = requestedKind == 'auto' ? null : requestedKind;
-    final normalizedTitle = _normalizeMediaTitle(fallback.title);
-    if (normalizedTitle.isEmpty) return const [];
+    if (_normalizeMediaTitle(searchTitle).isEmpty) return const [];
     final scored = <({int score, Map<String, dynamic> candidate})>[];
-    for (final value in values) {
+    final diagnostics = <String>[];
+    String describe(Map<String, dynamic> candidate, String? type) {
+      final title = (candidate['title'] ?? candidate['name'] ?? '-').toString();
+      final original =
+          (candidate['original_title'] ?? candidate['original_name'] ?? '-')
+              .toString();
+      final date =
+          (candidate['release_date'] ?? candidate['first_air_date'] ?? '-')
+              .toString();
+      return 'id=${candidate['id'] ?? '-'} type=${type ?? '-'} '
+          '标题="$title" 原名="$original" 日期=$date';
+    }
+
+    for (final value in values.take(20)) {
       if (value is! Map) continue;
       final candidate = Map<String, dynamic>.from(value);
       final type = candidate['media_type']?.toString() ?? expectedType;
-      if (type != 'movie' && type != 'tv') continue;
+      if (type != 'movie' && type != 'tv') {
+        diagnostics.add('${describe(candidate, type)} -> 跳过：类型无效');
+        continue;
+      }
       final releaseDate =
           (candidate['release_date'] ?? candidate['first_air_date'])
               ?.toString() ??
           '';
       if (parsed.year != null && !releaseDate.startsWith('${parsed.year}')) {
+        diagnostics.add('${describe(candidate, type)} -> 跳过：年份不匹配');
         continue;
       }
-      final title = _normalizeMediaTitle(
-        (candidate['title'] ?? candidate['name'] ?? '').toString(),
+      final titleMatch = _bestMediaTitleMatch(
+        searchTitle,
+        title: (candidate['title'] ?? candidate['name'] ?? '').toString(),
+        originalTitle:
+            (candidate['original_title'] ?? candidate['original_name'] ?? '')
+                .toString(),
       );
-      final originalTitle = _normalizeMediaTitle(
-        (candidate['original_title'] ?? candidate['original_name'] ?? '')
-            .toString(),
-      );
-      var score = 0;
-      if (title == normalizedTitle || originalTitle == normalizedTitle) {
-        score = 100;
-      } else if (title.contains(normalizedTitle) ||
-          normalizedTitle.contains(title) ||
-          originalTitle.contains(normalizedTitle) ||
-          normalizedTitle.contains(originalTitle)) {
-        score = 40;
+      var score = titleMatch.score;
+      if (score == 0) {
+        diagnostics.add('${describe(candidate, type)} -> 跳过：标题不相关');
+        continue;
       }
-      if (score == 0) continue;
       if (parsed.year != null) score += 30;
       candidate['media_type'] = type;
       scored.add((score: score, candidate: candidate));
+      diagnostics.add(
+        '${describe(candidate, type)} -> 命中：${titleMatch.basis}，评分=$score',
+      );
     }
     scored.sort((a, b) => b.score.compareTo(a.score));
+    _appendScanLog(
+      '[同步识别][调试] TMDB 候选评估：查询="$searchTitle"，'
+      '类型=$requestedKind，年份参数=${parsed.year?.toString() ?? '未提供'}，原始 ${values.length} 条，'
+      '有效 ${scored.length} 条。${diagnostics.isEmpty ? '无可解析候选' : diagnostics.join('；')}',
+    );
     return scored.map((entry) => entry.candidate).toList();
+  }
+
+  Future<Map<String, dynamic>?> _tmdbCandidateFromPathTag(
+    MediaLibraryItem fallback,
+    String apiKey, {
+    required String proxyHost,
+    required String proxyPort,
+  }) async {
+    final id = _tmdbIDFromPath(fallback.file.cloudPath);
+    if (id == null) return null;
+    final preferred = fallback.mediaKind == TMDBMediaKind.tv
+        ? TMDBMediaKind.tv
+        : TMDBMediaKind.movie;
+    final kinds = <TMDBMediaKind>{
+      preferred,
+      TMDBMediaKind.movie,
+      TMDBMediaKind.tv,
+    };
+    for (final kind in kinds) {
+      try {
+        final details = await _tmdbDetails(
+          id,
+          kind,
+          apiKey: apiKey,
+          proxyHost: proxyHost,
+          proxyPort: proxyPort,
+        );
+        final title = (details['title'] ?? details['name'])?.toString().trim();
+        if (title == null || title.isEmpty) continue;
+        return {
+          ...details,
+          'id': id,
+          'media_type': kind == TMDBMediaKind.tv ? 'tv' : 'movie',
+        };
+      } catch (_) {
+        // A TMDB id does not encode its media type. Try the other endpoint
+        // before falling back to a regular title search.
+      }
+    }
+    return null;
+  }
+
+  int? _tmdbIDFromPath(String cloudPath) {
+    final match = RegExp(
+      r'[\[{(（【]\s*tmdb\s*[-_:]?\s*(\d+)\s*[\]})）】]',
+      caseSensitive: false,
+    ).firstMatch(cloudPath);
+    return match == null ? null : int.tryParse(match.group(1)!);
+  }
+
+  bool _isHighConfidenceTMDBCandidate(
+    MediaLibraryItem fallback,
+    Map<String, dynamic> candidate,
+  ) {
+    final parsed = ParsedMediaName.parse(
+      fallback.file.name,
+      directoryName: _parentDirectoryName(fallback.file.cloudPath),
+      directoryPath: fallback.file.cloudPath,
+    );
+    final expected = parsed.title.trim().isEmpty
+        ? fallback.title
+        : parsed.title;
+    final titleMatch = _bestMediaTitleMatch(
+      expected,
+      title: (candidate['title'] ?? candidate['name'] ?? '').toString(),
+      originalTitle:
+          (candidate['original_title'] ?? candidate['original_name'] ?? '')
+              .toString(),
+    );
+    if (titleMatch.score >= 95) return true;
+
+    // Candidate collection has already discarded unrelated titles. When the
+    // resource has an explicit year and the best remaining candidate has the
+    // same release year, that year is a strong enough disambiguator to apply
+    // the match automatically instead of interrupting the scan with a picker.
+    final releaseDate =
+        (candidate['release_date'] ?? candidate['first_air_date'])
+            ?.toString() ??
+        '';
+    final yearMatches =
+        parsed.year != null && releaseDate.startsWith('${parsed.year}');
+    return yearMatches && titleMatch.score > 0;
   }
 
   Future<MediaLibraryItem> _applyTMDBCandidateAndDetails(
@@ -1948,23 +2487,26 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       audio: fileParsed.audio ?? parentParsed?.audio,
       dynamicRange: fileParsed.dynamicRange ?? parentParsed?.dynamicRange,
     );
-    // A canonical media name must retain a resolution. If neither the file nor
-    // its immediate directory provides one, leave the resource untouched.
-    if (parsed.resolution == null || parsed.resolution!.isEmpty) return item;
     final extension = _extensionOf(item.file.name);
     final year = item.year.isEmpty ? '' : '.${item.year}';
     final episode = item.mediaKind == TMDBMediaKind.tv && parsed.isEpisode
         ? '.S${parsed.season!.toString().padLeft(2, '0')}E${parsed.episode!.toString().padLeft(2, '0')}'
         : '';
     final technical = <String>[
-      parsed.resolution!,
+      if (parsed.resolution?.isNotEmpty == true) parsed.resolution!,
       if (parsed.source?.isNotEmpty == true) parsed.source!,
       if (parsed.dynamicRange?.isNotEmpty == true) parsed.dynamicRange!,
       if (parsed.videoCodec?.isNotEmpty == true) parsed.videoCodec!,
       if (parsed.audio?.isNotEmpty == true) parsed.audio!,
     ].join('.');
+    // Keep every recognized technical tag when it is present, but a successful
+    // TMDB match must also repair bare or otherwise irregular names such as
+    // `1989.mp4`: `福星闯江湖.1989.mp4` is still a useful canonical name even
+    // when the source provides no resolution or release information.
+    final baseName = '${item.title}$year$episode';
     final targetName =
-        '${_safeCloudName('${item.title}$year$episode.$technical')}${extension.isEmpty ? '' : '.$extension'}';
+        '${_safeCloudName(technical.isEmpty ? baseName : '$baseName.$technical')}'
+        '${extension.isEmpty ? '' : '.$extension'}';
     if (targetName == item.file.name) return item;
 
     try {
@@ -2066,10 +2608,82 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return parentPath.isEmpty ? name : '$parentPath/$name';
   }
 
+  /// Compares titles progressively. Literal text remains the strongest signal;
+  /// punctuation and connector normalization only provide a fallback for
+  /// release names that differ from TMDB's original title.
+  ({int score, String basis}) _bestMediaTitleMatch(
+    String expected, {
+    required String title,
+    required String originalTitle,
+  }) {
+    final displayMatch = _mediaTitleMatch(expected, title);
+    final originalMatch = _mediaTitleMatch(expected, originalTitle);
+    if (originalMatch.score > displayMatch.score) {
+      return (score: originalMatch.score, basis: '原名${originalMatch.basis}');
+    }
+    return (score: displayMatch.score, basis: '标题${displayMatch.basis}');
+  }
+
+  ({int score, String basis}) _mediaTitleMatch(
+    String expected,
+    String candidate,
+  ) {
+    final literalExpected = _literalMediaTitle(expected);
+    final literalCandidate = _literalMediaTitle(candidate);
+    if (literalExpected.isEmpty || literalCandidate.isEmpty) {
+      return (score: 0, basis: '');
+    }
+    if (literalExpected == literalCandidate) {
+      return (score: 120, basis: '原样一致');
+    }
+
+    final compactExpected = _normalizeMediaTitle(expected);
+    final compactCandidate = _normalizeMediaTitle(candidate);
+    if (compactExpected == compactCandidate) {
+      return (score: 100, basis: '标点归一一致');
+    }
+
+    final semanticExpected = _semanticMediaTitle(expected);
+    final semanticCandidate = _semanticMediaTitle(candidate);
+    if (semanticExpected == semanticCandidate) {
+      return (score: 95, basis: '连接符归一一致');
+    }
+
+    if (_containsRelatedTitle(literalExpected, literalCandidate)) {
+      return (score: 55, basis: '原样包含');
+    }
+    if (_containsRelatedTitle(compactExpected, compactCandidate)) {
+      return (score: 48, basis: '标点归一包含');
+    }
+    if (_containsRelatedTitle(semanticExpected, semanticCandidate)) {
+      return (score: 45, basis: '连接符归一包含');
+    }
+    return (score: 0, basis: '');
+  }
+
+  bool _containsRelatedTitle(String first, String second) {
+    if (first.length < 4 || second.length < 4) return false;
+    return first.contains(second) || second.contains(first);
+  }
+
+  String _literalMediaTitle(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r"[‘’`´]"), "'")
+        .replaceAll(RegExp(r'[‐‑‒–—―]'), '-')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
   String _normalizeMediaTitle(String value) {
-    return value.toLowerCase().replaceAll(
-      RegExp(r'[^a-z0-9\u4e00-\u9fff]+'),
-      '',
+    return _literalMediaTitle(
+      value,
+    ).replaceAll(RegExp(r'[^a-z0-9\u4e00-\u9fff]+'), '');
+  }
+
+  String _semanticMediaTitle(String value) {
+    return _normalizeMediaTitle(
+      value.replaceAll('&', ' and ').replaceAll('＆', ' and '),
     );
   }
 
@@ -2109,7 +2723,15 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       originalTitle: originalTitle == null || originalTitle.isEmpty
           ? fallback.originalTitle
           : originalTitle,
-      mediaKind: type == 'tv' ? TMDBMediaKind.tv : TMDBMediaKind.movie,
+      // A manual selection is authoritative. In particular, do not retain an
+      // earlier filename-based guess when the selected TMDB result says this
+      // is a movie or a TV series. Keep the existing value only for malformed
+      // legacy candidates that do not contain a media type at all.
+      mediaKind: type == 'tv'
+          ? TMDBMediaKind.tv
+          : type == 'movie'
+          ? TMDBMediaKind.movie
+          : fallback.mediaKind,
       releaseDate: releaseDate,
       overview: candidate['overview']?.toString() ?? '',
       posterPath: candidate['poster_path']?.toString(),
@@ -2213,93 +2835,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
-  Future<List<CloudFile>> _allGlobalRemoteFiles() async {
-    final batches = await Future.wait([
-      _allGlobalRemoteFilesByType(),
-      _allGlobalRemoteFilesByType(resType: 2),
-    ]);
-    final unique = {
-      for (final file in batches.expand((files) => files)) file.id: file,
-    };
-    final values = unique.values.toList();
-    await FileMetadataCache.cacheFiles(values);
-    return values;
-  }
-
-  Future<List<CloudFile>> _cachedGlobalFiles() async {
-    final values = await FileMetadataCache.allCachedFolderChildren();
-    if (values.isEmpty) return _allGlobalRemoteFiles();
-    return values;
-  }
-
-  Future<List<CloudFile>> _allGlobalRemoteFilesByType({int? resType}) async {
-    // get_file_list 会将任意更大的 pageSize 静默限制为 1000；若用请求值
-    // 10000 判断末页，会在第一页被错误地视为已读完。
-    const pageSize = 1000;
-    final values = <CloudFile>[];
-    final seenIDs = <String>{};
-    for (var page = 0; !_cancelScan; page++) {
-      final typeLabel = resType == 2 ? '目录' : '文件';
-      AppLogger.info('CloudIndex', '正在获取全盘$typeLabel索引，第 ${page + 1} 页');
-      final response = await _api!.fsFiles(
-        parentID: '*',
-        page: page,
-        pageSize: pageSize,
-        orderBy: 0,
-        sortType: 0,
-        resType: resType,
-      );
-      final batch = _extractFiles(response);
-      final added = batch.where((file) => seenIDs.add(file.id)).toList();
-      values.addAll(added);
-      AppLogger.info(
-        'CloudIndex',
-        '全盘$typeLabel索引第 ${page + 1} 页完成，获取 ${batch.length} 项，新增 ${added.length} 项，累计 ${values.length} 项',
-      );
-      if (batch.length < pageSize) break;
-      if (added.isEmpty) {
-        AppLogger.warning(
-          'CloudIndex',
-          '全盘$typeLabel索引第 ${page + 1} 页与上一页重复，已停止继续分页',
-        );
-        break;
-      }
-    }
-    return values;
-  }
-
-  bool _isWithinLibrarySource(CloudFile file, MediaLibrarySource source) {
-    final rootID = source.rootID;
-    if (rootID == null || rootID.isEmpty) return true;
-    if (file.parentID == rootID || file.id == rootID) return true;
-    return (file.fullParentIDs ?? '')
-        .split('/')
-        .where((id) => id.isNotEmpty)
-        .contains(rootID);
-  }
-
-  String _globalCloudPath(
-    CloudFile file,
-    Iterable<CloudFile> allFiles,
-    String sourcePath,
-  ) {
-    final namesByID = {for (final item in allFiles) item.id: item.name};
-    final parents = (file.fullParentIDs ?? '')
-        .split('/')
-        .where((id) => id.isNotEmpty)
-        .map((id) => namesByID[id])
-        .whereType<String>()
-        .toList();
-    if (parents.isEmpty) return '$sourcePath/${file.name}';
-    return '/${[...parents, file.name].join('/')}';
-  }
-
   Future<void> _scanSource(
     String? rootID,
     String rootPath, {
     required bool recursive,
     required int minimumSizeBytes,
     required bool forceRemote,
+    required int initialCompleted,
     required Future<void> Function(List<CloudFile> files) onMediaFiles,
   }) async {
     final folders = <_ScanFolder>[_ScanFolder(rootID, rootPath)];
@@ -2323,11 +2865,29 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           ? null
           : await FileMetadataCache.folderChildren(folder.id);
       final folderSnapshot = <CloudFile>[];
+      if (cachedFolder != null) {
+        final cacheLabel = '正在从目录缓存读取 ${folder.path}';
+        state = state.copyWith(
+          progress: MediaLibraryScanProgress(
+            phase: cacheLabel,
+            completed: initialCompleted + discovered,
+          ),
+        );
+        _appendScanLog(cacheLabel);
+      }
       while (!_cancelScan) {
         late List<CloudFile> files;
         if (cachedFolder != null) {
           files = cachedFolder;
         } else {
+          final pageLabel = '正在读取目录 ${folder.path}，第 ${page + 1} 页';
+          state = state.copyWith(
+            progress: MediaLibraryScanProgress(
+              phase: pageLabel,
+              completed: initialCompleted + discovered,
+            ),
+          );
+          _appendScanLog(pageLabel);
           AppLogger.info('Media', '正在读取目录「${folder.path}」第 ${page + 1} 页');
           final response = await _api!.fsFiles(
             parentID: folder.id,
@@ -2336,12 +2896,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             orderBy: 0,
             sortType: 0,
           );
+          if (_cancelScan) break;
           files = _extractFiles(response);
           AppLogger.info(
             'Media',
             '目录「${folder.path}」第 ${page + 1} 页读取完成，获取 ${files.length} 项',
           );
           files = await _enrichAndCacheFiles(files);
+          if (_cancelScan) break;
           folderSnapshot.addAll(files);
         }
         // A folder containing BDMV or VIDEO_TS is a disc root. Do not descend
@@ -2362,13 +2924,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           }
         }
         discovered += mediaBatch.length;
-        if (mediaBatch.isNotEmpty) await onMediaFiles(mediaBatch);
+        _appendScanLog(
+          '目录 ${folder.path} 第 ${page + 1} 页完成，发现 ${mediaBatch.length} 个媒体文件，累计 ${initialCompleted + discovered} 个',
+        );
+        if (mediaBatch.isNotEmpty) {
+          await onMediaFiles(mediaBatch);
+          if (_cancelScan) break;
+        }
 
         state = state.copyWith(
           progress: MediaLibraryScanProgress(
-            phase: '扫描 ${folder.path}',
-            completed: discovered,
-            total: folders.length + visited.length,
+            phase: '已读取 ${folder.path}，正在识别与刮削',
+            completed: initialCompleted + discovered,
           ),
         );
 
@@ -2417,7 +2984,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     };
     var next = 0;
     Future<void> worker() async {
-      while (next < pending.length) {
+      while (!_cancelScan && next < pending.length) {
         final file = pending[next++];
         try {
           final detail = await _api!.fsDetail(file.id);
@@ -2448,6 +3015,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
 
     await Future.wait(List.generate(6, (_) => worker()));
+    if (_cancelScan) return resolved;
     final values = [for (final file in files) enriched[file.id] ?? file];
     await FileMetadataCache.cacheFiles(values);
     return values;
@@ -2610,7 +3178,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<CloudFile?> _resolveCurrentCloudFile(
     CloudFile knownFile, {
     String? libraryID,
+    void Function()? onConfirmedNotFound,
   }) async {
+    var confirmedNotFound = false;
     try {
       final detail = await _api!.fsDetail(knownFile.id);
       final current = _fileFromDetail(detail, knownFile.id, knownFile);
@@ -2618,6 +3188,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         return _cacheResolvedCloudFile(knownFile, current);
       }
     } catch (error) {
+      confirmedNotFound = _isConfirmedNotFound(error);
       // A rename can replace the cloud record. Locate its new ID below.
       _appendScanLog('[同步识别][调试] 旧文件 ID 查询失败：${knownFile.id}，$error；开始回退定位');
     }
@@ -2706,7 +3277,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       '[同步识别][调试] 未定位到当前文件目录中的 GCID；停止自动查找，建议重新扫描媒体库',
       isError: true,
     );
+    if (confirmedNotFound) onConfirmedNotFound?.call();
     return null;
+  }
+
+  bool _isConfirmedNotFound(Object error) {
+    if (error is ApiException) return error.status == 404;
+    if (error is DioException) {
+      final response = error.response;
+      if (response?.statusCode == 404) return true;
+      final body = response?.data;
+      if (body is Map) {
+        return int.tryParse(body['code']?.toString() ?? '') == 404;
+      }
+    }
+    return false;
   }
 
   Future<CloudFile?> _resolveFromCurrentDirectory(
@@ -2989,6 +3574,27 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     await _saveAllItems(allItems);
   }
 
+  Future<void> _removeMissingMediaItems(
+    Iterable<MediaLibraryItem> values,
+  ) async {
+    final keys = values.map((item) => '${item.libraryID}:${item.id}').toSet();
+    if (keys.isEmpty) return;
+    final fileIDs = values.map((item) => item.id).toSet();
+    final allItems = await _loadAllItems()
+      ..removeWhere((item) => keys.contains('${item.libraryID}:${item.id}'));
+    await _saveAllItems(allItems);
+    await FileMetadataCache.removeFilesFromAllFolders(fileIDs);
+    await FileMetadataCache.removeLiveFileIDs(fileIDs);
+    await _removeWatchHistory?.call(fileIDs);
+    _searchResultsCache.clear();
+    state = state.copyWith(
+      items: state.items
+          .where((item) => !keys.contains('${item.libraryID}:${item.id}'))
+          .toList(),
+      allItems: allItems,
+    );
+  }
+
   Future<int> _removeDiscInternalItems() async {
     final items = await _loadAllItems();
     final retained = items
@@ -3119,5 +3725,8 @@ class _SyncedMediaItem {
 
 final mediaLibraryProvider =
     StateNotifierProvider<MediaLibraryNotifier, MediaLibraryState>(
-      (ref) => MediaLibraryNotifier(),
+      (ref) => MediaLibraryNotifier(
+        removeWatchHistory: (fileIDs) =>
+            ref.read(watchHistoryProvider.notifier).removeFiles(fileIDs),
+      ),
     );
