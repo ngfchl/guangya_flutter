@@ -467,6 +467,8 @@ class MediaLibraryScanProgress {
   });
 }
 
+enum MediaLibraryScanMode { unrecognizedOnly, forceAll }
+
 class MediaLibraryScanLog {
   final DateTime createdAt;
   final String message;
