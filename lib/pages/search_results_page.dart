@@ -11,6 +11,7 @@ import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/file_list_tile.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/share_link_dialog.dart';
 import '../widgets/media_player_dialog.dart';
 
@@ -915,6 +916,8 @@ class _ShadSearchLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(child: SizedBox(width: 220, child: ShadProgress()));
+    return const Center(
+      child: AppLoadingIndicator(size: AppLoadingSize.page, label: '正在搜索资源'),
+    );
   }
 }

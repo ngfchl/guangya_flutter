@@ -15,6 +15,7 @@ import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../widgets/app_loading_indicator.dart';
 import 'media_library_page.dart';
 
 enum WorkspaceTool { scan, rename, fastTransfer, tmdb, categories }
@@ -427,7 +428,13 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
                   padding: const EdgeInsets.only(top: 12),
                   child: Semantics(
                     label: '文件扫描进度：$_foldersScanned 个文件夹，$_filesScanned 个文件',
-                    child: const ShadProgress(),
+                    child: const Align(
+                      alignment: Alignment.centerLeft,
+                      child: AppLoadingIndicator(
+                        size: AppLoadingSize.compact,
+                        semanticsLabel: '正在扫描当前目录',
+                      ),
+                    ),
                   ),
                 )
               : _error != null
@@ -1677,7 +1684,12 @@ class _BatchRenameFolderPickerState
                 const SizedBox(height: 8),
                 Expanded(
                   child: _loading
-                      ? const Center(child: ShadProgress())
+                      ? const Center(
+                          child: AppLoadingIndicator(
+                            size: AppLoadingSize.page,
+                            label: '正在读取目录',
+                          ),
+                        )
                       : _error != null
                       ? Center(
                           child: Text(
@@ -2580,7 +2592,13 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                     const SizedBox(height: 8),
                     Semantics(
                       label: '正在计算本地文件校验值：$_generated / $_generationTotal',
-                      child: const ShadProgress(),
+                      child: const Align(
+                        alignment: Alignment.centerLeft,
+                        child: AppLoadingIndicator(
+                          size: AppLoadingSize.compact,
+                          semanticsLabel: '正在计算本地文件校验值',
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -2606,7 +2624,16 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
               ),
             ),
           ),
-          if (_running) ...[const SizedBox(height: 12), const ShadProgress()],
+          if (_running) ...[
+            const SizedBox(height: 12),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: AppLoadingIndicator(
+                size: AppLoadingSize.compact,
+                label: '正在执行秒传任务',
+              ),
+            ),
+          ],
           if (_result.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(_result, style: TextStyle(color: cs.mutedForeground)),

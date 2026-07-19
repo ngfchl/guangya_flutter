@@ -14,6 +14,7 @@ import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../providers/watch_history_provider.dart';
 import '../models/watch_history.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/media_player_dialog.dart';
 
 enum MediaLibraryBrowseFilter { all, movies, series, collections, unmatched }
@@ -220,9 +221,11 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
         size: widget.compact ? ShadButtonSize.sm : null,
         onPressed: widget.disabled || active ? null : _controller.toggle,
         leading: active
-            ? SizedBox(
-                width: 44,
-                child: ShadProgress(value: progress!.fraction, minHeight: 5),
+            ? AppLoadingIndicator(
+                value: progress!.fraction,
+                size: AppLoadingSize.inline,
+                semanticsLabel: '云盘备份进度',
+                semanticsValue: '${(progress.fraction * 100).round()}%',
               )
             : const Icon(Icons.storage_rounded, size: 16),
         trailing: const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
@@ -245,6 +248,126 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
     },
     child: Text(label),
   );
+}
+
+class _MediaScanMenu extends StatefulWidget {
+  final bool compact;
+  final bool disabled;
+  final VoidCallback onScanUnrecognized;
+  final VoidCallback onForceAll;
+
+  const _MediaScanMenu({
+    required this.compact,
+    required this.disabled,
+    required this.onScanUnrecognized,
+    required this.onForceAll,
+  });
+
+  @override
+  State<_MediaScanMenu> createState() => _MediaScanMenuState();
+}
+
+class _MediaScanMenuState extends State<_MediaScanMenu> {
+  final _controller = ShadPopoverController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadPopover(
+      controller: _controller,
+      popover: (_) => SizedBox(
+        width: 286,
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 7),
+                child: Text(
+                  '选择重新扫描方式',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: cs.mutedForeground,
+                  ),
+                ),
+              ),
+              _option(
+                icon: Icons.filter_alt_outlined,
+                title: '仅扫描未识别',
+                description: '读取当前目录，仅识别新增或尚未匹配的资源',
+                onPressed: widget.onScanUnrecognized,
+              ),
+              const SizedBox(height: 3),
+              _option(
+                icon: Icons.restart_alt_rounded,
+                title: '强制全部重新识别',
+                description: '重新读取全部资源并再次执行自动识别',
+                onPressed: widget.onForceAll,
+              ),
+            ],
+          ),
+        ),
+      ),
+      child: ShadButton.ghost(
+        size: ShadButtonSize.sm,
+        onPressed: widget.disabled ? null : _controller.toggle,
+        leading: const Icon(Icons.refresh_rounded, size: 16),
+        trailing: const Icon(Icons.keyboard_arrow_down_rounded, size: 15),
+        child: Text(widget.compact ? '扫描' : '重新扫描'),
+      ),
+    );
+  }
+
+  Widget _option({
+    required IconData icon,
+    required String title,
+    required String description,
+    required VoidCallback onPressed,
+  }) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadButton.ghost(
+      width: double.infinity,
+      height: 58,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      mainAxisAlignment: MainAxisAlignment.start,
+      leading: Icon(icon, size: 18, color: cs.primary),
+      onPressed: () {
+        _controller.hide();
+        onPressed();
+      },
+      child: SizedBox(
+        width: 218,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              description,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
@@ -589,15 +712,17 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               leading: const Icon(Icons.stop_rounded, size: 16),
               child: const Text('停止扫描'),
             )
-          : ShadButton.ghost(
-              size: ShadButtonSize.sm,
-              onPressed: state.selectedLibrary == null
-                  ? null
-                  : () => ref
-                        .read(mediaLibraryProvider.notifier)
-                        .rescanSelectedLibrary(),
-              leading: const Icon(Icons.refresh_rounded, size: 16),
-              child: Text(compact ? '扫描' : '重新扫描'),
+          : _MediaScanMenu(
+              compact: compact,
+              disabled: state.selectedLibrary == null,
+              onScanUnrecognized: () => ref
+                  .read(mediaLibraryProvider.notifier)
+                  .rescanSelectedLibrary(
+                    mode: MediaLibraryScanMode.unrecognizedOnly,
+                  ),
+              onForceAll: () => ref
+                  .read(mediaLibraryProvider.notifier)
+                  .rescanSelectedLibrary(mode: MediaLibraryScanMode.forceAll),
             ),
     ];
     final content = compact
@@ -695,7 +820,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
 
   Widget _buildMainPanel(BuildContext context, MediaLibraryState state) {
     if (state.isLoading) {
-      return const Center(child: ShadProgress());
+      return const Center(
+        child: AppLoadingIndicator(size: AppLoadingSize.page, label: '正在加载媒体库'),
+      );
     }
     if (_tmdbSearching || _tmdbResults.isNotEmpty || _tmdbError != null) {
       return _tmdbResultPanel(context);
@@ -1048,7 +1175,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           children: [
             Row(
               children: [
-                const SizedBox(width: 120, child: ShadProgress()),
+                const AppLoadingIndicator(
+                  size: AppLoadingSize.compact,
+                  semanticsLabel: '正在扫描媒体库',
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -1102,7 +1232,14 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
 
   Widget _tmdbResultPanel(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    if (_tmdbSearching) return const Center(child: ShadProgress());
+    if (_tmdbSearching) {
+      return const Center(
+        child: AppLoadingIndicator(
+          size: AppLoadingSize.page,
+          label: '正在搜索 TMDB',
+        ),
+      );
+    }
     if (_tmdbError != null) {
       return _mainEmpty(context, 'TMDB 请求失败', _tmdbError!);
     }
@@ -1547,13 +1684,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
-                width: 38,
-                height: 38,
-                child: CircularProgressIndicator(strokeWidth: 3),
-              ),
-              const SizedBox(height: 14),
-              Text(message),
+              AppLoadingIndicator(size: AppLoadingSize.regular, label: message),
               if (onCancel != null) ...[
                 const SizedBox(height: 14),
                 ShadButton.destructive(
@@ -2086,7 +2217,10 @@ class _CreateMediaLibraryDialogState
           Expanded(
             child: _isLoadingFolders
                 ? const Center(
-                    child: SizedBox(width: 220, child: ShadProgress()),
+                    child: AppLoadingIndicator(
+                      size: AppLoadingSize.page,
+                      label: '正在读取云盘目录',
+                    ),
                   )
                 : _folderError != null
                 ? Center(
@@ -2536,14 +2670,26 @@ class _ContinueWatchingTile extends StatelessWidget {
                               ),
                       ),
                       Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: LinearProgressIndicator(
-                          value: value.entry.progress,
-                          minHeight: 3,
-                          color: cs.primary,
-                          backgroundColor: Colors.black.withValues(alpha: 0.34),
+                        right: 10,
+                        bottom: 10,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.58),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(6),
+                            child: AppLoadingIndicator(
+                              value: value.entry.progress,
+                              size: AppLoadingSize.compact,
+                              color: Colors.white,
+                              backgroundColor: Colors.white.withValues(
+                                alpha: 0.22,
+                              ),
+                              semanticsLabel: '观看进度',
+                              semanticsValue: '$percent%',
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -3212,10 +3358,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           size: ShadButtonSize.sm,
           onPressed: widget.manualMatchLoading ? null : widget.onManualMatch,
           leading: widget.manualMatchLoading
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              ? const AppLoadingIndicator(
+                  size: AppLoadingSize.inline,
+                  semanticsLabel: '正在准备手动匹配',
                 )
               : const Icon(Icons.manage_search_rounded, size: 16),
           child: Text(widget.manualMatchLoading ? '正在匹配' : '手动匹配'),
@@ -3254,7 +3399,13 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     if (_loadingTMDBDetails && _tmdbDetails == null) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 14),
-        child: Row(children: [SizedBox(width: 100, child: ShadProgress())]),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: AppLoadingIndicator(
+            size: AppLoadingSize.compact,
+            label: '正在加载影视资料',
+          ),
+        ),
       );
     }
     final details = _tmdbDetails;
@@ -3600,7 +3751,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     if (_loadingEpisodeDetails) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 16),
-        child: SizedBox(width: 120, child: ShadProgress()),
+        child: AppLoadingIndicator(
+          size: AppLoadingSize.compact,
+          label: '正在加载剧集资料',
+        ),
       );
     }
     final parsed = ParsedMediaName.parse(
@@ -4016,7 +4170,12 @@ class _ManualTMDBMatchDialogState
                   const SizedBox(height: 12),
                   Expanded(
                     child: _searching
-                        ? const Center(child: ShadProgress())
+                        ? const Center(
+                            child: AppLoadingIndicator(
+                              size: AppLoadingSize.page,
+                              label: '正在搜索匹配结果',
+                            ),
+                          )
                         : _error != null
                         ? Center(
                             child: Text(

@@ -8,6 +8,7 @@ import '../providers/media_library_provider.dart';
 import '../widgets/app_log_dialog.dart';
 import '../core/http/dio_client.dart';
 import '../core/storage/storage_manager.dart';
+import '../widgets/app_loading_indicator.dart';
 
 class SettingsDialog extends ConsumerStatefulWidget {
   const SettingsDialog({super.key});
@@ -93,13 +94,10 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         ShadButton(
           onPressed: _saving ? null : _saveAndClose,
           leading: _saving
-              ? SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: cs.primaryForeground,
-                  ),
+              ? AppLoadingIndicator(
+                  size: AppLoadingSize.inline,
+                  color: cs.primaryForeground,
+                  semanticsLabel: '正在保存设置',
                 )
               : const Icon(Icons.check_rounded, size: 16),
           child: Text(_saving ? '正在保存' : '保存设置'),
@@ -215,13 +213,10 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                                     .refreshGlobalCloudIndex(force: true),
                               ),
                         leading: mediaState.isRefreshingCloudIndex
-                            ? SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: cs.primary,
-                                ),
+                            ? AppLoadingIndicator(
+                                size: AppLoadingSize.inline,
+                                color: cs.primary,
+                                semanticsLabel: '正在刷新全盘文件索引',
                               )
                             : const Icon(Icons.refresh_rounded, size: 15),
                         child: Text(

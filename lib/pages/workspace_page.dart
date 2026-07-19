@@ -18,6 +18,7 @@ import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/breadcrumb_bar.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/file_list_tile.dart';
 import '../widgets/media_player_dialog.dart';
 import '../widgets/file_icon.dart';
@@ -292,7 +293,12 @@ class _CloudFolderDestinationPickerState
             const SizedBox(height: 8),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const Center(
+                      child: AppLoadingIndicator(
+                        size: AppLoadingSize.page,
+                        label: '正在读取文件夹',
+                      ),
+                    )
                   : _error != null
                   ? Center(
                       child: Text(
@@ -2714,7 +2720,13 @@ class _UploadProgressPopover extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.upload_rounded, size: 17, color: cs.primary),
+                AppLoadingIndicator(
+                  value: value.fraction,
+                  size: AppLoadingSize.compact,
+                  color: cs.primary,
+                  semanticsLabel: '上传进度',
+                  semanticsValue: '$percentage%',
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -2735,13 +2747,6 @@ class _UploadProgressPopover extends StatelessWidget {
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 10),
-            ShadProgress(
-              value: value.fraction,
-              minHeight: 8,
-              semanticsLabel: '上传进度',
-              semanticsValue: '$percentage%',
             ),
             const SizedBox(height: 9),
             Text(
@@ -5331,34 +5336,11 @@ class _ShadLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 40,
-            height: 40,
-            child: CircularProgressIndicator(
-              strokeWidth: 3,
-              color: cs.mutedForeground,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            '正在加载文件夹内容...',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-              color: cs.foreground,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '正在同步文件、大小和修改时间',
-            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-          ),
-        ],
+    return const Center(
+      child: AppLoadingIndicator(
+        size: AppLoadingSize.page,
+        label: '正在加载文件夹内容',
+        description: '正在同步文件、大小和修改时间',
       ),
     );
   }

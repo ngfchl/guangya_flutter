@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/app_loading_indicator.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
@@ -252,7 +253,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           const SizedBox(
             width: 200,
             height: 200,
-            child: Center(child: ShadProgress()),
+            child: Center(
+              child: AppLoadingIndicator(
+                size: AppLoadingSize.regular,
+                label: '正在生成二维码',
+              ),
+            ),
           ),
         const SizedBox(height: 16),
         Text(

@@ -15,6 +15,7 @@ import '../models/media_library.dart';
 import '../core/logging/app_logger.dart';
 import '../providers/file_provider.dart';
 import '../providers/watch_history_provider.dart';
+import 'app_loading_indicator.dart';
 
 Future<void> showMediaPlayerDialog(
   BuildContext context,
@@ -382,9 +383,10 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
                     color: Colors.black,
                     child: _loading
                         ? Center(
-                            child: CircularProgressIndicator(
-                              strokeWidth: 3,
+                            child: AppLoadingIndicator(
+                              size: AppLoadingSize.regular,
                               color: cs.primary,
+                              label: '正在准备播放',
                             ),
                           )
                         : _error != null
@@ -1024,7 +1026,12 @@ class _ExternalPlayerDialogState extends ConsumerState<ExternalPlayerDialog> {
             if (!snapshot.hasData) {
               return const SizedBox(
                 height: 100,
-                child: Center(child: ShadProgress()),
+                child: Center(
+                  child: AppLoadingIndicator(
+                    size: AppLoadingSize.regular,
+                    label: '正在检测可用播放器',
+                  ),
+                ),
               );
             }
             final players = snapshot.data!;
