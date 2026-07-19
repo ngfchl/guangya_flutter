@@ -1531,55 +1531,62 @@ class _SidebarTile extends StatelessWidget {
     final cs = ShadTheme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: label,
+        child: ShadButton.ghost(
+          width: double.infinity,
           height: 42,
-          padding: const EdgeInsets.symmetric(horizontal: 9),
-          decoration: BoxDecoration(
-            color: selected
-                ? const Color(0xFFFFB18A).withValues(alpha: 0.72)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: selected
-                      ? Colors.white.withValues(alpha: 0.36)
-                      : const Color(0xFFFFE4D2).withValues(alpha: 0.82),
-                  borderRadius: BorderRadius.circular(8),
+          padding: EdgeInsets.zero,
+          onPressed: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            height: 42,
+            padding: const EdgeInsets.symmetric(horizontal: 9),
+            decoration: BoxDecoration(
+              color: selected
+                  ? const Color(0xFFFFB18A).withValues(alpha: 0.72)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? Colors.white.withValues(alpha: 0.36)
+                        : const Color(0xFFFFE4D2).withValues(alpha: 0.82),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, size: 17, color: cs.primary),
                 ),
-                child: Icon(icon, size: 17, color: cs.primary),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                    color: selected ? cs.foreground : cs.mutedForeground,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                      color: selected ? cs.foreground : cs.mutedForeground,
+                    ),
                   ),
                 ),
-              ),
-              if (count != null)
-                Text(
-                  count.toString(),
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: cs.mutedForeground,
+                if (count != null)
+                  Text(
+                    count.toString(),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: cs.mutedForeground,
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

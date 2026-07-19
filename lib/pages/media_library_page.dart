@@ -123,7 +123,9 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
     final label = active
         ? '${progress!.phase} $percentage%'
         : progress?.error != null
-        ? '数据备份失败'
+        ? progress!.phase.contains('恢复')
+              ? '数据恢复失败'
+              : '数据备份失败'
         : '数据备份';
     return ShadPopover(
       controller: _controller,
@@ -132,6 +134,51 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (progress?.error?.trim().isNotEmpty == true) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: ShadTheme.of(
+                    context,
+                  ).colorScheme.destructive.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: ShadTheme.of(
+                      context,
+                    ).colorScheme.destructive.withValues(alpha: 0.34),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${progress!.phase}原因',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: ShadTheme.of(context).colorScheme.destructive,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 96),
+                      child: SingleChildScrollView(
+                        child: SelectableText(
+                          progress.error!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            height: 1.35,
+                            color: ShadTheme.of(context).colorScheme.foreground,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+            ],
             _item(
               icon: Icons.save_alt_rounded,
               label: '导出数据',
@@ -1200,6 +1247,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     List<CloudFile> backups;
     try {
       backups = await notifier.cloudScrapedBackups();
+    } catch (_) {
+      return;
     } finally {
       if (mounted) setState(() => _backupBusy = false);
     }

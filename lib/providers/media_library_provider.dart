@@ -314,6 +314,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> exportScrapedDataToCloud() async {
     if (_api == null || state.isLoading || state.isScanning) return;
+    _appendBackupLog('开始同步刮削数据到云盘');
     state = state.copyWith(
       clearError: true,
       clearStatus: true,
@@ -327,6 +328,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
     Directory? temporaryDirectory;
     try {
+      _appendBackupLog('正在确认云盘备份目录');
       final destination = await _resolveCloudBackupDestination();
       state = state.copyWith(
         cloudBackupSync: CloudBackupSyncProgress(
@@ -337,14 +339,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           isActive: true,
         ),
       );
+      _appendBackupLog('备份目录已就绪：${destination.path}');
       temporaryDirectory = await Directory.systemTemp.createTemp(
         'guangya-media-',
       );
       final backup = File(
         '${temporaryDirectory.path}/media-library-${DateTime.now().millisecondsSinceEpoch}.sqlite3',
       );
+      _appendBackupLog('正在导出本地刮削数据库');
       await _store.exportBackupTo(backup.path);
       final size = await backup.length();
+      _appendBackupLog('本地数据库导出完成，大小 ${_formatBytes(size)}');
       state = state.copyWith(
         cloudBackupSync: CloudBackupSyncProgress(
           phase: '正在上传备份',
@@ -354,6 +359,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           isActive: true,
         ),
       );
+      _appendBackupLog('正在上传备份到 ${destination.path}');
       await _api!.fileUpload(
         backup,
         parentID: destination.id,
@@ -383,17 +389,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           isActive: false,
         ),
       );
+      _appendBackupLog('云盘备份同步完成：$uploadedPath');
     } catch (error) {
       final destination = state.cloudBackupSync?.destination ?? '云盘根目录/小黄鸭备份';
+      final reason = _backupFailureReason(error);
+      _appendBackupLog('同步到云盘失败：$reason', isError: true, error: error);
       state = state.copyWith(
-        errorMessage: '同步到云盘失败：$error',
+        errorMessage: '同步到云盘失败：$reason',
         cloudBackupSync: CloudBackupSyncProgress(
           phase: '同步失败',
           destination: destination,
           transferredBytes: 0,
           totalBytes: 0,
           isActive: false,
-          error: '$error',
+          error: reason,
         ),
       );
     } finally {
@@ -431,24 +440,73 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<List<CloudFile>> cloudScrapedBackups() async {
     if (_api == null) return const [];
-    final response = await _api!.searchFiles(
-      'media-library.sqlite3',
-      pageSize: 100,
+    _appendBackupLog('正在查找云盘中的 SQLite 备份');
+    state = state.copyWith(
+      clearError: true,
+      clearStatus: true,
+      cloudBackupSync: const CloudBackupSyncProgress(
+        phase: '正在查找云盘备份',
+        destination: '云盘根目录/小黄鸭备份',
+        transferredBytes: 0,
+        totalBytes: 0,
+        isActive: true,
+      ),
     );
-    return _extractFiles(response)
-        .where(
-          (file) =>
-              !file.isDirectory && file.name.toLowerCase().endsWith('.sqlite3'),
-        )
-        .toList();
+    try {
+      final response = await _api!.searchFiles(
+        'media-library.sqlite3',
+        pageSize: 100,
+      );
+      final backups = _extractFiles(response)
+          .where(
+            (file) =>
+                !file.isDirectory &&
+                file.name.toLowerCase().endsWith('.sqlite3'),
+          )
+          .toList();
+      _appendBackupLog('云盘备份查找完成，找到 ${backups.length} 个文件');
+      state = state.copyWith(
+        cloudBackupSync: const CloudBackupSyncProgress(
+          phase: '请选择要恢复的备份',
+          destination: '云盘根目录/小黄鸭备份',
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+        ),
+      );
+      return backups;
+    } catch (error) {
+      final reason = _backupFailureReason(error);
+      _appendBackupLog('查找云盘备份失败：$reason', isError: true, error: error);
+      state = state.copyWith(
+        errorMessage: '查找云盘备份失败：$reason',
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '恢复失败',
+          destination: '云盘根目录/小黄鸭备份',
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+          error: reason,
+        ),
+      );
+      rethrow;
+    }
   }
 
   Future<void> importScrapedDataFromCloud(CloudFile backup) async {
     if (_api == null || state.isLoading || state.isScanning) return;
+    _appendBackupLog('开始从云盘恢复：${backup.name}');
     state = state.copyWith(
       isLoading: true,
       clearError: true,
       clearStatus: true,
+      cloudBackupSync: CloudBackupSyncProgress(
+        phase: '正在获取备份下载地址',
+        destination: backup.name,
+        transferredBytes: 0,
+        totalBytes: backup.size ?? 0,
+        isActive: true,
+      ),
     );
     Directory? temporaryDirectory;
     try {
@@ -468,10 +526,57 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final localBackup = File(
         '${temporaryDirectory.path}/media-library.sqlite3',
       );
-      await Dio().download(url, localBackup.path);
+      _appendBackupLog('正在下载云盘备份：${backup.name}');
+      await Dio().download(
+        url,
+        localBackup.path,
+        onReceiveProgress: (received, total) {
+          state = state.copyWith(
+            cloudBackupSync: CloudBackupSyncProgress(
+              phase: '正在下载云盘备份',
+              destination: backup.name,
+              transferredBytes: received,
+              totalBytes: total > 0 ? total : (backup.size ?? 0),
+              isActive: true,
+            ),
+          );
+        },
+      );
+      _appendBackupLog('备份下载完成，正在导入本地数据库');
+      state = state.copyWith(
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '正在导入刮削数据',
+          destination: backup.name,
+          transferredBytes: backup.size ?? 0,
+          totalBytes: backup.size ?? 0,
+          isActive: true,
+        ),
+      );
       await _applyImportedBackup(localBackup.path);
+      _appendBackupLog('云盘备份恢复完成：${backup.name}');
+      state = state.copyWith(
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '恢复完成',
+          destination: backup.name,
+          transferredBytes: backup.size ?? 0,
+          totalBytes: backup.size ?? 0,
+          isActive: false,
+        ),
+      );
     } catch (error) {
-      state = state.copyWith(errorMessage: '从云盘同步失败：$error');
+      final reason = _backupFailureReason(error);
+      _appendBackupLog('从云盘恢复失败：$reason', isError: true, error: error);
+      state = state.copyWith(
+        errorMessage: '从云盘恢复失败：$reason',
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '恢复失败',
+          destination: backup.name,
+          transferredBytes: 0,
+          totalBytes: backup.size ?? 0,
+          isActive: false,
+          error: reason,
+        ),
+      );
     } finally {
       if (temporaryDirectory != null && await temporaryDirectory.exists()) {
         await temporaryDirectory.delete(recursive: true);
@@ -1057,6 +1162,32 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     ];
     if (logs.length > 120) logs.removeRange(0, logs.length - 120);
     state = state.copyWith(scanLogs: logs);
+  }
+
+  void _appendBackupLog(String message, {bool isError = false, Object? error}) {
+    if (isError) {
+      AppLogger.error('Backup', message, error: error);
+    } else {
+      AppLogger.info('Backup', message);
+    }
+    final logs = [
+      ...state.scanLogs,
+      MediaLibraryScanLog(
+        createdAt: DateTime.now(),
+        message: '【数据备份】$message',
+        isError: isError,
+      ),
+    ];
+    if (logs.length > 120) logs.removeRange(0, logs.length - 120);
+    state = state.copyWith(scanLogs: logs);
+    unawaited(_persistScanHistory());
+  }
+
+  String _backupFailureReason(Object error) {
+    final value = error.toString().trim();
+    return value
+        .replaceFirst(RegExp(r'^Exception:\s*'), '')
+        .replaceFirst(RegExp(r'^DioException \[[^\]]+\]:\s*'), '网络请求失败：');
   }
 
   List<MediaLibraryScanLog> _loadScanHistory() {

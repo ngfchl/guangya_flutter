@@ -36,6 +36,7 @@ class AppLogEntry {
     'HTTP' => '网络',
     'Auth' => '认证',
     'Media' => '媒体库',
+    'Backup' => '数据备份',
     'CloudIndex' => '全盘索引',
     'Player' => '播放器',
     'Storage' => '本地存储',
