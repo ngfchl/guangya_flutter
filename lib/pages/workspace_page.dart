@@ -362,90 +362,41 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       context: context,
       side: ShadSheetSide.left,
       builder: (sheetContext) => ShadSheet(
-        // The desktop sidebars contain Expanded/ListView regions. A left
-        // ShadSheet only has a minimum height by default, so make the mobile
-        // viewport height explicit before those flex children are laid out.
-        constraints: BoxConstraints.tightFor(
-          width: width,
-          height: viewport.height,
-        ),
-        padding: EdgeInsets.zero,
-        scrollable: false,
-        useSafeArea: false,
-        child: SizedBox.expand(
-          child: SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: _SegmentButton(
-                          icon: Icons.folder_rounded,
-                          label: '光鸭云盘',
-                          compact: false,
-                          selected: _mode == WorkspaceMode.cloud,
-                          onTap: () {
-                            Navigator.of(sheetContext).pop();
-                            _changeMode(WorkspaceMode.cloud);
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: _SegmentButton(
-                          icon: Icons.movie_rounded,
-                          label: '光鸭影视',
-                          compact: false,
-                          selected: _mode == WorkspaceMode.media,
-                          onTap: () {
-                            Navigator.of(sheetContext).pop();
-                            _changeMode(WorkspaceMode.media);
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const ShadSeparator.horizontal(),
-                Expanded(
-                  child: _mode == WorkspaceMode.cloud
-                      ? _CloudSidebar(
-                          state: ref.read(fileProvider),
-                          width: width,
-                          onSection: (section) {
-                            Navigator.of(sheetContext).pop();
-                            ref.read(fileProvider.notifier).setSection(section);
-                          },
-                          onSettings: () {
-                            Navigator.of(sheetContext).pop();
-                            _showSettings(context);
-                          },
-                          onSignOut: () {
-                            Navigator.of(sheetContext).pop();
-                            ref.read(authProvider.notifier).signOut();
-                          },
-                          onTool: (tool) {
-                            Navigator.of(sheetContext).pop();
-                            _openTool(tool);
-                          },
-                        )
-                      : _MediaSidebar(
-                          width: width,
-                          onCreate: () {
-                            Navigator.of(sheetContext).pop();
-                            MediaLibraryPage.showCreateDialog(context, ref);
-                          },
-                          onTool: (tool) {
-                            Navigator.of(sheetContext).pop();
-                            _openTool(tool);
-                          },
-                        ),
-                ),
-              ],
-            ),
-          ),
+        constraints: BoxConstraints.tightFor(width: width),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+        scrollable: true,
+        child: _MobileSidebarContent(
+          mode: _mode,
+          cloudState: ref.read(fileProvider),
+          mediaState: ref.read(mediaLibraryProvider),
+          onModeChanged: (mode) {
+            Navigator.of(sheetContext).pop();
+            _changeMode(mode);
+          },
+          onSection: (section) {
+            Navigator.of(sheetContext).pop();
+            ref.read(fileProvider.notifier).setSection(section);
+          },
+          onSettings: () {
+            Navigator.of(sheetContext).pop();
+            _showSettings(context);
+          },
+          onSignOut: () {
+            Navigator.of(sheetContext).pop();
+            ref.read(authProvider.notifier).signOut();
+          },
+          onCreateLibrary: () {
+            Navigator.of(sheetContext).pop();
+            MediaLibraryPage.showCreateDialog(context, ref);
+          },
+          onSelectLibrary: (libraryID) {
+            Navigator.of(sheetContext).pop();
+            ref.read(mediaLibraryProvider.notifier).selectLibrary(libraryID);
+          },
+          onTool: (tool) {
+            Navigator.of(sheetContext).pop();
+            _openTool(tool);
+          },
         ),
       ),
     );
@@ -919,6 +870,201 @@ class _MobileDrawerSwipeAreaState extends State<_MobileDrawerSwipeArea> {
   );
 }
 
+/// A sheet-safe sidebar without desktop flex regions. ShadDialog owns the
+/// vertical scroll extent, so this widget deliberately contains no Expanded
+/// or nested scrollable viewport.
+class _MobileSidebarContent extends StatelessWidget {
+  final WorkspaceMode mode;
+  final FileState cloudState;
+  final MediaLibraryState mediaState;
+  final ValueChanged<WorkspaceMode> onModeChanged;
+  final ValueChanged<WorkspaceSection> onSection;
+  final VoidCallback onSettings;
+  final VoidCallback onSignOut;
+  final VoidCallback onCreateLibrary;
+  final ValueChanged<String> onSelectLibrary;
+  final ValueChanged<WorkspaceTool> onTool;
+
+  const _MobileSidebarContent({
+    required this.mode,
+    required this.cloudState,
+    required this.mediaState,
+    required this.onModeChanged,
+    required this.onSection,
+    required this.onSettings,
+    required this.onSignOut,
+    required this.onCreateLibrary,
+    required this.onSelectLibrary,
+    required this.onTool,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isCloud = mode == WorkspaceMode.cloud;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _SegmentButton(
+                icon: Icons.folder_rounded,
+                label: '光鸭云盘',
+                compact: false,
+                selected: isCloud,
+                onTap: () => onModeChanged(WorkspaceMode.cloud),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _SegmentButton(
+                icon: Icons.movie_rounded,
+                label: '光鸭影视',
+                compact: false,
+                selected: !isCloud,
+                onTap: () => onModeChanged(WorkspaceMode.media),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _SidebarBrand(
+          icon: isCloud
+              ? Icons.cloud_sync_rounded
+              : Icons.play_circle_fill_rounded,
+          title: isCloud ? '光鸭云盘' : '光鸭影视',
+          subtitle: isCloud ? 'Cloud Workspace' : 'Media Center',
+          imageAsset: isCloud ? 'assets/branding/guangya_icon.png' : null,
+        ),
+        const SizedBox(height: 16),
+        if (isCloud) ...[
+          for (final section in WorkspaceSection.values.where(
+            (section) => section != WorkspaceSection.mediaLibrary,
+          ))
+            _SidebarTile(
+              icon: _cloudSectionIcon(section),
+              label: section.label,
+              selected: cloudState.section == section,
+              onTap: () => onSection(section),
+            ),
+          const ShadSeparator.horizontal(),
+          const SizedBox(height: 10),
+          _SidebarTile(
+            icon: Icons.manage_search_rounded,
+            label: '文件扫描与清理',
+            selected: false,
+            onTap: () => onTool(WorkspaceTool.scan),
+          ),
+          _SidebarTile(
+            icon: Icons.text_fields_rounded,
+            label: '批量重命名',
+            selected: false,
+            onTap: () => onTool(WorkspaceTool.rename),
+          ),
+          _SidebarTile(
+            icon: Icons.bolt_rounded,
+            label: '秒传工具',
+            selected: false,
+            onTap: () => onTool(WorkspaceTool.fastTransfer),
+          ),
+          const SizedBox(height: 10),
+          const ShadSeparator.horizontal(),
+          const SizedBox(height: 10),
+          _SidebarTile(
+            icon: Icons.settings_rounded,
+            label: '工作区设置',
+            selected: false,
+            onTap: onSettings,
+          ),
+          _SidebarTile(
+            icon: Icons.logout_rounded,
+            label: '退出登录',
+            selected: false,
+            onTap: onSignOut,
+          ),
+        ] else ...[
+          _SidebarTile(
+            icon: Icons.home_rounded,
+            label: '首页',
+            selected: true,
+            onTap: () => onTool(WorkspaceTool.tmdb),
+          ),
+          _SidebarTile(
+            icon: Icons.movie_creation_rounded,
+            label: '电影',
+            count: mediaState.statistics.movies,
+            selected: false,
+            onTap: () => onTool(WorkspaceTool.tmdb),
+          ),
+          _SidebarTile(
+            icon: Icons.live_tv_rounded,
+            label: '电视剧',
+            count: mediaState.statistics.series,
+            selected: false,
+            onTap: () => onTool(WorkspaceTool.tmdb),
+          ),
+          _SidebarTile(
+            icon: Icons.help_outline_rounded,
+            label: '未识别',
+            count: mediaState.statistics.unmatched,
+            selected: false,
+            onTap: () => onTool(WorkspaceTool.tmdb),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(8, 18, 8, 8),
+            child: Text(
+              '媒体库',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+          ),
+          for (final library in mediaState.libraries)
+            _SidebarTile(
+              icon: library.kind == MediaLibraryKind.series
+                  ? Icons.live_tv_rounded
+                  : Icons.smart_display_rounded,
+              label: library.name,
+              selected: mediaState.selectedLibrary?.id == library.id,
+              onTap: () => onSelectLibrary(library.id),
+            ),
+          _SidebarTile(
+            icon: Icons.add_rounded,
+            label: '新建媒体库',
+            selected: false,
+            onTap: onCreateLibrary,
+          ),
+          _SidebarTile(
+            icon: Icons.auto_fix_high_rounded,
+            label: '媒体库管理',
+            selected: false,
+            onTap: () => onTool(WorkspaceTool.tmdb),
+          ),
+          _SidebarTile(
+            icon: Icons.category_rounded,
+            label: '分类管理',
+            selected: false,
+            onTap: () => onTool(WorkspaceTool.categories),
+          ),
+        ],
+      ],
+    );
+  }
+
+  IconData _cloudSectionIcon(WorkspaceSection section) => switch (section) {
+    WorkspaceSection.files => Icons.folder_rounded,
+    WorkspaceSection.recentViewed => Icons.access_time_rounded,
+    WorkspaceSection.recentRestored => Icons.history_rounded,
+    WorkspaceSection.photos => Icons.image_rounded,
+    WorkspaceSection.videos => Icons.smart_display_rounded,
+    WorkspaceSection.audio => Icons.music_note_rounded,
+    WorkspaceSection.documents => Icons.description_rounded,
+    WorkspaceSection.cloud => Icons.cloud_download_rounded,
+    WorkspaceSection.shares => Icons.ios_share_rounded,
+    WorkspaceSection.recycle => Icons.delete_outline_rounded,
+    WorkspaceSection.mediaLibrary => Icons.movie_filter_rounded,
+  };
+}
+
 // ignore: unused_element
 class _MobileWorkspaceMenu extends StatelessWidget {
   final WorkspaceMode mode;
@@ -1187,7 +1333,6 @@ class _MobileMenuRow extends StatelessWidget {
 
 class _CloudSidebar extends StatelessWidget {
   final FileState state;
-  final double width;
   final ValueChanged<WorkspaceSection> onSection;
   final VoidCallback onSettings;
   final VoidCallback onSignOut;
@@ -1195,7 +1340,6 @@ class _CloudSidebar extends StatelessWidget {
 
   const _CloudSidebar({
     required this.state,
-    this.width = 250,
     required this.onSection,
     required this.onSettings,
     required this.onSignOut,
@@ -1208,7 +1352,7 @@ class _CloudSidebar extends StatelessWidget {
         .where((section) => section != WorkspaceSection.mediaLibrary)
         .toList();
     return SizedBox(
-      width: width,
+      width: 250,
       child: OS26Glass(
         radius: 24,
         opacity: 0.56,
@@ -1302,22 +1446,17 @@ class _CloudSidebar extends StatelessWidget {
 }
 
 class _MediaSidebar extends ConsumerWidget {
-  final double width;
   final VoidCallback onCreate;
   final ValueChanged<WorkspaceTool> onTool;
 
-  const _MediaSidebar({
-    this.width = 250,
-    required this.onCreate,
-    required this.onTool,
-  });
+  const _MediaSidebar({required this.onCreate, required this.onTool});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(mediaLibraryProvider);
     final notifier = ref.read(mediaLibraryProvider.notifier);
     return SizedBox(
-      width: width,
+      width: 250,
       child: OS26Glass(
         radius: 24,
         opacity: 0.56,
