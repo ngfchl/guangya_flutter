@@ -240,6 +240,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   Widget build(BuildContext context) {
     final fp = ref.watch(fileProvider);
     final mediaState = ref.watch(mediaLibraryProvider);
+    final useMobileDrawer = MediaQuery.sizeOf(context).width < 720;
     final drawerWidth = (MediaQuery.sizeOf(context).width * 0.9)
         .clamp(320.0, 360.0)
         .toDouble();
@@ -247,42 +248,46 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: Colors.transparent,
-      drawer: Drawer(
-        width: drawerWidth,
-        child: _NativeMobileDrawerContent(
-          mode: _mode,
-          cloudState: fp,
-          mediaState: mediaState,
-          onModeChanged: (mode) {
-            Navigator.of(context).pop();
-            _changeMode(mode);
-          },
-          onSection: (section) {
-            Navigator.of(context).pop();
-            ref.read(fileProvider.notifier).setSection(section);
-          },
-          onSettings: () {
-            Navigator.of(context).pop();
-            _showSettings(context);
-          },
-          onSignOut: () {
-            Navigator.of(context).pop();
-            ref.read(authProvider.notifier).signOut();
-          },
-          onCreateLibrary: () {
-            Navigator.of(context).pop();
-            MediaLibraryPage.showCreateDialog(context, ref);
-          },
-          onSelectLibrary: (libraryID) {
-            Navigator.of(context).pop();
-            ref.read(mediaLibraryProvider.notifier).selectLibrary(libraryID);
-          },
-          onTool: (tool) {
-            Navigator.of(context).pop();
-            _openTool(tool);
-          },
-        ),
-      ),
+      drawer: useMobileDrawer
+          ? Drawer(
+              width: drawerWidth,
+              child: _NativeMobileDrawerContent(
+                mode: _mode,
+                cloudState: fp,
+                mediaState: mediaState,
+                onModeChanged: (mode) {
+                  Navigator.of(context).pop();
+                  _changeMode(mode);
+                },
+                onSection: (section) {
+                  Navigator.of(context).pop();
+                  ref.read(fileProvider.notifier).setSection(section);
+                },
+                onSettings: () {
+                  Navigator.of(context).pop();
+                  _showSettings(context);
+                },
+                onSignOut: () {
+                  Navigator.of(context).pop();
+                  ref.read(authProvider.notifier).signOut();
+                },
+                onCreateLibrary: () {
+                  Navigator.of(context).pop();
+                  MediaLibraryPage.showCreateDialog(context, ref);
+                },
+                onSelectLibrary: (libraryID) {
+                  Navigator.of(context).pop();
+                  ref
+                      .read(mediaLibraryProvider.notifier)
+                      .selectLibrary(libraryID);
+                },
+                onTool: (tool) {
+                  Navigator.of(context).pop();
+                  _openTool(tool);
+                },
+              ),
+            )
+          : null,
       body: OS26Surface(
         child: SafeArea(
           child: LayoutBuilder(
@@ -530,6 +535,7 @@ class _TopBar extends StatelessWidget {
               child: _TopBarIconButton(
                 tooltip: '打开菜单',
                 icon: Icons.menu_rounded,
+                showTooltip: false,
                 onTap: onOpenMenu,
               ),
             ),
@@ -666,6 +672,7 @@ class _SegmentButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool compact;
+  final bool showLabelWhenSelected;
   final bool selected;
   final VoidCallback onTap;
 
@@ -673,6 +680,7 @@ class _SegmentButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.compact,
+    this.showLabelWhenSelected = false,
     required this.selected,
     required this.onTap,
   });
@@ -680,11 +688,11 @@ class _SegmentButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    final showLabel = !compact;
+    final showLabel = !compact && (!showLabelWhenSelected || selected);
     return ShadTooltip(
       builder: (_) => Text(label),
       child: ShadButton.ghost(
-        width: compact ? 38 : 120,
+        width: compact ? 38 : (showLabelWhenSelected && !selected ? 38 : 120),
         height: compact ? 38 : 32,
         padding: EdgeInsets.zero,
         onPressed: onTap,
@@ -733,27 +741,29 @@ class _SegmentButton extends StatelessWidget {
 class _TopBarIconButton extends StatelessWidget {
   final String tooltip;
   final IconData icon;
+  final bool showTooltip;
   final VoidCallback onTap;
 
   const _TopBarIconButton({
     required this.tooltip,
     required this.icon,
+    this.showTooltip = true,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    return ShadTooltip(
-      builder: (_) => Text(tooltip),
-      child: ShadButton.ghost(
-        width: 38,
-        height: 38,
-        padding: EdgeInsets.zero,
-        onPressed: onTap,
-        child: Icon(icon, size: 18, color: cs.mutedForeground),
-      ),
+    final button = ShadButton.ghost(
+      width: 38,
+      height: 38,
+      padding: EdgeInsets.zero,
+      onPressed: onTap,
+      child: Icon(icon, size: 18, color: cs.mutedForeground),
     );
+    return showTooltip
+        ? ShadTooltip(builder: (_) => Text(tooltip), child: button)
+        : button;
   }
 }
 
@@ -761,11 +771,15 @@ class _ModeSwitcher extends StatelessWidget {
   final WorkspaceMode mode;
   final ValueChanged<WorkspaceMode> onModeChanged;
   final VoidCallback onSettings;
+  final bool showLabelWhenSelected;
+  final bool showTooltips;
 
   const _ModeSwitcher({
     required this.mode,
     required this.onModeChanged,
     required this.onSettings,
+    this.showLabelWhenSelected = false,
+    this.showTooltips = true,
   });
 
   @override
@@ -780,6 +794,7 @@ class _ModeSwitcher extends StatelessWidget {
           icon: Icons.folder_rounded,
           label: '光鸭云盘',
           compact: false,
+          showLabelWhenSelected: showLabelWhenSelected,
           selected: mode == WorkspaceMode.cloud,
           onTap: () => onModeChanged(WorkspaceMode.cloud),
         ),
@@ -787,12 +802,14 @@ class _ModeSwitcher extends StatelessWidget {
           icon: Icons.movie_rounded,
           label: '光鸭影视',
           compact: false,
+          showLabelWhenSelected: showLabelWhenSelected,
           selected: mode == WorkspaceMode.media,
           onTap: () => onModeChanged(WorkspaceMode.media),
         ),
         _TopBarIconButton(
           tooltip: '设置',
           icon: Icons.settings_rounded,
+          showTooltip: showTooltips,
           onTap: onSettings,
         ),
       ],
@@ -915,11 +932,12 @@ class _NativeMobileDrawerContent extends StatelessWidget {
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
-          DrawerHeader(
+          Container(
+            height: 128,
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
             decoration: BoxDecoration(
               color: theme.colorScheme.surfaceContainerHighest,
             ),
-            margin: EdgeInsets.zero,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -934,6 +952,8 @@ class _NativeMobileDrawerContent extends StatelessWidget {
                   mode: mode,
                   onModeChanged: onModeChanged,
                   onSettings: onSettings,
+                  showLabelWhenSelected: true,
+                  showTooltips: false,
                 ),
               ],
             ),
