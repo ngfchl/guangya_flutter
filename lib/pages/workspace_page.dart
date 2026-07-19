@@ -270,25 +270,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       children: [
                         topBar,
                         const SizedBox(height: 8),
-                        Expanded(
-                          child: Stack(
-                            children: [
-                              Positioned.fill(child: content),
-                              Positioned(
-                                right: 4,
-                                bottom: 8,
-                                child: _MobileFloatingSearch(
-                                  mode: _mode,
-                                  searchController: _searchController,
-                                  searchFocusNode: _searchFocusNode,
-                                  searchOpen: _searchOpen,
-                                  onSearch: _submitSearch,
-                                  onToggleSearch: _toggleSearch,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        Expanded(child: content),
                       ],
                     ),
                   ),
@@ -375,93 +357,100 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _showMobileMenu(BuildContext context) {
-    final width = (MediaQuery.sizeOf(context).width * 0.86)
-        .clamp(280.0, 340.0)
+    final width = (MediaQuery.sizeOf(context).width * 0.78)
+        .clamp(252.0, 300.0)
         .toDouble();
     showShadSheet(
       context: context,
       side: ShadSheetSide.left,
       builder: (sheetContext) => StatefulBuilder(
-        builder: (sheetContext, setSheetState) => ShadSheet(
-          constraints: BoxConstraints.tightFor(width: width),
-          padding: EdgeInsets.zero,
-          scrollable: false,
-          child: Material(
-            color: Colors.transparent,
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                  child: Row(
-                    children: [
-                      _ModeDisplayButton(
-                        mode: _mode,
-                        onTap: () {
-                          _changeMode(
-                            _mode == WorkspaceMode.cloud
-                                ? WorkspaceMode.media
-                                : WorkspaceMode.cloud,
-                          );
-                          setSheetState(() {});
-                        },
-                      ),
-                      const SizedBox(width: 4),
-                      _TopBarIconButton(
-                        tooltip: '设置',
-                        icon: Icons.settings_rounded,
-                        onTap: () {
-                          Navigator.of(sheetContext).pop();
-                          _showSettings(context);
-                        },
-                      ),
-                      const Spacer(),
-                    ],
+        builder: (sheetContext, setSheetState) {
+          final cs = ShadTheme.of(sheetContext).colorScheme;
+          return ShadSheet(
+            constraints: BoxConstraints.tightFor(width: width),
+            padding: EdgeInsets.zero,
+            scrollable: false,
+            backgroundColor: cs.background,
+            border: const Border(),
+            shadows: const [],
+            child: Material(
+              color: cs.background,
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                    child: _SidebarBrand(
+                      icon: _mode == WorkspaceMode.cloud
+                          ? Icons.cloud_sync_rounded
+                          : Icons.play_circle_fill_rounded,
+                      title: _mode == WorkspaceMode.cloud ? '光鸭云盘' : '光鸭影视',
+                      subtitle: _mode == WorkspaceMode.cloud
+                          ? 'Cloud Workspace'
+                          : 'Media Center',
+                      imageAsset: _mode == WorkspaceMode.cloud
+                          ? 'assets/branding/guangya_icon.png'
+                          : null,
+                      onSwitchMode: () {
+                        _changeMode(
+                          _mode == WorkspaceMode.cloud
+                              ? WorkspaceMode.media
+                              : WorkspaceMode.cloud,
+                        );
+                        setSheetState(() {});
+                      },
+                      onSettings: () {
+                        Navigator.of(sheetContext).pop();
+                        _showSettings(context);
+                      },
+                    ),
                   ),
-                ),
-                const ShadSeparator.horizontal(),
-                Expanded(
-                  child: _mode == WorkspaceMode.cloud
-                      ? _CloudSidebar(
-                          state: ref.read(fileProvider),
-                          width: width,
-                          showBrand: false,
-                          onModeChanged: _changeMode,
-                          onSection: (section) {
-                            Navigator.of(sheetContext).pop();
-                            ref.read(fileProvider.notifier).setSection(section);
-                          },
-                          onSettings: () {
-                            Navigator.of(sheetContext).pop();
-                            _showSettings(context);
-                          },
-                          onSignOut: () {
-                            Navigator.of(sheetContext).pop();
-                            ref.read(authProvider.notifier).signOut();
-                          },
-                          onTool: (tool) {
-                            Navigator.of(sheetContext).pop();
-                            _openTool(tool);
-                          },
-                        )
-                      : _MediaSidebar(
-                          width: width,
-                          showBrand: false,
-                          onModeChanged: _changeMode,
-                          onSettings: () => _showSettings(context),
-                          onCreate: () {
-                            Navigator.of(sheetContext).pop();
-                            MediaLibraryPage.showCreateDialog(context, ref);
-                          },
-                          onTool: (tool) {
-                            Navigator.of(sheetContext).pop();
-                            _openTool(tool);
-                          },
-                        ),
-                ),
-              ],
+                  const ShadSeparator.horizontal(),
+                  Expanded(
+                    child: _mode == WorkspaceMode.cloud
+                        ? _CloudSidebar(
+                            state: ref.read(fileProvider),
+                            width: width,
+                            showBrand: false,
+                            onModeChanged: _changeMode,
+                            onSection: (section) {
+                              Navigator.of(sheetContext).pop();
+                              ref
+                                  .read(fileProvider.notifier)
+                                  .setSection(section);
+                            },
+                            onSettings: () {
+                              Navigator.of(sheetContext).pop();
+                              _showSettings(context);
+                            },
+                            onSignOut: () {
+                              Navigator.of(sheetContext).pop();
+                              ref.read(authProvider.notifier).signOut();
+                            },
+                            onTool: (tool) {
+                              Navigator.of(sheetContext).pop();
+                              _openTool(tool);
+                            },
+                          )
+                        : _MediaSidebar(
+                            width: width,
+                            showBrand: false,
+                            onModeChanged: _changeMode,
+                            onSettings: () => _showSettings(context),
+                            onCreate: () {
+                              Navigator.of(sheetContext).pop();
+                              MediaLibraryPage.showCreateDialog(context, ref);
+                            },
+                            onTool: (tool) {
+                              Navigator.of(sheetContext).pop();
+                              _openTool(tool);
+                            },
+                          ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -584,24 +573,67 @@ class _TopBar extends StatelessWidget {
     if (compact) {
       return SizedBox(
         height: 46,
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: OS26Glass(
-            radius: 12,
-            opacity: 0.42,
-            padding: const EdgeInsets.all(3),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _TopBarIconButton(
-                  tooltip: '打开菜单',
-                  icon: Icons.menu_rounded,
-                  onTap: onOpenMenu,
+        child: searchOpen
+            ? OS26Glass(
+                radius: 12,
+                opacity: 0.58,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.search_rounded,
+                      size: 18,
+                      color: cs.mutedForeground,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: searchController,
+                        focusNode: searchFocusNode,
+                        decoration: InputDecoration(
+                          border: InputBorder.none,
+                          isDense: true,
+                          hintText: mode == WorkspaceMode.cloud
+                              ? '搜索文件'
+                              : '搜索影视资源',
+                        ),
+                        textInputAction: TextInputAction.search,
+                        onSubmitted: onSearch,
+                      ),
+                    ),
+                    _TopBarIconButton(
+                      tooltip: '关闭搜索',
+                      icon: Icons.close_rounded,
+                      onTap: onToggleSearch,
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        ),
+              )
+            : Row(
+                children: [
+                  OS26Glass(
+                    radius: 12,
+                    opacity: 0.42,
+                    padding: const EdgeInsets.all(3),
+                    child: _TopBarIconButton(
+                      tooltip: '打开菜单',
+                      icon: Icons.menu_rounded,
+                      onTap: onOpenMenu,
+                    ),
+                  ),
+                  const Spacer(),
+                  OS26Glass(
+                    radius: 12,
+                    opacity: 0.52,
+                    padding: const EdgeInsets.all(3),
+                    child: _TopBarIconButton(
+                      tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
+                      icon: Icons.search_rounded,
+                      onTap: onToggleSearch,
+                    ),
+                  ),
+                ],
+              ),
       );
     }
     return SizedBox(
@@ -672,54 +704,6 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _ModeDisplayButton extends StatelessWidget {
-  final WorkspaceMode mode;
-  final VoidCallback onTap;
-
-  const _ModeDisplayButton({required this.mode, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    final isCloud = mode == WorkspaceMode.cloud;
-    final label = isCloud ? '光鸭云盘' : '光鸭影视';
-    final nextLabel = isCloud ? '光鸭影视' : '光鸭云盘';
-    final icon = isCloud ? Icons.folder_rounded : Icons.movie_rounded;
-    return ShadTooltip(
-      builder: (_) => Text('切换到$nextLabel'),
-      child: Semantics(
-        button: true,
-        label: '$label，点击切换到$nextLabel',
-        child: ShadButton.ghost(
-          height: 40,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          onPressed: onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 20, color: cs.foreground),
-                const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: cs.foreground,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _TopBarIconButton extends StatelessWidget {
   final String tooltip;
   final IconData icon;
@@ -775,74 +759,6 @@ class _UploadListTopButtonState extends State<_UploadListTopButton> {
       onTap: _controller.toggle,
     ),
   );
-}
-
-class _MobileFloatingSearch extends StatelessWidget {
-  final WorkspaceMode mode;
-  final TextEditingController searchController;
-  final FocusNode searchFocusNode;
-  final bool searchOpen;
-  final ValueChanged<String> onSearch;
-  final VoidCallback onToggleSearch;
-
-  const _MobileFloatingSearch({
-    required this.mode,
-    required this.searchController,
-    required this.searchFocusNode,
-    required this.searchOpen,
-    required this.onSearch,
-    required this.onToggleSearch,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    final maxWidth = MediaQuery.sizeOf(context).width - 40;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 160),
-      curve: Curves.easeOutCubic,
-      width: searchOpen ? maxWidth.clamp(220.0, 300.0).toDouble() : 52,
-      height: 52,
-      child: OS26Glass(
-        radius: 26,
-        opacity: 0.82,
-        padding: searchOpen
-            ? const EdgeInsets.symmetric(horizontal: 8, vertical: 5)
-            : EdgeInsets.zero,
-        child: searchOpen
-            ? Row(
-                children: [
-                  Expanded(
-                    child: ShadInput(
-                      controller: searchController,
-                      focusNode: searchFocusNode,
-                      autofocus: true,
-                      placeholder: Text(
-                        mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
-                      ),
-                      leading: Icon(
-                        Icons.search_rounded,
-                        size: 17,
-                        color: cs.mutedForeground,
-                      ),
-                      onSubmitted: onSearch,
-                    ),
-                  ),
-                  _TopBarIconButton(
-                    tooltip: '关闭搜索',
-                    icon: Icons.close_rounded,
-                    onTap: onToggleSearch,
-                  ),
-                ],
-              )
-            : _TopBarIconButton(
-                tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
-                icon: Icons.search_rounded,
-                onTap: onToggleSearch,
-              ),
-      ),
-    );
-  }
 }
 
 class _MobileDrawerSwipeArea extends StatefulWidget {
@@ -1194,6 +1110,7 @@ class _CloudSidebar extends StatelessWidget {
       child: OS26Glass(
         radius: showBrand ? 24 : 0,
         opacity: showBrand ? 0.56 : 0,
+        border: showBrand ? null : const Border(),
         padding: EdgeInsets.fromLTRB(14, showBrand ? 18 : 14, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1307,6 +1224,7 @@ class _MediaSidebar extends ConsumerWidget {
       child: OS26Glass(
         radius: showBrand ? 24 : 0,
         opacity: showBrand ? 0.56 : 0,
+        border: showBrand ? null : const Border(),
         padding: EdgeInsets.fromLTRB(14, showBrand ? 18 : 14, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

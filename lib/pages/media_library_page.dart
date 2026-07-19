@@ -233,6 +233,135 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
   );
 }
 
+class _MediaLibrarySwitcher extends StatefulWidget {
+  final List<MediaLibraryDefinition> libraries;
+  final String? selectedLibraryID;
+  final ValueChanged<String> onSelected;
+  final bool compact;
+
+  const _MediaLibrarySwitcher({
+    required this.libraries,
+    required this.selectedLibraryID,
+    required this.onSelected,
+    this.compact = false,
+  });
+
+  @override
+  State<_MediaLibrarySwitcher> createState() => _MediaLibrarySwitcherState();
+}
+
+class _MediaLibrarySwitcherState extends State<_MediaLibrarySwitcher> {
+  final _controller = ShadPopoverController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final selected = widget.libraries
+        .where((library) => library.id == widget.selectedLibraryID)
+        .firstOrNull;
+    final title = selected?.name ?? '未选择媒体库';
+    final label = Container(
+      constraints: const BoxConstraints(maxWidth: 180),
+      height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: cs.muted.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: cs.border),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.video_library_rounded, size: 16, color: cs.primary),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: cs.foreground,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    final control = Row(
+      mainAxisSize: widget.compact ? MainAxisSize.max : MainAxisSize.min,
+      children: [
+        if (widget.compact) Expanded(child: label) else label,
+        const SizedBox(width: 6),
+        ShadTooltip(
+          builder: (_) => const Text('切换媒体库'),
+          child: ShadButton.outline(
+            size: ShadButtonSize.sm,
+            onPressed: widget.libraries.isEmpty ? null : _controller.toggle,
+            child: const Icon(Icons.swap_horiz_rounded, size: 17),
+          ),
+        ),
+      ],
+    );
+    return ShadPopover(
+      controller: _controller,
+      popover: (_) => SizedBox(
+        width: 240,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 280),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.all(6),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+                child: Text(
+                  '切换媒体库',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: cs.mutedForeground,
+                  ),
+                ),
+              ),
+              for (final library in widget.libraries)
+                ShadButton.ghost(
+                  width: double.infinity,
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  leading: Icon(
+                    library.kind == MediaLibraryKind.series
+                        ? Icons.live_tv_rounded
+                        : Icons.movie_rounded,
+                    size: 16,
+                  ),
+                  trailing: library.id == widget.selectedLibraryID
+                      ? Icon(Icons.check_rounded, size: 16, color: cs.primary)
+                      : null,
+                  onPressed: () {
+                    _controller.hide();
+                    widget.onSelected(library.id);
+                  },
+                  child: Text(
+                    library.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      child: control,
+    );
+  }
+}
+
 class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   final String _tmdbApiKey =
       StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
@@ -306,12 +435,17 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       ),
       child: Column(
         children: [
-          _buildHeader(context, state, compact: compact),
-          SizedBox(height: compact ? 8 : 12),
+          if (!widget.showManagementToolbar) ...[
+            _buildHeader(context, state, compact: compact),
+            SizedBox(height: compact ? 8 : 12),
+          ],
           _buildToolbar(context, state),
           SizedBox(height: compact ? 8 : 12),
           Expanded(
-            child: widget.showLibrarySidebar && !compact
+            child:
+                widget.showLibrarySidebar &&
+                    !widget.showManagementToolbar &&
+                    !compact
                 ? Row(
                     children: [
                       _buildLibraryList(context, state),
@@ -461,6 +595,14 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                     leading: const Icon(Icons.travel_explore_rounded, size: 16),
                     child: const Text('匹配'),
                   ),
+                  _MediaLibrarySwitcher(
+                    libraries: state.libraries,
+                    selectedLibraryID: state.selectedLibraryID,
+                    compact: true,
+                    onSelected: (libraryID) => ref
+                        .read(mediaLibraryProvider.notifier)
+                        .selectLibrary(libraryID),
+                  ),
                 ],
               ],
             ),
@@ -470,7 +612,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     }
     return Row(
       children: [
-        if (detailWork != null) ...[
+        if (detailWork != null && widget.showManagementToolbar) ...[
           ShadButton.ghost(
             size: ShadButtonSize.sm,
             onPressed: () => setState(() => _detailWork = null),
@@ -493,7 +635,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           ),
         ),
         const SizedBox(width: 8),
-        if (detailWork != null) ...[
+        if (detailWork != null && widget.showManagementToolbar) ...[
           ShadButton.outline(
             onPressed: _detailSyncing
                 ? null
@@ -543,6 +685,14 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 : () => _searchTMDB(_searchController.text),
             leading: const Icon(Icons.travel_explore_rounded, size: 16),
             child: const Text('匹配'),
+          ),
+          const SizedBox(width: 8),
+          _MediaLibrarySwitcher(
+            libraries: state.libraries,
+            selectedLibraryID: state.selectedLibraryID,
+            onSelected: (libraryID) => ref
+                .read(mediaLibraryProvider.notifier)
+                .selectLibrary(libraryID),
           ),
         ],
       ],
@@ -750,16 +900,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               Expanded(child: wallContent),
             ],
           );
-    if (!state.isScanning) {
-      if (state.scanLogs.isEmpty) return content;
-      return Column(
-        children: [
-          _recentScanLogs(context, state),
-          const SizedBox(height: 10),
-          Expanded(child: content),
-        ],
-      );
-    }
+    if (!state.isScanning) return content;
     return Column(
       children: [
         _scanProgress(context, state),
@@ -840,98 +981,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 ),
               ],
             ),
-            if (state.scanLogs.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Divider(height: 1, color: cs.border),
-              const SizedBox(height: 8),
-              Text(
-                '任务日志',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: cs.mutedForeground,
-                ),
-              ),
-              const SizedBox(height: 4),
-              SizedBox(
-                height: 84,
-                child: ListView.builder(
-                  reverse: true,
-                  itemCount: state.scanLogs.length,
-                  itemBuilder: (context, index) {
-                    final log = state.scanLogs.reversed.elementAt(index);
-                    final time = TimeOfDay.fromDateTime(
-                      log.createdAt,
-                    ).format(context);
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Text(
-                        '$time  ${log.message}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: log.isError
-                              ? cs.destructive
-                              : cs.mutedForeground,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _recentScanLogs(BuildContext context, MediaLibraryState state) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: cs.muted.withValues(alpha: 0.68),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: cs.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '最近扫描日志',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: cs.mutedForeground,
-            ),
-          ),
-          const SizedBox(height: 4),
-          SizedBox(
-            height: 54,
-            child: ListView.builder(
-              reverse: true,
-              itemCount: state.scanLogs.length,
-              itemBuilder: (context, index) {
-                final log = state.scanLogs.reversed.elementAt(index);
-                final time = TimeOfDay.fromDateTime(
-                  log.createdAt,
-                ).format(context);
-                return Text(
-                  '$time  ${log.message}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: log.isError ? cs.destructive : cs.mutedForeground,
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
       ),
     );
   }
