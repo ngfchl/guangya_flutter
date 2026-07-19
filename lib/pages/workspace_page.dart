@@ -240,8 +240,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   Widget build(BuildContext context) {
     final fp = ref.watch(fileProvider);
     final mediaState = ref.watch(mediaLibraryProvider);
-    final drawerWidth = (MediaQuery.sizeOf(context).width * 0.86)
-        .clamp(280.0, 340.0)
+    final drawerWidth = (MediaQuery.sizeOf(context).width * 0.82)
+        .clamp(260.0, 320.0)
         .toDouble();
 
     return Scaffold(
@@ -690,6 +690,7 @@ class _SegmentButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool compact;
+  final bool showLabelWhenSelected;
   final bool selected;
   final VoidCallback onTap;
 
@@ -697,6 +698,7 @@ class _SegmentButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.compact,
+    this.showLabelWhenSelected = false,
     required this.selected,
     required this.onTap,
   });
@@ -704,53 +706,49 @@ class _SegmentButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final showLabel = !compact && (!showLabelWhenSelected || selected);
     return ShadTooltip(
       builder: (_) => Text(label),
-      child: Semantics(
-        button: true,
-        selected: selected,
-        label: label,
-        child: ShadButton.ghost(
-          width: compact ? 38 : 120,
-          height: compact ? 38 : 32,
-          padding: EdgeInsets.zero,
-          onPressed: onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            decoration: BoxDecoration(
-              color: selected ? cs.secondary : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                        color: cs.border.withValues(alpha: 0.7),
-                        blurRadius: 10,
-                        offset: const Offset(0, 3),
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  icon,
-                  size: 15,
-                  color: selected ? cs.foreground : cs.mutedForeground,
-                ),
-                if (!compact) ...[
-                  const SizedBox(width: 7),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                      color: selected ? cs.foreground : cs.mutedForeground,
+      child: ShadButton.ghost(
+        width: compact ? 38 : (showLabelWhenSelected && !selected ? 38 : 120),
+        height: compact ? 38 : 32,
+        padding: EdgeInsets.zero,
+        onPressed: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          decoration: BoxDecoration(
+            color: selected ? cs.secondary : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: cs.border.withValues(alpha: 0.7),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
                     ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 15,
+                color: selected ? cs.foreground : cs.mutedForeground,
+              ),
+              if (showLabel) ...[
+                const SizedBox(width: 7),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                    color: selected ? cs.foreground : cs.mutedForeground,
                   ),
-                ],
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),
@@ -915,21 +913,36 @@ class _NativeMobileDrawerContent extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.folder_rounded),
-                  title: const Text('光鸭云盘'),
-                  selected: isCloud,
-                  onTap: () => onModeChanged(WorkspaceMode.cloud),
-                ),
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.movie_rounded),
-                  title: const Text('光鸭影视'),
-                  selected: !isCloud,
-                  onTap: () => onModeChanged(WorkspaceMode.media),
+                OS26Glass(
+                  radius: 13,
+                  opacity: 0.42,
+                  padding: const EdgeInsets.all(3),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _SegmentButton(
+                        icon: Icons.folder_rounded,
+                        label: '光鸭云盘',
+                        compact: false,
+                        showLabelWhenSelected: true,
+                        selected: isCloud,
+                        onTap: () => onModeChanged(WorkspaceMode.cloud),
+                      ),
+                      _SegmentButton(
+                        icon: Icons.movie_rounded,
+                        label: '光鸭影视',
+                        compact: false,
+                        showLabelWhenSelected: true,
+                        selected: !isCloud,
+                        onTap: () => onModeChanged(WorkspaceMode.media),
+                      ),
+                      _TopBarIconButton(
+                        tooltip: '设置',
+                        icon: Icons.settings_rounded,
+                        onTap: onSettings,
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
