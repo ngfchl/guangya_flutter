@@ -694,6 +694,7 @@ class _SegmentButton extends StatelessWidget {
       child: ShadButton.ghost(
         width: compact ? 38 : (showLabelWhenSelected && !selected ? 38 : 120),
         height: compact ? 38 : 32,
+        expands: false,
         padding: EdgeInsets.zero,
         onPressed: onTap,
         child: AnimatedContainer(
@@ -712,6 +713,7 @@ class _SegmentButton extends StatelessWidget {
                 : null,
           ),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
@@ -757,6 +759,7 @@ class _TopBarIconButton extends StatelessWidget {
     final button = ShadButton.ghost(
       width: 38,
       height: 38,
+      expands: false,
       padding: EdgeInsets.zero,
       onPressed: onTap,
       child: Icon(icon, size: 18, color: cs.mutedForeground),
