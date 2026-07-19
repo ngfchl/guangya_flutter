@@ -1134,34 +1134,19 @@ class _MobileMenuRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final color = destructive ? cs.destructive : cs.foreground;
-    return Semantics(
-      button: true,
-      label: label,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: 20,
-                color: destructive ? cs.destructive : cs.mutedForeground,
-              ),
-              const SizedBox(width: 12),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: color,
-                ),
-              ),
-            ],
-          ),
-        ),
+    return ShadButton.ghost(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      mainAxisAlignment: MainAxisAlignment.start,
+      foregroundColor: color,
+      textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+      leading: Icon(
+        icon,
+        size: 20,
+        color: destructive ? cs.destructive : cs.mutedForeground,
       ),
+      onPressed: onTap,
+      child: Text(label),
     );
   }
 }

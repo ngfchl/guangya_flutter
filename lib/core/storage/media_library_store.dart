@@ -265,14 +265,8 @@ class MediaLibraryStore {
   Future<MediaLibraryStorageStats> optimizeStorage() async {
     final db = await _db;
     final before = await _databaseBytes(db.path);
-    final columns = await _tableColumns(db, 'main', 'media_items');
-    final hasLegacyArtwork =
-        columns.contains('poster') || columns.contains('backdrop');
-    final removedArtwork = hasLegacyArtwork
-        ? await db.rawUpdate('''UPDATE media_items
-             SET poster = NULL, backdrop = NULL
-             WHERE poster IS NOT NULL OR backdrop IS NOT NULL''')
-        : 0;
+    final migration = await _migrateArtworkBlobSchema(db);
+    final removedArtwork = migration?.rows ?? 0;
     try {
       await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
     } on DatabaseException catch (error) {
@@ -722,7 +716,18 @@ class MediaLibraryStore {
       '开始压缩刮削数据库：共 $pages 页，空闲 $free 页，当前 ${_formatBytes(before)}',
     );
     try {
-      await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+      try {
+        await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+      } on DatabaseException catch (error) {
+        // sqflite_darwin reports a completed checkpoint as Code=0 / "not an
+        // error" on some macOS and iOS versions. Continue to VACUUM.
+        final description = error.toString();
+        if (!description.contains('Code=0') ||
+            !description.contains('not an error')) {
+          rethrow;
+        }
+        AppLogger.info('Storage', '数据库日志已整理，继续压缩主数据库');
+      }
       await db.execute('VACUUM');
       final after = await _databaseBytes(db.path);
       AppLogger.info(
