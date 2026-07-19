@@ -600,10 +600,34 @@ class _TopBar extends StatelessWidget {
         children: [
           const SizedBox(width: 78),
           const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
-          _ModeSwitcher(
-            mode: mode,
-            onModeChanged: onModeChanged,
-            onSettings: onSettings,
+          OS26Glass(
+            radius: 13,
+            opacity: 0.42,
+            padding: const EdgeInsets.all(3),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _SegmentButton(
+                  icon: Icons.folder_rounded,
+                  label: '光鸭云盘',
+                  compact: false,
+                  selected: mode == WorkspaceMode.cloud,
+                  onTap: () => onModeChanged(WorkspaceMode.cloud),
+                ),
+                _SegmentButton(
+                  icon: Icons.movie_rounded,
+                  label: '光鸭影视',
+                  compact: false,
+                  selected: mode == WorkspaceMode.media,
+                  onTap: () => onModeChanged(WorkspaceMode.media),
+                ),
+                _TopBarIconButton(
+                  tooltip: '设置',
+                  icon: Icons.settings_rounded,
+                  onTap: onSettings,
+                ),
+              ],
+            ),
           ),
           const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
           if (mode == WorkspaceMode.cloud) ...[
@@ -672,7 +696,6 @@ class _SegmentButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool compact;
-  final bool showLabelWhenSelected;
   final bool selected;
   final VoidCallback onTap;
 
@@ -680,7 +703,6 @@ class _SegmentButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.compact,
-    this.showLabelWhenSelected = false,
     required this.selected,
     required this.onTap,
   });
@@ -688,11 +710,11 @@ class _SegmentButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    final showLabel = !compact && (!showLabelWhenSelected || selected);
+    final showLabel = !compact;
     return ShadTooltip(
       builder: (_) => Text(label),
       child: ShadButton.ghost(
-        width: compact ? 38 : (showLabelWhenSelected && !selected ? 38 : 120),
+        width: compact ? 38 : 120,
         height: compact ? 38 : 32,
         expands: false,
         padding: EdgeInsets.zero,
@@ -768,56 +790,6 @@ class _TopBarIconButton extends StatelessWidget {
         ? ShadTooltip(builder: (_) => Text(tooltip), child: button)
         : button;
   }
-}
-
-class _ModeSwitcher extends StatelessWidget {
-  final WorkspaceMode mode;
-  final ValueChanged<WorkspaceMode> onModeChanged;
-  final VoidCallback onSettings;
-  final bool showLabelWhenSelected;
-  final bool showTooltips;
-
-  const _ModeSwitcher({
-    required this.mode,
-    required this.onModeChanged,
-    required this.onSettings,
-    this.showLabelWhenSelected = false,
-    this.showTooltips = true,
-  });
-
-  @override
-  Widget build(BuildContext context) => OS26Glass(
-    radius: 13,
-    opacity: 0.42,
-    padding: const EdgeInsets.all(3),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _SegmentButton(
-          icon: Icons.folder_rounded,
-          label: '光鸭云盘',
-          compact: false,
-          showLabelWhenSelected: showLabelWhenSelected,
-          selected: mode == WorkspaceMode.cloud,
-          onTap: () => onModeChanged(WorkspaceMode.cloud),
-        ),
-        _SegmentButton(
-          icon: Icons.movie_rounded,
-          label: '光鸭影视',
-          compact: false,
-          showLabelWhenSelected: showLabelWhenSelected,
-          selected: mode == WorkspaceMode.media,
-          onTap: () => onModeChanged(WorkspaceMode.media),
-        ),
-        _TopBarIconButton(
-          tooltip: '设置',
-          icon: Icons.settings_rounded,
-          showTooltip: showTooltips,
-          onTap: onSettings,
-        ),
-      ],
-    ),
-  );
 }
 
 class _UploadListTopButton extends StatefulWidget {
@@ -951,15 +923,41 @@ class _NativeMobileDrawerContent extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                SizedBox(
-                  width: 220,
-                  child: _ModeSwitcher(
-                    mode: mode,
-                    onModeChanged: onModeChanged,
-                    onSettings: onSettings,
-                    showLabelWhenSelected: true,
-                    showTooltips: false,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isCloud)
+                      FilledButton.tonalIcon(
+                        onPressed: () => onModeChanged(WorkspaceMode.cloud),
+                        icon: const Icon(Icons.folder_rounded, size: 18),
+                        label: const Text('光鸭云盘'),
+                      )
+                    else
+                      IconButton(
+                        tooltip: '光鸭云盘',
+                        onPressed: () => onModeChanged(WorkspaceMode.cloud),
+                        icon: const Icon(Icons.folder_rounded),
+                      ),
+                    const SizedBox(width: 4),
+                    if (!isCloud)
+                      FilledButton.tonalIcon(
+                        onPressed: () => onModeChanged(WorkspaceMode.media),
+                        icon: const Icon(Icons.movie_rounded, size: 18),
+                        label: const Text('光鸭影视'),
+                      )
+                    else
+                      IconButton(
+                        tooltip: '光鸭影视',
+                        onPressed: () => onModeChanged(WorkspaceMode.media),
+                        icon: const Icon(Icons.movie_rounded),
+                      ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      tooltip: '设置',
+                      onPressed: onSettings,
+                      icon: const Icon(Icons.settings_rounded),
+                    ),
+                  ],
                 ),
               ],
             ),
