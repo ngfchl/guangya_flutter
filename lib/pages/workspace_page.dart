@@ -198,7 +198,6 @@ class WorkspacePage extends ConsumerStatefulWidget {
 }
 
 class _WorkspacePageState extends ConsumerState<WorkspacePage> {
-  final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
   WorkspaceMode _mode = WorkspaceMode.cloud;
@@ -239,55 +238,9 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   @override
   Widget build(BuildContext context) {
     final fp = ref.watch(fileProvider);
-    final mediaState = ref.watch(mediaLibraryProvider);
-    final useMobileDrawer = MediaQuery.sizeOf(context).width < 720;
-    final drawerWidth = (MediaQuery.sizeOf(context).width * 0.9)
-        .clamp(320.0, 360.0)
-        .toDouble();
 
     return Scaffold(
-      key: _scaffoldKey,
       backgroundColor: Colors.transparent,
-      drawer: useMobileDrawer
-          ? Drawer(
-              width: drawerWidth,
-              child: _NativeMobileDrawerContent(
-                mode: _mode,
-                cloudState: fp,
-                mediaState: mediaState,
-                onModeChanged: (mode) {
-                  Navigator.of(context).pop();
-                  _changeMode(mode);
-                },
-                onSection: (section) {
-                  Navigator.of(context).pop();
-                  ref.read(fileProvider.notifier).setSection(section);
-                },
-                onSettings: () {
-                  Navigator.of(context).pop();
-                  _showSettings(context);
-                },
-                onSignOut: () {
-                  Navigator.of(context).pop();
-                  ref.read(authProvider.notifier).signOut();
-                },
-                onCreateLibrary: () {
-                  Navigator.of(context).pop();
-                  MediaLibraryPage.showCreateDialog(context, ref);
-                },
-                onSelectLibrary: (libraryID) {
-                  Navigator.of(context).pop();
-                  ref
-                      .read(mediaLibraryProvider.notifier)
-                      .selectLibrary(libraryID);
-                },
-                onTool: (tool) {
-                  Navigator.of(context).pop();
-                  _openTool(tool);
-                },
-              ),
-            )
-          : null,
       body: OS26Surface(
         child: SafeArea(
           child: LayoutBuilder(
@@ -303,7 +256,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                 onSearch: _submitSearch,
                 onToggleSearch: _toggleSearch,
                 onSettings: () => _showSettings(context),
-                onOpenMenu: _openMobileDrawer,
+                onOpenMenu: () => _showMobileMenu(context),
                 uploadProgress: fp.uploadProgress,
               );
               final content = IndexedStack(
@@ -311,14 +264,35 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                 children: [_buildCloudContent(fp), _buildMediaContent()],
               );
               if (compact) {
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                  child: Column(
-                    children: [
-                      topBar,
-                      const SizedBox(height: 8),
-                      Expanded(child: content),
-                    ],
+                return _MobileDrawerSwipeArea(
+                  onOpen: () => _showMobileMenu(context),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                    child: Column(
+                      children: [
+                        topBar,
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: Stack(
+                            children: [
+                              Positioned.fill(child: content),
+                              Positioned(
+                                right: 4,
+                                bottom: 8,
+                                child: _MobileFloatingSearch(
+                                  mode: _mode,
+                                  searchController: _searchController,
+                                  searchFocusNode: _searchFocusNode,
+                                  searchOpen: _searchOpen,
+                                  onSearch: _submitSearch,
+                                  onToggleSearch: _toggleSearch,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 );
               }
@@ -399,7 +373,91 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     );
   }
 
-  void _openMobileDrawer() => _scaffoldKey.currentState?.openDrawer();
+  void _showMobileMenu(BuildContext context) {
+    final width = (MediaQuery.sizeOf(context).width * 0.86)
+        .clamp(280.0, 340.0)
+        .toDouble();
+    showShadSheet(
+      context: context,
+      side: ShadSheetSide.left,
+      builder: (sheetContext) => ShadSheet(
+        constraints: BoxConstraints.tightFor(width: width),
+        padding: EdgeInsets.zero,
+        scrollable: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _SegmentButton(
+                      icon: Icons.folder_rounded,
+                      label: '光鸭云盘',
+                      compact: false,
+                      selected: _mode == WorkspaceMode.cloud,
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        _changeMode(WorkspaceMode.cloud);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _SegmentButton(
+                      icon: Icons.movie_rounded,
+                      label: '光鸭影视',
+                      compact: false,
+                      selected: _mode == WorkspaceMode.media,
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        _changeMode(WorkspaceMode.media);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const ShadSeparator.horizontal(),
+            Expanded(
+              child: _mode == WorkspaceMode.cloud
+                  ? _CloudSidebar(
+                      state: ref.read(fileProvider),
+                      width: width,
+                      onSection: (section) {
+                        Navigator.of(sheetContext).pop();
+                        ref.read(fileProvider.notifier).setSection(section);
+                      },
+                      onSettings: () {
+                        Navigator.of(sheetContext).pop();
+                        _showSettings(context);
+                      },
+                      onSignOut: () {
+                        Navigator.of(sheetContext).pop();
+                        ref.read(authProvider.notifier).signOut();
+                      },
+                      onTool: (tool) {
+                        Navigator.of(sheetContext).pop();
+                        _openTool(tool);
+                      },
+                    )
+                  : _MediaSidebar(
+                      width: width,
+                      onCreate: () {
+                        Navigator.of(sheetContext).pop();
+                        MediaLibraryPage.showCreateDialog(context, ref);
+                      },
+                      onTool: (tool) {
+                        Navigator.of(sheetContext).pop();
+                        _openTool(tool);
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   void _showSettings(BuildContext context) {
     showShadDialog<void>(
@@ -523,71 +581,23 @@ class _TopBar extends StatelessWidget {
     if (compact) {
       return SizedBox(
         height: 46,
-        child: Row(
-          children: [
-            OS26Glass(
-              radius: 12,
-              opacity: 0.42,
-              padding: const EdgeInsets.all(3),
-              child: _TopBarIconButton(
-                tooltip: '打开菜单',
-                icon: Icons.menu_rounded,
-                showTooltip: false,
-                onTap: onOpenMenu,
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (searchOpen)
-              Expanded(
-                child: OS26Glass(
-                  radius: 12,
-                  opacity: 0.52,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: ShadInput(
-                          controller: searchController,
-                          focusNode: searchFocusNode,
-                          autofocus: true,
-                          placeholder: Text(
-                            mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
-                          ),
-                          leading: Icon(
-                            Icons.search_rounded,
-                            size: 17,
-                            color: cs.mutedForeground,
-                          ),
-                          onSubmitted: onSearch,
-                        ),
-                      ),
-                      _TopBarIconButton(
-                        tooltip: '关闭搜索',
-                        icon: Icons.close_rounded,
-                        onTap: onToggleSearch,
-                      ),
-                    ],
-                  ),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: OS26Glass(
+            radius: 12,
+            opacity: 0.42,
+            padding: const EdgeInsets.all(3),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _TopBarIconButton(
+                  tooltip: '打开菜单',
+                  icon: Icons.menu_rounded,
+                  onTap: onOpenMenu,
                 ),
-              )
-            else ...[
-              const Spacer(),
-              if (mode == WorkspaceMode.cloud) ...[
-                _UploadListTopButton(progress: uploadProgress),
-                const SizedBox(width: 6),
               ],
-              OS26Glass(
-                radius: 12,
-                opacity: 0.42,
-                padding: const EdgeInsets.all(3),
-                child: _TopBarIconButton(
-                  tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
-                  icon: Icons.search_rounded,
-                  onTap: onToggleSearch,
-                ),
-              ),
-            ],
-          ],
+            ),
+          ),
         ),
       );
     }
@@ -707,51 +717,53 @@ class _SegmentButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    final showLabel = !compact;
     return ShadTooltip(
       builder: (_) => Text(label),
-      child: ShadButton.ghost(
-        width: compact ? 38 : 120,
-        height: compact ? 38 : 32,
-        expands: false,
-        padding: EdgeInsets.zero,
-        onPressed: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          decoration: BoxDecoration(
-            color: selected ? cs.secondary : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: cs.border.withValues(alpha: 0.7),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 15,
-                color: selected ? cs.foreground : cs.mutedForeground,
-              ),
-              if (showLabel) ...[
-                const SizedBox(width: 7),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                    color: selected ? cs.foreground : cs.mutedForeground,
-                  ),
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: label,
+        child: ShadButton.ghost(
+          width: compact ? 38 : 120,
+          height: compact ? 38 : 32,
+          padding: EdgeInsets.zero,
+          onPressed: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            decoration: BoxDecoration(
+              color: selected ? cs.secondary : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: cs.border.withValues(alpha: 0.7),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 15,
+                  color: selected ? cs.foreground : cs.mutedForeground,
                 ),
+                if (!compact) ...[
+                  const SizedBox(width: 7),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                      color: selected ? cs.foreground : cs.mutedForeground,
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -762,30 +774,27 @@ class _SegmentButton extends StatelessWidget {
 class _TopBarIconButton extends StatelessWidget {
   final String tooltip;
   final IconData icon;
-  final bool showTooltip;
   final VoidCallback onTap;
 
   const _TopBarIconButton({
     required this.tooltip,
     required this.icon,
-    this.showTooltip = true,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    final button = ShadButton.ghost(
-      width: 38,
-      height: 38,
-      expands: false,
-      padding: EdgeInsets.zero,
-      onPressed: onTap,
-      child: Icon(icon, size: 18, color: cs.mutedForeground),
+    return ShadTooltip(
+      builder: (_) => Text(tooltip),
+      child: ShadButton.ghost(
+        width: 38,
+        height: 38,
+        padding: EdgeInsets.zero,
+        onPressed: onTap,
+        child: Icon(icon, size: 18, color: cs.mutedForeground),
+      ),
     );
-    return showTooltip
-        ? ShadTooltip(builder: (_) => Text(tooltip), child: button)
-        : button;
   }
 }
 
@@ -819,414 +828,124 @@ class _UploadListTopButtonState extends State<_UploadListTopButton> {
   );
 }
 
-class _NativeMobileDrawerContent extends StatelessWidget {
+class _MobileFloatingSearch extends StatelessWidget {
   final WorkspaceMode mode;
-  final FileState cloudState;
-  final MediaLibraryState mediaState;
-  final ValueChanged<WorkspaceMode> onModeChanged;
-  final ValueChanged<WorkspaceSection> onSection;
-  final VoidCallback onSettings;
-  final VoidCallback onSignOut;
-  final VoidCallback onCreateLibrary;
-  final ValueChanged<String> onSelectLibrary;
-  final ValueChanged<WorkspaceTool> onTool;
+  final TextEditingController searchController;
+  final FocusNode searchFocusNode;
+  final bool searchOpen;
+  final ValueChanged<String> onSearch;
+  final VoidCallback onToggleSearch;
 
-  const _NativeMobileDrawerContent({
+  const _MobileFloatingSearch({
     required this.mode,
-    required this.cloudState,
-    required this.mediaState,
-    required this.onModeChanged,
-    required this.onSection,
-    required this.onSettings,
-    required this.onSignOut,
-    required this.onCreateLibrary,
-    required this.onSelectLibrary,
-    required this.onTool,
+    required this.searchController,
+    required this.searchFocusNode,
+    required this.searchOpen,
+    required this.onSearch,
+    required this.onToggleSearch,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isCloud = mode == WorkspaceMode.cloud;
-    final theme = Theme.of(context);
-    return SafeArea(
-      child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          Container(
-            height: 128,
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '小黄鸭',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (isCloud)
-                      FilledButton.tonalIcon(
-                        onPressed: () => onModeChanged(WorkspaceMode.cloud),
-                        icon: const Icon(Icons.folder_rounded, size: 18),
-                        label: const Text('光鸭云盘'),
-                      )
-                    else
-                      IconButton(
-                        tooltip: '光鸭云盘',
-                        onPressed: () => onModeChanged(WorkspaceMode.cloud),
-                        icon: const Icon(Icons.folder_rounded),
+    final cs = ShadTheme.of(context).colorScheme;
+    final maxWidth = MediaQuery.sizeOf(context).width - 40;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOutCubic,
+      width: searchOpen ? maxWidth.clamp(220.0, 300.0).toDouble() : 52,
+      height: 52,
+      child: OS26Glass(
+        radius: 26,
+        opacity: 0.82,
+        padding: searchOpen
+            ? const EdgeInsets.symmetric(horizontal: 8, vertical: 5)
+            : EdgeInsets.zero,
+        child: searchOpen
+            ? Row(
+                children: [
+                  Expanded(
+                    child: ShadInput(
+                      controller: searchController,
+                      focusNode: searchFocusNode,
+                      autofocus: true,
+                      placeholder: Text(
+                        mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
                       ),
-                    const SizedBox(width: 4),
-                    if (!isCloud)
-                      FilledButton.tonalIcon(
-                        onPressed: () => onModeChanged(WorkspaceMode.media),
-                        icon: const Icon(Icons.movie_rounded, size: 18),
-                        label: const Text('光鸭影视'),
-                      )
-                    else
-                      IconButton(
-                        tooltip: '光鸭影视',
-                        onPressed: () => onModeChanged(WorkspaceMode.media),
-                        icon: const Icon(Icons.movie_rounded),
+                      leading: Icon(
+                        Icons.search_rounded,
+                        size: 17,
+                        color: cs.mutedForeground,
                       ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      tooltip: '设置',
-                      onPressed: onSettings,
-                      icon: const Icon(Icons.settings_rounded),
+                      onSubmitted: onSearch,
                     ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          if (isCloud) ...[
-            for (final section in WorkspaceSection.values.where(
-              (section) => section != WorkspaceSection.mediaLibrary,
-            ))
-              _nativeTile(
-                icon: _cloudIcon(section),
-                label: section.label,
-                selected: cloudState.section == section,
-                onTap: () => onSection(section),
+                  ),
+                  _TopBarIconButton(
+                    tooltip: '关闭搜索',
+                    icon: Icons.close_rounded,
+                    onTap: onToggleSearch,
+                  ),
+                ],
+              )
+            : _TopBarIconButton(
+                tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
+                icon: Icons.search_rounded,
+                onTap: onToggleSearch,
               ),
-            const Divider(),
-            _nativeTile(
-              icon: Icons.manage_search_rounded,
-              label: '文件扫描与清理',
-              onTap: () => onTool(WorkspaceTool.scan),
-            ),
-            _nativeTile(
-              icon: Icons.text_fields_rounded,
-              label: '批量重命名',
-              onTap: () => onTool(WorkspaceTool.rename),
-            ),
-            _nativeTile(
-              icon: Icons.bolt_rounded,
-              label: '秒传工具',
-              onTap: () => onTool(WorkspaceTool.fastTransfer),
-            ),
-            const Divider(),
-            _nativeTile(
-              icon: Icons.settings_rounded,
-              label: '工作区设置',
-              onTap: onSettings,
-            ),
-            _nativeTile(
-              icon: Icons.logout_rounded,
-              label: '退出登录',
-              destructive: true,
-              onTap: onSignOut,
-            ),
-          ] else ...[
-            _nativeTile(
-              icon: Icons.home_rounded,
-              label: '首页',
-              selected: true,
-              onTap: () => onTool(WorkspaceTool.tmdb),
-            ),
-            _nativeTile(
-              icon: Icons.movie_creation_rounded,
-              label: '电影 (${mediaState.statistics.movies})',
-              onTap: () => onTool(WorkspaceTool.tmdb),
-            ),
-            _nativeTile(
-              icon: Icons.live_tv_rounded,
-              label: '电视剧 (${mediaState.statistics.series})',
-              onTap: () => onTool(WorkspaceTool.tmdb),
-            ),
-            _nativeTile(
-              icon: Icons.help_outline_rounded,
-              label: '未识别 (${mediaState.statistics.unmatched})',
-              onTap: () => onTool(WorkspaceTool.tmdb),
-            ),
-            const Divider(),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: Text('媒体库'),
-            ),
-            for (final library in mediaState.libraries)
-              _nativeTile(
-                icon: library.kind == MediaLibraryKind.series
-                    ? Icons.live_tv_rounded
-                    : Icons.smart_display_rounded,
-                label: library.name,
-                selected: mediaState.selectedLibrary?.id == library.id,
-                onTap: () => onSelectLibrary(library.id),
-              ),
-            _nativeTile(
-              icon: Icons.add_rounded,
-              label: '新建媒体库',
-              onTap: onCreateLibrary,
-            ),
-            _nativeTile(
-              icon: Icons.auto_fix_high_rounded,
-              label: '媒体库管理',
-              onTap: () => onTool(WorkspaceTool.tmdb),
-            ),
-            _nativeTile(
-              icon: Icons.category_rounded,
-              label: '分类管理',
-              onTap: () => onTool(WorkspaceTool.categories),
-            ),
-          ],
-        ],
       ),
     );
   }
-
-  Widget _nativeTile({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-    bool selected = false,
-    bool destructive = false,
-  }) => ListTile(
-    leading: Icon(icon),
-    title: Text(label),
-    selected: selected,
-    selectedTileColor: Colors.transparent,
-    textColor: destructive ? Colors.red : null,
-    iconColor: destructive ? Colors.red : null,
-    onTap: onTap,
-  );
-
-  IconData _cloudIcon(WorkspaceSection section) => switch (section) {
-    WorkspaceSection.files => Icons.folder_rounded,
-    WorkspaceSection.recentViewed => Icons.access_time_rounded,
-    WorkspaceSection.recentRestored => Icons.history_rounded,
-    WorkspaceSection.photos => Icons.image_rounded,
-    WorkspaceSection.videos => Icons.smart_display_rounded,
-    WorkspaceSection.audio => Icons.music_note_rounded,
-    WorkspaceSection.documents => Icons.description_rounded,
-    WorkspaceSection.cloud => Icons.cloud_download_rounded,
-    WorkspaceSection.shares => Icons.ios_share_rounded,
-    WorkspaceSection.recycle => Icons.delete_outline_rounded,
-    WorkspaceSection.mediaLibrary => Icons.movie_filter_rounded,
-  };
 }
 
-/// A sheet-safe sidebar without desktop flex regions. ShadDialog owns the
-/// vertical scroll extent, so this widget deliberately contains no Expanded
-/// or nested scrollable viewport.
-// ignore: unused_element
-class _MobileSidebarContent extends StatelessWidget {
-  final WorkspaceMode mode;
-  final FileState cloudState;
-  final MediaLibraryState mediaState;
-  final ValueChanged<WorkspaceMode> onModeChanged;
-  final ValueChanged<WorkspaceSection> onSection;
-  final VoidCallback onSettings;
-  final VoidCallback onSignOut;
-  final VoidCallback onCreateLibrary;
-  final ValueChanged<String> onSelectLibrary;
-  final ValueChanged<WorkspaceTool> onTool;
+class _MobileDrawerSwipeArea extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onOpen;
 
-  const _MobileSidebarContent({
-    required this.mode,
-    required this.cloudState,
-    required this.mediaState,
-    required this.onModeChanged,
-    required this.onSection,
-    required this.onSettings,
-    required this.onSignOut,
-    required this.onCreateLibrary,
-    required this.onSelectLibrary,
-    required this.onTool,
-  });
+  const _MobileDrawerSwipeArea({required this.child, required this.onOpen});
 
   @override
-  Widget build(BuildContext context) {
-    final isCloud = mode == WorkspaceMode.cloud;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _SegmentButton(
-                icon: Icons.folder_rounded,
-                label: '光鸭云盘',
-                compact: false,
-                selected: isCloud,
-                onTap: () => onModeChanged(WorkspaceMode.cloud),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: _SegmentButton(
-                icon: Icons.movie_rounded,
-                label: '光鸭影视',
-                compact: false,
-                selected: !isCloud,
-                onTap: () => onModeChanged(WorkspaceMode.media),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _SidebarBrand(
-          icon: isCloud
-              ? Icons.cloud_sync_rounded
-              : Icons.play_circle_fill_rounded,
-          title: isCloud ? '光鸭云盘' : '光鸭影视',
-          subtitle: isCloud ? 'Cloud Workspace' : 'Media Center',
-          imageAsset: isCloud ? 'assets/branding/guangya_icon.png' : null,
-        ),
-        const SizedBox(height: 16),
-        if (isCloud) ...[
-          for (final section in WorkspaceSection.values.where(
-            (section) => section != WorkspaceSection.mediaLibrary,
-          ))
-            _SidebarTile(
-              icon: _cloudSectionIcon(section),
-              label: section.label,
-              selected: cloudState.section == section,
-              onTap: () => onSection(section),
-            ),
-          const ShadSeparator.horizontal(),
-          const SizedBox(height: 10),
-          _SidebarTile(
-            icon: Icons.manage_search_rounded,
-            label: '文件扫描与清理',
-            selected: false,
-            onTap: () => onTool(WorkspaceTool.scan),
-          ),
-          _SidebarTile(
-            icon: Icons.text_fields_rounded,
-            label: '批量重命名',
-            selected: false,
-            onTap: () => onTool(WorkspaceTool.rename),
-          ),
-          _SidebarTile(
-            icon: Icons.bolt_rounded,
-            label: '秒传工具',
-            selected: false,
-            onTap: () => onTool(WorkspaceTool.fastTransfer),
-          ),
-          const SizedBox(height: 10),
-          const ShadSeparator.horizontal(),
-          const SizedBox(height: 10),
-          _SidebarTile(
-            icon: Icons.settings_rounded,
-            label: '工作区设置',
-            selected: false,
-            onTap: onSettings,
-          ),
-          _SidebarTile(
-            icon: Icons.logout_rounded,
-            label: '退出登录',
-            selected: false,
-            onTap: onSignOut,
-          ),
-        ] else ...[
-          _SidebarTile(
-            icon: Icons.home_rounded,
-            label: '首页',
-            selected: true,
-            onTap: () => onTool(WorkspaceTool.tmdb),
-          ),
-          _SidebarTile(
-            icon: Icons.movie_creation_rounded,
-            label: '电影',
-            count: mediaState.statistics.movies,
-            selected: false,
-            onTap: () => onTool(WorkspaceTool.tmdb),
-          ),
-          _SidebarTile(
-            icon: Icons.live_tv_rounded,
-            label: '电视剧',
-            count: mediaState.statistics.series,
-            selected: false,
-            onTap: () => onTool(WorkspaceTool.tmdb),
-          ),
-          _SidebarTile(
-            icon: Icons.help_outline_rounded,
-            label: '未识别',
-            count: mediaState.statistics.unmatched,
-            selected: false,
-            onTap: () => onTool(WorkspaceTool.tmdb),
-          ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(8, 18, 8, 8),
-            child: Text(
-              '媒体库',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-            ),
-          ),
-          for (final library in mediaState.libraries)
-            _SidebarTile(
-              icon: library.kind == MediaLibraryKind.series
-                  ? Icons.live_tv_rounded
-                  : Icons.smart_display_rounded,
-              label: library.name,
-              selected: mediaState.selectedLibrary?.id == library.id,
-              onTap: () => onSelectLibrary(library.id),
-            ),
-          _SidebarTile(
-            icon: Icons.add_rounded,
-            label: '新建媒体库',
-            selected: false,
-            onTap: onCreateLibrary,
-          ),
-          _SidebarTile(
-            icon: Icons.auto_fix_high_rounded,
-            label: '媒体库管理',
-            selected: false,
-            onTap: () => onTool(WorkspaceTool.tmdb),
-          ),
-          _SidebarTile(
-            icon: Icons.category_rounded,
-            label: '分类管理',
-            selected: false,
-            onTap: () => onTool(WorkspaceTool.categories),
-          ),
-        ],
-      ],
-    );
+  State<_MobileDrawerSwipeArea> createState() => _MobileDrawerSwipeAreaState();
+}
+
+class _MobileDrawerSwipeAreaState extends State<_MobileDrawerSwipeArea> {
+  var _distance = 0.0;
+  var _opening = false;
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    if (_opening) return;
+    final delta = details.primaryDelta ?? 0;
+    if (delta <= 0) {
+      _distance = 0;
+      return;
+    }
+    _distance += delta;
+    if (_distance >= 28) {
+      _opening = true;
+      _distance = 0;
+      widget.onOpen();
+      Future<void>.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) _opening = false;
+      });
+    }
   }
 
-  IconData _cloudSectionIcon(WorkspaceSection section) => switch (section) {
-    WorkspaceSection.files => Icons.folder_rounded,
-    WorkspaceSection.recentViewed => Icons.access_time_rounded,
-    WorkspaceSection.recentRestored => Icons.history_rounded,
-    WorkspaceSection.photos => Icons.image_rounded,
-    WorkspaceSection.videos => Icons.smart_display_rounded,
-    WorkspaceSection.audio => Icons.music_note_rounded,
-    WorkspaceSection.documents => Icons.description_rounded,
-    WorkspaceSection.cloud => Icons.cloud_download_rounded,
-    WorkspaceSection.shares => Icons.ios_share_rounded,
-    WorkspaceSection.recycle => Icons.delete_outline_rounded,
-    WorkspaceSection.mediaLibrary => Icons.movie_filter_rounded,
-  };
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      widget.child,
+      Positioned(
+        left: 0,
+        top: 0,
+        bottom: 0,
+        width: 28,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragUpdate: _onDragUpdate,
+          onHorizontalDragEnd: (_) => _distance = 0,
+          onHorizontalDragCancel: () => _distance = 0,
+        ),
+      ),
+    ],
+  );
 }
 
 // ignore: unused_element
@@ -1497,6 +1216,7 @@ class _MobileMenuRow extends StatelessWidget {
 
 class _CloudSidebar extends StatelessWidget {
   final FileState state;
+  final double width;
   final ValueChanged<WorkspaceSection> onSection;
   final VoidCallback onSettings;
   final VoidCallback onSignOut;
@@ -1504,6 +1224,7 @@ class _CloudSidebar extends StatelessWidget {
 
   const _CloudSidebar({
     required this.state,
+    this.width = 250,
     required this.onSection,
     required this.onSettings,
     required this.onSignOut,
@@ -1516,7 +1237,7 @@ class _CloudSidebar extends StatelessWidget {
         .where((section) => section != WorkspaceSection.mediaLibrary)
         .toList();
     return SizedBox(
-      width: 250,
+      width: width,
       child: OS26Glass(
         radius: 24,
         opacity: 0.56,
@@ -1610,17 +1331,22 @@ class _CloudSidebar extends StatelessWidget {
 }
 
 class _MediaSidebar extends ConsumerWidget {
+  final double width;
   final VoidCallback onCreate;
   final ValueChanged<WorkspaceTool> onTool;
 
-  const _MediaSidebar({required this.onCreate, required this.onTool});
+  const _MediaSidebar({
+    this.width = 250,
+    required this.onCreate,
+    required this.onTool,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(mediaLibraryProvider);
     final notifier = ref.read(mediaLibraryProvider.notifier);
     return SizedBox(
-      width: 250,
+      width: width,
       child: OS26Glass(
         radius: 24,
         opacity: 0.56,
@@ -1805,62 +1531,55 @@ class _SidebarTile extends StatelessWidget {
     final cs = ShadTheme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: LayoutBuilder(
-        builder: (context, constraints) => ShadButton.ghost(
-          // ShadButton treats double.infinity as an unbounded ConstrainedBox.
-          // Its label row contains Expanded, so always pass a real width.
-          width: constraints.maxWidth.isFinite ? constraints.maxWidth : 220,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
           height: 42,
-          expands: false,
-          padding: EdgeInsets.zero,
-          onPressed: onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 140),
-            height: 42,
-            padding: const EdgeInsets.symmetric(horizontal: 9),
-            decoration: BoxDecoration(
-              color: selected
-                  ? const Color(0xFFFFB18A).withValues(alpha: 0.72)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? Colors.white.withValues(alpha: 0.36)
-                        : const Color(0xFFFFE4D2).withValues(alpha: 0.82),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(icon, size: 17, color: cs.primary),
+          padding: const EdgeInsets.symmetric(horizontal: 9),
+          decoration: BoxDecoration(
+            color: selected
+                ? const Color(0xFFFFB18A).withValues(alpha: 0.72)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? Colors.white.withValues(alpha: 0.36)
+                      : const Color(0xFFFFE4D2).withValues(alpha: 0.82),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                      color: selected ? cs.foreground : cs.mutedForeground,
-                    ),
+                child: Icon(icon, size: 17, color: cs.primary),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                    color: selected ? cs.foreground : cs.mutedForeground,
                   ),
                 ),
-                if (count != null)
-                  Text(
-                    count.toString(),
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: cs.mutedForeground,
-                    ),
+              ),
+              if (count != null)
+                Text(
+                  count.toString(),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: cs.mutedForeground,
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
         ),
       ),
