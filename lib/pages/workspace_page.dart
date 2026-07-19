@@ -272,25 +272,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       children: [
                         topBar,
                         const SizedBox(height: 8),
-                        Expanded(
-                          child: Stack(
-                            children: [
-                              Positioned.fill(child: content),
-                              Positioned(
-                                right: 4,
-                                bottom: 8,
-                                child: _MobileFloatingSearch(
-                                  mode: _mode,
-                                  searchController: _searchController,
-                                  searchFocusNode: _searchFocusNode,
-                                  searchOpen: _searchOpen,
-                                  onSearch: _submitSearch,
-                                  onToggleSearch: _toggleSearch,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        Expanded(child: content),
                       ],
                     ),
                   ),
@@ -581,23 +563,70 @@ class _TopBar extends StatelessWidget {
     if (compact) {
       return SizedBox(
         height: 46,
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: OS26Glass(
-            radius: 12,
-            opacity: 0.42,
-            padding: const EdgeInsets.all(3),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _TopBarIconButton(
-                  tooltip: '打开菜单',
-                  icon: Icons.menu_rounded,
-                  onTap: onOpenMenu,
-                ),
-              ],
+        child: Row(
+          children: [
+            OS26Glass(
+              radius: 12,
+              opacity: 0.42,
+              padding: const EdgeInsets.all(3),
+              child: _TopBarIconButton(
+                tooltip: '打开菜单',
+                icon: Icons.menu_rounded,
+                onTap: onOpenMenu,
+              ),
             ),
-          ),
+            const SizedBox(width: 8),
+            if (searchOpen)
+              Expanded(
+                child: OS26Glass(
+                  radius: 12,
+                  opacity: 0.52,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: ShadInput(
+                          controller: searchController,
+                          focusNode: searchFocusNode,
+                          autofocus: true,
+                          placeholder: Text(
+                            mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
+                          ),
+                          leading: Icon(
+                            Icons.search_rounded,
+                            size: 17,
+                            color: cs.mutedForeground,
+                          ),
+                          onSubmitted: onSearch,
+                        ),
+                      ),
+                      _TopBarIconButton(
+                        tooltip: '关闭搜索',
+                        icon: Icons.close_rounded,
+                        onTap: onToggleSearch,
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else ...[
+              const Spacer(),
+              if (mode == WorkspaceMode.cloud) ...[
+                _UploadListTopButton(progress: uploadProgress),
+                const SizedBox(width: 6),
+              ],
+              OS26Glass(
+                radius: 12,
+                opacity: 0.42,
+                padding: const EdgeInsets.all(3),
+                child: _TopBarIconButton(
+                  tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
+                  icon: Icons.search_rounded,
+                  onTap: onToggleSearch,
+                ),
+              ),
+            ],
+          ],
         ),
       );
     }
@@ -826,74 +855,6 @@ class _UploadListTopButtonState extends State<_UploadListTopButton> {
       onTap: _controller.toggle,
     ),
   );
-}
-
-class _MobileFloatingSearch extends StatelessWidget {
-  final WorkspaceMode mode;
-  final TextEditingController searchController;
-  final FocusNode searchFocusNode;
-  final bool searchOpen;
-  final ValueChanged<String> onSearch;
-  final VoidCallback onToggleSearch;
-
-  const _MobileFloatingSearch({
-    required this.mode,
-    required this.searchController,
-    required this.searchFocusNode,
-    required this.searchOpen,
-    required this.onSearch,
-    required this.onToggleSearch,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    final maxWidth = MediaQuery.sizeOf(context).width - 40;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 160),
-      curve: Curves.easeOutCubic,
-      width: searchOpen ? maxWidth.clamp(220.0, 300.0).toDouble() : 52,
-      height: 52,
-      child: OS26Glass(
-        radius: 26,
-        opacity: 0.82,
-        padding: searchOpen
-            ? const EdgeInsets.symmetric(horizontal: 8, vertical: 5)
-            : EdgeInsets.zero,
-        child: searchOpen
-            ? Row(
-                children: [
-                  Expanded(
-                    child: ShadInput(
-                      controller: searchController,
-                      focusNode: searchFocusNode,
-                      autofocus: true,
-                      placeholder: Text(
-                        mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
-                      ),
-                      leading: Icon(
-                        Icons.search_rounded,
-                        size: 17,
-                        color: cs.mutedForeground,
-                      ),
-                      onSubmitted: onSearch,
-                    ),
-                  ),
-                  _TopBarIconButton(
-                    tooltip: '关闭搜索',
-                    icon: Icons.close_rounded,
-                    onTap: onToggleSearch,
-                  ),
-                ],
-              )
-            : _TopBarIconButton(
-                tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
-                icon: Icons.search_rounded,
-                onTap: onToggleSearch,
-              ),
-      ),
-    );
-  }
 }
 
 class _MobileDrawerSwipeArea extends StatefulWidget {
