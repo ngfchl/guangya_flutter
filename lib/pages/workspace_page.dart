@@ -257,44 +257,42 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                 onSearch: _submitSearch,
                 onToggleSearch: _toggleSearch,
                 onSettings: () => _showSettings(context),
+                onOpenMenu: () => _showMobileMenu(context, auth),
               );
               final content = IndexedStack(
                 index: _mode == WorkspaceMode.cloud ? 0 : 1,
                 children: [_buildCloudContent(fp), _buildMediaContent()],
               );
               if (compact) {
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
-                  child: Column(
-                    children: [
-                      topBar,
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: Stack(
-                          children: [
-                            Positioned.fill(child: content),
-                            Positioned(
-                              right: 4,
-                              bottom: 8,
-                              child: _MobileFloatingSearch(
-                                mode: _mode,
-                                searchController: _searchController,
-                                searchFocusNode: _searchFocusNode,
-                                searchOpen: _searchOpen,
-                                onSearch: _submitSearch,
-                                onToggleSearch: _toggleSearch,
+                return _MobileDrawerSwipeArea(
+                  onOpen: () => _showMobileMenu(context, auth),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                    child: Column(
+                      children: [
+                        topBar,
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: Stack(
+                            children: [
+                              Positioned.fill(child: content),
+                              Positioned(
+                                right: 4,
+                                bottom: 8,
+                                child: _MobileFloatingSearch(
+                                  mode: _mode,
+                                  searchController: _searchController,
+                                  searchFocusNode: _searchFocusNode,
+                                  searchOpen: _searchOpen,
+                                  onSearch: _submitSearch,
+                                  onToggleSearch: _toggleSearch,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      _MobileWorkspaceNavigation(
-                        mode: _mode,
-                        onModeChanged: _changeMode,
-                        onMore: () => _showMobileMenu(context, auth),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 );
               }
@@ -517,6 +515,7 @@ class _TopBar extends StatelessWidget {
   final ValueChanged<String> onSearch;
   final VoidCallback onToggleSearch;
   final VoidCallback onSettings;
+  final VoidCallback onOpenMenu;
 
   const _TopBar({
     required this.mode,
@@ -528,6 +527,7 @@ class _TopBar extends StatelessWidget {
     required this.onSearch,
     required this.onToggleSearch,
     required this.onSettings,
+    required this.onOpenMenu,
   });
 
   @override
@@ -561,9 +561,9 @@ class _TopBar extends StatelessWidget {
                   onTap: () => onModeChanged(WorkspaceMode.media),
                 ),
                 _TopBarIconButton(
-                  tooltip: '设置',
-                  icon: Icons.settings_rounded,
-                  onTap: onSettings,
+                  tooltip: '打开菜单',
+                  icon: Icons.menu_rounded,
+                  onTap: onOpenMenu,
                 ),
               ],
             ),
@@ -834,98 +834,56 @@ class _MobileFloatingSearch extends StatelessWidget {
   }
 }
 
-class _MobileWorkspaceNavigation extends StatelessWidget {
-  final WorkspaceMode mode;
-  final ValueChanged<WorkspaceMode> onModeChanged;
-  final VoidCallback onMore;
+class _MobileDrawerSwipeArea extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onOpen;
 
-  const _MobileWorkspaceNavigation({
-    required this.mode,
-    required this.onModeChanged,
-    required this.onMore,
-  });
+  const _MobileDrawerSwipeArea({required this.child, required this.onOpen});
 
   @override
-  Widget build(BuildContext context) {
-    return OS26Glass(
-      radius: 14,
-      opacity: 0.68,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: _MobileNavItem(
-              icon: Icons.folder_rounded,
-              label: '文件',
-              selected: mode == WorkspaceMode.cloud,
-              onTap: () => onModeChanged(WorkspaceMode.cloud),
-            ),
-          ),
-          Expanded(
-            child: _MobileNavItem(
-              icon: Icons.movie_rounded,
-              label: '影视',
-              selected: mode == WorkspaceMode.media,
-              onTap: () => onModeChanged(WorkspaceMode.media),
-            ),
-          ),
-          Expanded(
-            child: _MobileNavItem(
-              icon: Icons.more_horiz_rounded,
-              label: '更多',
-              selected: false,
-              onTap: onMore,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  State<_MobileDrawerSwipeArea> createState() => _MobileDrawerSwipeAreaState();
 }
 
-class _MobileNavItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
+class _MobileDrawerSwipeAreaState extends State<_MobileDrawerSwipeArea> {
+  var _distance = 0.0;
+  var _opening = false;
 
-  const _MobileNavItem({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
+  void _onDragUpdate(DragUpdateDetails details) {
+    if (_opening) return;
+    final delta = details.primaryDelta ?? 0;
+    if (delta <= 0) {
+      _distance = 0;
+      return;
+    }
+    _distance += delta;
+    if (_distance >= 28) {
+      _opening = true;
+      _distance = 0;
+      widget.onOpen();
+      Future<void>.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) _opening = false;
+      });
+    }
+  }
 
   @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: onTap,
-      child: SizedBox(
-        height: 48,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 19,
-              color: selected ? cs.primary : cs.mutedForeground,
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                color: selected ? cs.primary : cs.mutedForeground,
-              ),
-            ),
-          ],
+  Widget build(BuildContext context) => Stack(
+    children: [
+      widget.child,
+      Positioned(
+        left: 0,
+        top: 0,
+        bottom: 0,
+        width: 28,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragUpdate: _onDragUpdate,
+          onHorizontalDragEnd: (_) => _distance = 0,
+          onHorizontalDragCancel: () => _distance = 0,
         ),
       ),
-    );
-  }
+    ],
+  );
 }
 
 class _MobileWorkspaceMenu extends StatelessWidget {

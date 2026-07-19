@@ -21,15 +21,19 @@ class MediaLibraryStore {
     );
     _database = await openDatabase(
       databasePath,
-      version: 4,
+      version: 5,
       onCreate: (db, _) async {
         await _createSchema(db);
       },
-      onUpgrade: (db, _, _) async {
+      onUpgrade: (db, oldVersion, _) async {
         await _createSchema(db);
+        if (oldVersion < 5) {
+          await _migrateArtworkBlobSchema(db);
+        }
       },
     );
     await _createSchema(_database!);
+    await _vacuumIfFragmented(_database!);
     return _database!;
   }
 
@@ -211,7 +215,7 @@ class MediaLibraryStore {
           INSERT OR REPLACE INTO media_items (
             library_id, file_id, resource_path, cloud_name, file_size, gcid,
             file_type, tmdb_id, media_kind, title, original_title,
-            release_date, overview, poster_path, backdrop_path, poster, backdrop,
+            release_date, overview, poster_path, backdrop_path,
             has_chinese_audio, has_chinese_subtitle, collection_id,
             collection_name, updated_at
           )
@@ -219,7 +223,7 @@ class MediaLibraryStore {
             library_id, file_id, resource_path, cloud_name, file_size, gcid,
             file_type, tmdb_id, media_kind, title, original_title,
             release_date, overview, $importedPosterPath, $importedBackdropPath,
-            NULL, NULL, has_chinese_audio, has_chinese_subtitle, collection_id,
+            has_chinese_audio, has_chinese_subtitle, collection_id,
             collection_name, updated_at
           FROM imported_backup.media_items
         ''');
@@ -235,9 +239,14 @@ class MediaLibraryStore {
   Future<MediaLibraryStorageStats> optimizeStorage() async {
     final db = await _db;
     final before = await _databaseBytes(db.path);
-    final removedArtwork = await db.rawUpdate('''UPDATE media_items
-         SET poster = NULL, backdrop = NULL
-         WHERE poster IS NOT NULL OR backdrop IS NOT NULL''');
+    final columns = await _tableColumns(db, 'main', 'media_items');
+    final hasLegacyArtwork =
+        columns.contains('poster') || columns.contains('backdrop');
+    final removedArtwork = hasLegacyArtwork
+        ? await db.rawUpdate('''UPDATE media_items
+             SET poster = NULL, backdrop = NULL
+             WHERE poster IS NOT NULL OR backdrop IS NOT NULL''')
+        : 0;
     try {
       await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
     } on DatabaseException catch (error) {
@@ -548,8 +557,6 @@ class MediaLibraryStore {
         overview TEXT NOT NULL,
         poster_path TEXT,
         backdrop_path TEXT,
-        poster BLOB,
-        backdrop BLOB,
         has_chinese_audio INTEGER NOT NULL DEFAULT 0,
         has_chinese_subtitle INTEGER NOT NULL DEFAULT 0,
         collection_id INTEGER,
@@ -590,6 +597,90 @@ class MediaLibraryStore {
     );
     await _ensureColumn(db, 'media_items', 'poster_path', 'TEXT');
     await _ensureColumn(db, 'media_items', 'backdrop_path', 'TEXT');
+  }
+
+  Future<void> _migrateArtworkBlobSchema(Database db) async {
+    final columns = await _tableColumns(db, 'main', 'media_items');
+    if (!columns.contains('poster') && !columns.contains('backdrop')) return;
+    await db.transaction((txn) async {
+      await txn.execute('''
+        CREATE TABLE media_items_compact (
+          library_id TEXT NOT NULL,
+          file_id TEXT NOT NULL,
+          resource_path TEXT NOT NULL,
+          cloud_name TEXT NOT NULL,
+          file_size INTEGER,
+          gcid TEXT,
+          file_type INTEGER NOT NULL,
+          tmdb_id INTEGER,
+          media_kind TEXT,
+          title TEXT NOT NULL,
+          original_title TEXT NOT NULL,
+          release_date TEXT NOT NULL,
+          overview TEXT NOT NULL,
+          poster_path TEXT,
+          backdrop_path TEXT,
+          has_chinese_audio INTEGER NOT NULL DEFAULT 0,
+          has_chinese_subtitle INTEGER NOT NULL DEFAULT 0,
+          collection_id INTEGER,
+          collection_name TEXT,
+          updated_at REAL NOT NULL,
+          PRIMARY KEY (library_id, file_id),
+          FOREIGN KEY (library_id) REFERENCES media_libraries(id) ON DELETE CASCADE
+        )
+      ''');
+      await txn.execute('''
+        INSERT INTO media_items_compact (
+          library_id, file_id, resource_path, cloud_name, file_size, gcid,
+          file_type, tmdb_id, media_kind, title, original_title, release_date,
+          overview, poster_path, backdrop_path, has_chinese_audio,
+          has_chinese_subtitle, collection_id, collection_name, updated_at
+        )
+        SELECT
+          library_id, file_id, resource_path, cloud_name, file_size, gcid,
+          file_type, tmdb_id, media_kind, title, original_title, release_date,
+          overview, poster_path, backdrop_path, has_chinese_audio,
+          has_chinese_subtitle, collection_id, collection_name, updated_at
+        FROM media_items
+      ''');
+      await txn.execute('DROP TABLE media_items');
+      await txn.execute(
+        'ALTER TABLE media_items_compact RENAME TO media_items',
+      );
+      await _createMediaItemIndexes(txn);
+    });
+  }
+
+  Future<void> _vacuumIfFragmented(Database db) async {
+    final pageCount = await db.rawQuery('PRAGMA page_count');
+    final freeList = await db.rawQuery('PRAGMA freelist_count');
+    final pages = _asInt(pageCount.firstOrNull?['page_count']) ?? 0;
+    final free = _asInt(freeList.firstOrNull?['freelist_count']) ?? 0;
+    if (pages == 0 || free < 1024 || free / pages < 0.2) return;
+    try {
+      await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+      await db.execute('VACUUM');
+    } on DatabaseException {
+      // A failed optional compaction never prevents users from reading media.
+    }
+  }
+
+  Future<void> _createMediaItemIndexes(DatabaseExecutor db) async {
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_library_title '
+      'ON media_items(library_id, title COLLATE NOCASE)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_id '
+      'ON media_items(tmdb_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_gcid ON media_items(gcid)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_collection '
+      'ON media_items(library_id, collection_id)',
+    );
   }
 
   MediaLibraryItem _itemFromRow(Map<String, Object?> row) {
