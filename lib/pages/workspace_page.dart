@@ -238,6 +238,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   @override
   Widget build(BuildContext context) {
     final fp = ref.watch(fileProvider);
+    final auth = ref.watch(authProvider);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -268,12 +269,30 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                     children: [
                       topBar,
                       const SizedBox(height: 8),
-                      Expanded(child: content),
+                      Expanded(
+                        child: Stack(
+                          children: [
+                            Positioned.fill(child: content),
+                            Positioned(
+                              right: 4,
+                              bottom: 8,
+                              child: _MobileFloatingSearch(
+                                mode: _mode,
+                                searchController: _searchController,
+                                searchFocusNode: _searchFocusNode,
+                                searchOpen: _searchOpen,
+                                onSearch: _submitSearch,
+                                onToggleSearch: _toggleSearch,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                       const SizedBox(height: 8),
                       _MobileWorkspaceNavigation(
                         mode: _mode,
                         onModeChanged: _changeMode,
-                        onMore: () => _showMobileMenu(context),
+                        onMore: () => _showMobileMenu(context, auth),
                       ),
                     ],
                   ),
@@ -356,14 +375,24 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     );
   }
 
-  void _showMobileMenu(BuildContext context) {
+  void _showMobileMenu(BuildContext context, AuthState auth) {
     showShadSheet(
       context: context,
-      side: ShadSheetSide.bottom,
+      side: ShadSheetSide.left,
       builder: (context) => _MobileWorkspaceMenu(
         mode: _mode,
+        userName: auth.userName,
+        memberLevel: auth.memberLevel,
+        capacityText: auth.capacityText,
         onSection: (section) {
           Navigator.of(context).pop();
+          if (section == WorkspaceSection.mediaLibrary) {
+            _changeMode(WorkspaceMode.media);
+            return;
+          }
+          if (_mode != WorkspaceMode.cloud) {
+            _changeMode(WorkspaceMode.cloud);
+          }
           ref.read(fileProvider.notifier).setSection(section);
         },
         onTool: (tool) {
@@ -377,6 +406,14 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
         onSettings: () {
           Navigator.of(context).pop();
           _showSettings(this.context);
+        },
+        onSearch: () {
+          Navigator.of(context).pop();
+          if (!_searchOpen) _toggleSearch();
+        },
+        onSignOut: () {
+          Navigator.of(context).pop();
+          ref.read(authProvider.notifier).signOut();
         },
       ),
     );
@@ -500,86 +537,37 @@ class _TopBar extends StatelessWidget {
     if (compact) {
       return SizedBox(
         height: 46,
-        child: Row(
-          children: [
-            OS26Glass(
-              radius: 12,
-              opacity: 0.42,
-              padding: const EdgeInsets.all(3),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _SegmentButton(
-                    icon: Icons.folder_rounded,
-                    label: '光鸭云盘',
-                    compact: true,
-                    selected: mode == WorkspaceMode.cloud,
-                    onTap: () => onModeChanged(WorkspaceMode.cloud),
-                  ),
-                  _SegmentButton(
-                    icon: Icons.movie_rounded,
-                    label: '光鸭影视',
-                    compact: true,
-                    selected: mode == WorkspaceMode.media,
-                    onTap: () => onModeChanged(WorkspaceMode.media),
-                  ),
-                  _TopBarIconButton(
-                    tooltip: '设置',
-                    icon: Icons.settings_rounded,
-                    onTap: onSettings,
-                  ),
-                ],
-              ),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: OS26Glass(
+            radius: 12,
+            opacity: 0.42,
+            padding: const EdgeInsets.all(3),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _SegmentButton(
+                  icon: Icons.folder_rounded,
+                  label: '光鸭云盘',
+                  compact: true,
+                  selected: mode == WorkspaceMode.cloud,
+                  onTap: () => onModeChanged(WorkspaceMode.cloud),
+                ),
+                _SegmentButton(
+                  icon: Icons.movie_rounded,
+                  label: '光鸭影视',
+                  compact: true,
+                  selected: mode == WorkspaceMode.media,
+                  onTap: () => onModeChanged(WorkspaceMode.media),
+                ),
+                _TopBarIconButton(
+                  tooltip: '设置',
+                  icon: Icons.settings_rounded,
+                  onTap: onSettings,
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OS26Glass(
-                radius: 12,
-                opacity: 0.52,
-                padding: searchOpen
-                    ? const EdgeInsets.symmetric(horizontal: 10)
-                    : EdgeInsets.zero,
-                child: searchOpen
-                    ? Row(
-                        children: [
-                          Icon(
-                            Icons.search_rounded,
-                            size: 17,
-                            color: cs.mutedForeground,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: TextField(
-                              controller: searchController,
-                              focusNode: searchFocusNode,
-                              decoration: InputDecoration(
-                                border: InputBorder.none,
-                                isDense: true,
-                                hintText: mode == WorkspaceMode.cloud
-                                    ? '搜索文件'
-                                    : '搜索影视资源',
-                              ),
-                              textInputAction: TextInputAction.search,
-                              onSubmitted: onSearch,
-                            ),
-                          ),
-                          _TopBarIconButton(
-                            tooltip: '关闭搜索',
-                            icon: Icons.close_rounded,
-                            onTap: onToggleSearch,
-                          ),
-                        ],
-                      )
-                    : _TopBarIconButton(
-                        tooltip: mode == WorkspaceMode.cloud
-                            ? '搜索文件'
-                            : '搜索影视资源',
-                        icon: Icons.search_rounded,
-                        onTap: onToggleSearch,
-                      ),
-              ),
-            ),
-          ],
+          ),
         ),
       );
     }
@@ -599,14 +587,14 @@ class _TopBar extends StatelessWidget {
                 _SegmentButton(
                   icon: Icons.folder_rounded,
                   label: '光鸭云盘',
-                  compact: true,
+                  compact: false,
                   selected: mode == WorkspaceMode.cloud,
                   onTap: () => onModeChanged(WorkspaceMode.cloud),
                 ),
                 _SegmentButton(
                   icon: Icons.movie_rounded,
                   label: '光鸭影视',
-                  compact: true,
+                  compact: false,
                   selected: mode == WorkspaceMode.media,
                   onTap: () => onModeChanged(WorkspaceMode.media),
                 ),
@@ -778,6 +766,74 @@ class _TopBarIconButton extends StatelessWidget {
   }
 }
 
+class _MobileFloatingSearch extends StatelessWidget {
+  final WorkspaceMode mode;
+  final TextEditingController searchController;
+  final FocusNode searchFocusNode;
+  final bool searchOpen;
+  final ValueChanged<String> onSearch;
+  final VoidCallback onToggleSearch;
+
+  const _MobileFloatingSearch({
+    required this.mode,
+    required this.searchController,
+    required this.searchFocusNode,
+    required this.searchOpen,
+    required this.onSearch,
+    required this.onToggleSearch,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final maxWidth = MediaQuery.sizeOf(context).width - 40;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOutCubic,
+      width: searchOpen ? maxWidth.clamp(220.0, 300.0).toDouble() : 52,
+      height: 52,
+      child: OS26Glass(
+        radius: 26,
+        opacity: 0.82,
+        padding: searchOpen
+            ? const EdgeInsets.symmetric(horizontal: 8, vertical: 5)
+            : EdgeInsets.zero,
+        child: searchOpen
+            ? Row(
+                children: [
+                  Expanded(
+                    child: ShadInput(
+                      controller: searchController,
+                      focusNode: searchFocusNode,
+                      autofocus: true,
+                      placeholder: Text(
+                        mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
+                      ),
+                      leading: Icon(
+                        Icons.search_rounded,
+                        size: 17,
+                        color: cs.mutedForeground,
+                      ),
+                      onSubmitted: onSearch,
+                    ),
+                  ),
+                  _TopBarIconButton(
+                    tooltip: '关闭搜索',
+                    icon: Icons.close_rounded,
+                    onTap: onToggleSearch,
+                  ),
+                ],
+              )
+            : _TopBarIconButton(
+                tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
+                icon: Icons.search_rounded,
+                onTap: onToggleSearch,
+              ),
+      ),
+    );
+  }
+}
+
 class _MobileWorkspaceNavigation extends StatelessWidget {
   final WorkspaceMode mode;
   final ValueChanged<WorkspaceMode> onModeChanged;
@@ -874,74 +930,192 @@ class _MobileNavItem extends StatelessWidget {
 
 class _MobileWorkspaceMenu extends StatelessWidget {
   final WorkspaceMode mode;
+  final String userName;
+  final String memberLevel;
+  final String capacityText;
   final ValueChanged<WorkspaceSection> onSection;
   final ValueChanged<WorkspaceTool> onTool;
   final VoidCallback onCreateLibrary;
   final VoidCallback onSettings;
+  final VoidCallback onSearch;
+  final VoidCallback onSignOut;
 
   const _MobileWorkspaceMenu({
     required this.mode,
+    required this.userName,
+    required this.memberLevel,
+    required this.capacityText,
     required this.onSection,
     required this.onTool,
     required this.onCreateLibrary,
     required this.onSettings,
+    required this.onSearch,
+    required this.onSignOut,
   });
 
   @override
   Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
     final isCloud = mode == WorkspaceMode.cloud;
+    final width = (MediaQuery.sizeOf(context).width * 0.86)
+        .clamp(280.0, 340.0)
+        .toDouble();
     return ShadSheet(
-      constraints: const BoxConstraints(maxHeight: 560),
-      title: Text(isCloud ? '云盘功能' : '影视功能'),
-      description: Text(isCloud ? '切换文件分类或打开工具' : '媒体库与影视工具'),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.only(top: 12),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            if (isCloud)
-              for (final section in WorkspaceSection.values.where(
-                (section) => section != WorkspaceSection.mediaLibrary,
-              ))
-                _MobileMenuButton(
-                  icon: _mobileSectionIcon(section),
-                  label: section.label,
-                  onTap: () => onSection(section),
-                )
-            else
-              _MobileMenuButton(
-                icon: Icons.add_rounded,
-                label: '新建媒体库',
-                onTap: onCreateLibrary,
-              ),
-            _MobileMenuButton(
-              icon: isCloud
-                  ? Icons.manage_search_rounded
-                  : Icons.movie_filter_rounded,
-              label: isCloud ? '文件扫描与清理' : '媒体库管理',
-              onTap: () =>
-                  onTool(isCloud ? WorkspaceTool.scan : WorkspaceTool.tmdb),
+      constraints: BoxConstraints.tightFor(width: width),
+      title: const Text('小黄鸭'),
+      description: Text('$userName · $memberLevel'),
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: cs.muted,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: cs.border),
             ),
-            if (isCloud) ...[
-              _MobileMenuButton(
-                icon: Icons.text_fields_rounded,
-                label: '批量重命名',
-                onTap: () => onTool(WorkspaceTool.rename),
-              ),
-              _MobileMenuButton(
-                icon: Icons.bolt_rounded,
-                label: '秒传工具',
-                onTap: () => onTool(WorkspaceTool.fastTransfer),
-              ),
-            ],
-            _MobileMenuButton(
-              icon: Icons.settings_rounded,
-              label: '设置',
-              onTap: onSettings,
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 21,
+                  backgroundColor: cs.primary,
+                  child: Text(
+                    userName.isEmpty
+                        ? '小'
+                        : userName.substring(0, 1).toUpperCase(),
+                    style: TextStyle(
+                      color: cs.primaryForeground,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        userName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: cs.foreground,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        capacityText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: ListView(
+              children: [
+                _MobileMenuGroup(
+                  title: '常用入口',
+                  children: [
+                    _MobileMenuRow(
+                      icon: Icons.search_rounded,
+                      label: '全局搜索',
+                      onTap: onSearch,
+                    ),
+                    _MobileMenuRow(
+                      icon: Icons.folder_rounded,
+                      label: '文件管理',
+                      onTap: () => onSection(WorkspaceSection.files),
+                    ),
+                    _MobileMenuRow(
+                      icon: Icons.movie_rounded,
+                      label: '光鸭影视',
+                      onTap: () => onSection(WorkspaceSection.mediaLibrary),
+                    ),
+                  ],
+                ),
+                if (isCloud)
+                  _MobileMenuGroup(
+                    title: '文件内容',
+                    children: [
+                      for (final section in [
+                        WorkspaceSection.recentViewed,
+                        WorkspaceSection.photos,
+                        WorkspaceSection.videos,
+                        WorkspaceSection.audio,
+                        WorkspaceSection.documents,
+                        WorkspaceSection.shares,
+                        WorkspaceSection.recycle,
+                      ])
+                        _MobileMenuRow(
+                          icon: _mobileSectionIcon(section),
+                          label: section.label,
+                          onTap: () => onSection(section),
+                        ),
+                    ],
+                  ),
+                _MobileMenuGroup(
+                  title: isCloud ? '文件工具' : '影视工具',
+                  children: [
+                    if (!isCloud)
+                      _MobileMenuRow(
+                        icon: Icons.add_rounded,
+                        label: '新建媒体库',
+                        onTap: onCreateLibrary,
+                      ),
+                    _MobileMenuRow(
+                      icon: isCloud
+                          ? Icons.manage_search_rounded
+                          : Icons.movie_filter_rounded,
+                      label: isCloud ? '文件扫描与清理' : '媒体库管理',
+                      onTap: () => onTool(
+                        isCloud ? WorkspaceTool.scan : WorkspaceTool.tmdb,
+                      ),
+                    ),
+                    if (isCloud) ...[
+                      _MobileMenuRow(
+                        icon: Icons.text_fields_rounded,
+                        label: '批量重命名',
+                        onTap: () => onTool(WorkspaceTool.rename),
+                      ),
+                      _MobileMenuRow(
+                        icon: Icons.bolt_rounded,
+                        label: '秒传工具',
+                        onTap: () => onTool(WorkspaceTool.fastTransfer),
+                      ),
+                    ],
+                  ],
+                ),
+                _MobileMenuGroup(
+                  title: '系统维护',
+                  children: [
+                    _MobileMenuRow(
+                      icon: Icons.settings_rounded,
+                      label: '设置中心',
+                      onTap: onSettings,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const ShadSeparator.horizontal(),
+          _MobileMenuRow(
+            icon: Icons.logout_rounded,
+            label: '退出登录',
+            destructive: true,
+            onTap: onSignOut,
+          ),
+        ],
       ),
     );
   }
@@ -961,26 +1135,79 @@ class _MobileWorkspaceMenu extends StatelessWidget {
   };
 }
 
-class _MobileMenuButton extends StatelessWidget {
+class _MobileMenuGroup extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+
+  const _MobileMenuGroup({required this.title, required this.children});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: ShadTheme.of(context).colorScheme.mutedForeground,
+            ),
+          ),
+        ),
+        ...children,
+      ],
+    ),
+  );
+}
+
+class _MobileMenuRow extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final bool destructive;
 
-  const _MobileMenuButton({
+  const _MobileMenuRow({
     required this.icon,
     required this.label,
     required this.onTap,
+    this.destructive = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 112,
-      child: ShadButton.outline(
-        size: ShadButtonSize.sm,
-        onPressed: onTap,
-        leading: Icon(icon, size: 16),
-        child: Text(label, overflow: TextOverflow.ellipsis),
+    final cs = ShadTheme.of(context).colorScheme;
+    final color = destructive ? cs.destructive : cs.foreground;
+    return Semantics(
+      button: true,
+      label: label,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                size: 20,
+                color: destructive ? cs.destructive : cs.mutedForeground,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
