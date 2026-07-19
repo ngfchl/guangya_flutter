@@ -951,12 +951,15 @@ class _NativeMobileDrawerContent extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                _ModeSwitcher(
-                  mode: mode,
-                  onModeChanged: onModeChanged,
-                  onSettings: onSettings,
-                  showLabelWhenSelected: true,
-                  showTooltips: false,
+                SizedBox(
+                  width: 220,
+                  child: _ModeSwitcher(
+                    mode: mode,
+                    onModeChanged: onModeChanged,
+                    onSettings: onSettings,
+                    showLabelWhenSelected: true,
+                    showTooltips: false,
+                  ),
                 ),
               ],
             ),

@@ -19,7 +19,7 @@ void main() async {
   FlutterError.onError = (details) {
     AppLogger.error(
       'Flutter',
-      details.exceptionAsString(),
+      '界面渲染异常：${details.exceptionAsString()}\n$details',
       stackTrace: details.stack,
     );
     FlutterError.presentError(details);
