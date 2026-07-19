@@ -36,6 +36,7 @@ class StorageKeys {
       'guangya.cloudIndexLastUpdatedAt';
   static const String cloudScrapedBackupFolderID =
       'guangya.cloudScrapedBackupFolderID';
+  static const String workspaceMode = 'guangya.workspaceMode';
 }
 
 class StorageManager {

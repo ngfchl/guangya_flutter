@@ -82,15 +82,18 @@ class WorkspaceToolsPage extends StatelessWidget {
   }
 }
 
-class _ToolHeader extends StatelessWidget {
+class _ToolHeader extends ConsumerWidget {
   final WorkspaceTool tool;
   final VoidCallback onClose;
 
   const _ToolHeader({required this.tool, required this.onClose});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = ShadTheme.of(context).colorScheme;
+    final mediaState = tool == WorkspaceTool.tmdb
+        ? ref.watch(mediaLibraryProvider)
+        : null;
     return Container(
       height: 58,
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -126,9 +129,136 @@ class _ToolHeader extends StatelessWidget {
                   ),
                 ),
               ),
+              if (mediaState != null) ...[
+                const SizedBox(width: 8),
+                _ToolMediaLibrarySwitcher(
+                  libraries: mediaState.libraries,
+                  selectedLibraryID: mediaState.selectedLibraryID,
+                  compact: compact,
+                  onSelected: (libraryID) => ref
+                      .read(mediaLibraryProvider.notifier)
+                      .selectLibrary(libraryID),
+                ),
+              ],
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _ToolMediaLibrarySwitcher extends StatefulWidget {
+  final List<MediaLibraryDefinition> libraries;
+  final String? selectedLibraryID;
+  final ValueChanged<String> onSelected;
+  final bool compact;
+
+  const _ToolMediaLibrarySwitcher({
+    required this.libraries,
+    required this.selectedLibraryID,
+    required this.onSelected,
+    required this.compact,
+  });
+
+  @override
+  State<_ToolMediaLibrarySwitcher> createState() =>
+      _ToolMediaLibrarySwitcherState();
+}
+
+class _ToolMediaLibrarySwitcherState extends State<_ToolMediaLibrarySwitcher> {
+  final _controller = ShadPopoverController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final selected = widget.libraries
+        .where((library) => library.id == widget.selectedLibraryID)
+        .firstOrNull;
+    return ShadPopover(
+      controller: _controller,
+      popover: (_) => SizedBox(
+        width: 240,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 280),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.all(6),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+                child: Text(
+                  '切换媒体库',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: cs.mutedForeground,
+                  ),
+                ),
+              ),
+              for (final library in widget.libraries)
+                ShadButton.ghost(
+                  width: double.infinity,
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  leading: Icon(
+                    library.kind == MediaLibraryKind.series
+                        ? Icons.live_tv_rounded
+                        : Icons.movie_rounded,
+                    size: 16,
+                  ),
+                  trailing: library.id == widget.selectedLibraryID
+                      ? Icon(Icons.check_rounded, size: 16, color: cs.primary)
+                      : null,
+                  onPressed: () {
+                    _controller.hide();
+                    widget.onSelected(library.id);
+                  },
+                  child: Text(
+                    library.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: widget.compact ? 92 : 190),
+            child: ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: widget.libraries.isEmpty ? null : _controller.toggle,
+              leading: Icon(
+                Icons.video_library_rounded,
+                size: 16,
+                color: cs.primary,
+              ),
+              child: Text(
+                selected?.name ?? '未选择媒体库',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+          const SizedBox(width: 2),
+          ShadTooltip(
+            builder: (_) => const Text('切换媒体库'),
+            child: ShadButton.outline(
+              size: ShadButtonSize.sm,
+              onPressed: widget.libraries.isEmpty ? null : _controller.toggle,
+              child: const Icon(Icons.swap_horiz_rounded, size: 17),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -752,6 +882,8 @@ class _BatchRenameTool extends ConsumerStatefulWidget {
 
 class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   final _filter = TextEditingController();
+  final _previewHorizontalController = ScrollController();
+  final _previewVerticalController = ScrollController();
   bool _preserveExtension = true;
   bool _running = false;
   int _completed = 0;
@@ -793,6 +925,8 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   @override
   void dispose() {
     _filter.dispose();
+    _previewHorizontalController.dispose();
+    _previewVerticalController.dispose();
     super.dispose();
   }
 
@@ -1311,7 +1445,9 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                                 ? 920.0
                                 : constraints.maxWidth;
                             return Scrollbar(
+                              controller: _previewHorizontalController,
                               child: SingleChildScrollView(
+                                controller: _previewHorizontalController,
                                 scrollDirection: Axis.horizontal,
                                 child: SizedBox(
                                   width: tableWidth,
@@ -1321,6 +1457,9 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                                       const Divider(height: 1),
                                       Expanded(
                                         child: ListView.separated(
+                                          controller:
+                                              _previewVerticalController,
+                                          primary: false,
                                           itemCount: previews.length,
                                           separatorBuilder: (_, _) =>
                                               const Divider(height: 1),

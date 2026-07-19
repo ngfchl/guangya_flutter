@@ -233,135 +233,6 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
   );
 }
 
-class _MediaLibrarySwitcher extends StatefulWidget {
-  final List<MediaLibraryDefinition> libraries;
-  final String? selectedLibraryID;
-  final ValueChanged<String> onSelected;
-  final bool compact;
-
-  const _MediaLibrarySwitcher({
-    required this.libraries,
-    required this.selectedLibraryID,
-    required this.onSelected,
-    this.compact = false,
-  });
-
-  @override
-  State<_MediaLibrarySwitcher> createState() => _MediaLibrarySwitcherState();
-}
-
-class _MediaLibrarySwitcherState extends State<_MediaLibrarySwitcher> {
-  final _controller = ShadPopoverController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    final selected = widget.libraries
-        .where((library) => library.id == widget.selectedLibraryID)
-        .firstOrNull;
-    final title = selected?.name ?? '未选择媒体库';
-    final label = Container(
-      constraints: const BoxConstraints(maxWidth: 180),
-      height: 36,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        color: cs.muted.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: cs.border),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.video_library_rounded, size: 16, color: cs.primary),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: cs.foreground,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-    final control = Row(
-      mainAxisSize: widget.compact ? MainAxisSize.max : MainAxisSize.min,
-      children: [
-        if (widget.compact) Expanded(child: label) else label,
-        const SizedBox(width: 6),
-        ShadTooltip(
-          builder: (_) => const Text('切换媒体库'),
-          child: ShadButton.outline(
-            size: ShadButtonSize.sm,
-            onPressed: widget.libraries.isEmpty ? null : _controller.toggle,
-            child: const Icon(Icons.swap_horiz_rounded, size: 17),
-          ),
-        ),
-      ],
-    );
-    return ShadPopover(
-      controller: _controller,
-      popover: (_) => SizedBox(
-        width: 240,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 280),
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.all(6),
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
-                child: Text(
-                  '切换媒体库',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: cs.mutedForeground,
-                  ),
-                ),
-              ),
-              for (final library in widget.libraries)
-                ShadButton.ghost(
-                  width: double.infinity,
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  leading: Icon(
-                    library.kind == MediaLibraryKind.series
-                        ? Icons.live_tv_rounded
-                        : Icons.movie_rounded,
-                    size: 16,
-                  ),
-                  trailing: library.id == widget.selectedLibraryID
-                      ? Icon(Icons.check_rounded, size: 16, color: cs.primary)
-                      : null,
-                  onPressed: () {
-                    _controller.hide();
-                    widget.onSelected(library.id);
-                  },
-                  child: Text(
-                    library.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-      child: control,
-    );
-  }
-}
-
 class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   final String _tmdbApiKey =
       StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
@@ -439,8 +310,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             _buildHeader(context, state, compact: compact),
             SizedBox(height: compact ? 8 : 12),
           ],
-          _buildToolbar(context, state),
-          SizedBox(height: compact ? 8 : 12),
+          if (widget.showManagementToolbar || _detailWork != null) ...[
+            _buildToolbar(context, state),
+            SizedBox(height: compact ? 8 : 12),
+          ],
           Expanded(
             child:
                 widget.showLibrarySidebar &&
@@ -469,10 +342,12 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     required bool compact,
   }) {
     final cs = ShadTheme.of(context).colorScheme;
+    final statistics = state.statistics;
+    final library = state.selectedLibrary;
     final title = Row(
       children: [
         Icon(
-          Icons.movie_filter_rounded,
+          Icons.video_library_rounded,
           size: compact ? 22 : 26,
           color: cs.primary,
         ),
@@ -482,7 +357,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                widget.searchTitle ?? '光鸭影视',
+                library?.name ?? '未选择媒体库',
                 style: TextStyle(
                   fontSize: compact ? 18 : 21,
                   fontWeight: FontWeight.w700,
@@ -490,7 +365,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 ),
               ),
               Text(
-                state.selectedLibrary?.name ?? '创建媒体库后扫描云盘影视文件',
+                '${statistics.movies} 部电影 · ${statistics.series} 部剧集 · ${statistics.total} 个媒体文件',
                 style: TextStyle(fontSize: 12, color: cs.mutedForeground),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -499,7 +374,28 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ),
       ],
     );
-    return title;
+    final search = ShadInput(
+      controller: _searchController,
+      placeholder: const Text('搜索影视库或匹配 TMDB…'),
+      leading: Icon(Icons.search_rounded, size: 16, color: cs.mutedForeground),
+      onChanged: (value) =>
+          ref.read(mediaLibraryProvider.notifier).setSearchQuery(value),
+      onSubmitted: _searchTMDB,
+    );
+    if (_detailWork != null) return title;
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [title, const SizedBox(height: 8), search],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(child: title),
+        const SizedBox(width: 20),
+        SizedBox(width: 400, child: search),
+      ],
+    );
   }
 
   Widget _buildToolbar(BuildContext context, MediaLibraryState state) {
@@ -543,66 +439,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (detailWork != null && widget.showManagementToolbar) ...[
-                  ShadButton.outline(
-                    size: ShadButtonSize.sm,
-                    onPressed: _detailSyncing
-                        ? null
-                        : () =>
-                              unawaited(_refreshAndRecognizeDetail(detailWork)),
-                    leading: const Icon(Icons.auto_awesome_rounded, size: 16),
-                    child: const Text('媒体识别'),
-                  ),
-                  ShadButton.outline(
-                    size: ShadButtonSize.sm,
-                    onPressed: _manualMatchPreparing
-                        ? null
-                        : () => unawaited(_showManualTMDBMatch(detailWork)),
-                    leading: const Icon(Icons.manage_search_rounded, size: 16),
-                    child: const Text('手动匹配'),
-                  ),
-                ] else if (widget.showManagementToolbar) ...[
-                  ShadButton.outline(
-                    size: ShadButtonSize.sm,
-                    onPressed: () => _showCreateLibraryDialog(context, ref),
-                    leading: const Icon(Icons.add_rounded, size: 16),
-                    child: const Text('媒体库'),
-                  ),
-                  _backupActionsMenu(state, compact: true),
-                  ShadButton.outline(
-                    size: ShadButtonSize.sm,
-                    onPressed: state.selectedLibrary == null || state.isScanning
-                        ? null
-                        : () => ref
-                              .read(mediaLibraryProvider.notifier)
-                              .rescanSelectedLibrary(),
-                    leading: const Icon(Icons.refresh_rounded, size: 16),
-                    child: const Text('扫描'),
-                  ),
-                  if (state.isScanning)
-                    ShadButton.destructive(
-                      size: ShadButtonSize.sm,
-                      onPressed: () =>
-                          ref.read(mediaLibraryProvider.notifier).cancelScan(),
-                      leading: const Icon(Icons.stop_rounded, size: 16),
-                      child: const Text('停止'),
-                    ),
-                  ShadButton(
-                    size: ShadButtonSize.sm,
-                    onPressed: _tmdbApiKey.isEmpty
-                        ? null
-                        : () => _searchTMDB(_searchController.text),
-                    leading: const Icon(Icons.travel_explore_rounded, size: 16),
-                    child: const Text('匹配'),
-                  ),
-                  _MediaLibrarySwitcher(
-                    libraries: state.libraries,
-                    selectedLibraryID: state.selectedLibraryID,
-                    compact: true,
-                    onSelected: (libraryID) => ref
-                        .read(mediaLibraryProvider.notifier)
-                        .selectLibrary(libraryID),
-                  ),
+                if (detailWork == null && widget.showManagementToolbar) ...[
+                  _managementActionStrip(context, state, compact: true),
                 ],
               ],
             ),
@@ -612,7 +450,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     }
     return Row(
       children: [
-        if (detailWork != null && widget.showManagementToolbar) ...[
+        if (detailWork != null) ...[
           ShadButton.ghost(
             size: ShadButtonSize.sm,
             onPressed: () => setState(() => _detailWork = null),
@@ -635,67 +473,66 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           ),
         ),
         const SizedBox(width: 8),
-        if (detailWork != null && widget.showManagementToolbar) ...[
-          ShadButton.outline(
-            onPressed: _detailSyncing
-                ? null
-                : () => unawaited(_refreshAndRecognizeDetail(detailWork)),
-            leading: const Icon(Icons.auto_awesome_rounded, size: 16),
-            child: const Text('媒体识别'),
-          ),
-          const SizedBox(width: 8),
-          ShadButton.outline(
-            onPressed: _manualMatchPreparing
-                ? null
-                : () => unawaited(_showManualTMDBMatch(detailWork)),
-            leading: const Icon(Icons.manage_search_rounded, size: 16),
-            child: const Text('手动匹配'),
-          ),
-        ] else if (widget.showManagementToolbar) ...[
-          ShadButton.outline(
-            onPressed: () => _showCreateLibraryDialog(context, ref),
-            leading: const Icon(Icons.add_rounded, size: 16),
-            child: const Text('媒体库'),
-          ),
-          const SizedBox(width: 8),
-          _backupActionsMenu(state),
-          const SizedBox(width: 8),
-          ShadButton.outline(
-            onPressed: state.selectedLibrary == null || state.isScanning
-                ? null
-                : () => ref
-                      .read(mediaLibraryProvider.notifier)
-                      .rescanSelectedLibrary(),
-            leading: const Icon(Icons.refresh_rounded, size: 16),
-            child: const Text('重新扫描'),
-          ),
-          if (state.isScanning) ...[
-            const SizedBox(width: 8),
-            ShadButton.destructive(
+        if (detailWork == null && widget.showManagementToolbar) ...[
+          _managementActionStrip(context, state, compact: false),
+        ],
+      ],
+    );
+  }
+
+  Widget _managementActionStrip(
+    BuildContext context,
+    MediaLibraryState state, {
+    required bool compact,
+  }) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final actions = <Widget>[
+      ShadButton.ghost(
+        size: ShadButtonSize.sm,
+        onPressed: () => _showCreateLibraryDialog(context, ref),
+        leading: const Icon(Icons.add_rounded, size: 16),
+        child: const Text('新建媒体库'),
+      ),
+      _backupActionsMenu(state, compact: true),
+      state.isScanning
+          ? ShadButton.destructive(
+              size: ShadButtonSize.sm,
               onPressed: () =>
                   ref.read(mediaLibraryProvider.notifier).cancelScan(),
               leading: const Icon(Icons.stop_rounded, size: 16),
-              child: const Text('停止'),
+              child: const Text('停止扫描'),
+            )
+          : ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: state.selectedLibrary == null
+                  ? null
+                  : () => ref
+                        .read(mediaLibraryProvider.notifier)
+                        .rescanSelectedLibrary(),
+              leading: const Icon(Icons.refresh_rounded, size: 16),
+              child: Text(compact ? '扫描' : '重新扫描'),
             ),
-          ],
-          const SizedBox(width: 8),
-          ShadButton(
-            onPressed: _tmdbApiKey.isEmpty
-                ? null
-                : () => _searchTMDB(_searchController.text),
-            leading: const Icon(Icons.travel_explore_rounded, size: 16),
-            child: const Text('匹配'),
-          ),
-          const SizedBox(width: 8),
-          _MediaLibrarySwitcher(
-            libraries: state.libraries,
-            selectedLibraryID: state.selectedLibraryID,
-            onSelected: (libraryID) => ref
-                .read(mediaLibraryProvider.notifier)
-                .selectLibrary(libraryID),
-          ),
-        ],
-      ],
+    ];
+    final content = compact
+        ? Wrap(spacing: 4, runSpacing: 4, children: actions)
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var index = 0; index < actions.length; index++) ...[
+                if (index > 0) const SizedBox(width: 4),
+                actions[index],
+              ],
+            ],
+          );
+    return Container(
+      width: compact ? double.infinity : null,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: cs.muted.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: cs.border),
+      ),
+      child: content,
     );
   }
 
@@ -832,6 +669,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               context: context,
               builder: (_) => ExternalPlayerDialog(file: item.file),
             ),
+            onRecognize: () =>
+                unawaited(_refreshAndRecognizeDetail(selectedWork)),
+            onManualMatch: () => unawaited(_showManualTMDBMatch(selectedWork)),
           ),
           if (_detailSyncing || _manualMatchPreparing)
             _detailLoadingOverlay(
@@ -876,11 +716,16 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                   onDownload: () => ref
                       .read(fileProvider.notifier)
                       .downloadFile(works[index].primary.file),
-                  onRescan: state.isScanning
+                  onRecognize: state.isScanning
                       ? null
-                      : () => ref
-                            .read(mediaLibraryProvider.notifier)
-                            .rescanSelectedLibrary(),
+                      : () {
+                          setState(() => _detailWork = works[index]);
+                          unawaited(_refreshAndRecognizeDetail(works[index]));
+                        },
+                  onManualMatch: () {
+                    setState(() => _detailWork = works[index]);
+                    unawaited(_showManualTMDBMatch(works[index]));
+                  },
                 ),
               );
             },
@@ -2240,13 +2085,15 @@ class _MediaPosterTile extends ConsumerWidget {
   final _MediaWork work;
   final VoidCallback onOpen;
   final VoidCallback onDownload;
-  final VoidCallback? onRescan;
+  final VoidCallback? onRecognize;
+  final VoidCallback onManualMatch;
 
   const _MediaPosterTile({
     required this.work,
     required this.onOpen,
     required this.onDownload,
-    this.onRescan,
+    this.onRecognize,
+    required this.onManualMatch,
   });
 
   @override
@@ -2258,6 +2105,7 @@ class _MediaPosterTile extends ConsumerWidget {
         ? _tmdbImageURL(item.posterPath!, size: 'w342')
         : null;
     return ShadContextMenuRegion(
+      tapEnabled: false,
       items: [
         ShadContextMenuItem.inset(
           leading: const Icon(LucideIcons.info, size: 16),
@@ -2271,9 +2119,14 @@ class _MediaPosterTile extends ConsumerWidget {
         ),
         const Divider(height: 8),
         ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.refreshCw, size: 16),
-          onPressed: onRescan,
-          child: const Text('重新扫描媒体库'),
+          leading: const Icon(LucideIcons.sparkles, size: 16),
+          onPressed: onRecognize,
+          child: const Text('媒体识别'),
+        ),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.listFilter, size: 16),
+          onPressed: onManualMatch,
+          child: const Text('手动匹配'),
         ),
       ],
       child: Semantics(
@@ -2378,12 +2231,16 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final ValueChanged<MediaLibraryItem> onDownload;
   final ValueChanged<MediaLibraryItem> onPlay;
   final ValueChanged<MediaLibraryItem> onExternalPlay;
+  final VoidCallback onRecognize;
+  final VoidCallback onManualMatch;
 
   const _MediaDetailPanel({
     required this.work,
     required this.onDownload,
     required this.onPlay,
     required this.onExternalPlay,
+    required this.onRecognize,
+    required this.onManualMatch,
   });
 
   @override
@@ -2751,6 +2608,18 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               onPressed: () => widget.onDownload(_resource),
               leading: const Icon(Icons.download_rounded, size: 16),
               child: const Text('下载'),
+            ),
+            ShadButton.outline(
+              size: ShadButtonSize.sm,
+              onPressed: widget.onRecognize,
+              leading: const Icon(Icons.auto_awesome_rounded, size: 16),
+              child: const Text('媒体识别'),
+            ),
+            ShadButton.outline(
+              size: ShadButtonSize.sm,
+              onPressed: widget.onManualMatch,
+              leading: const Icon(Icons.manage_search_rounded, size: 16),
+              child: const Text('手动匹配'),
             ),
           ],
         ),
@@ -3228,6 +3097,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: ShadContextMenuRegion(
+        tapEnabled: false,
         items: [
           ShadContextMenuItem.inset(
             leading: const Icon(LucideIcons.play, size: 16),

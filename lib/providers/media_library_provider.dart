@@ -734,12 +734,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                     proxyPort: tmdbProxyPort,
                   )
                 : existing.copyWith(file: file, updatedAt: DateTime.now());
+            if (_cancelScan) return;
             // Do not lose an existing match solely because a transient TMDB
             // lookup failed while filling an incomplete record.
             if (item.tmdbID == null && existing?.tmdbID != null) {
               item = existing!.copyWith(file: file, updatedAt: DateTime.now());
             }
             item = await _renameMatchedMediaFile(item);
+            if (_cancelScan) return;
             unique[file.id] = item;
             completed += 1;
             final visible = unique.values.toList()
@@ -783,6 +785,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (forceRemote) {
         _appendScanLog('正在获取云盘全量文件索引…');
         await refreshGlobalCloudIndex(force: true);
+        if (_cancelScan) return;
         final globalFiles = await _cachedGlobalFiles();
         final seen = <String>{};
         final mediaFiles = <CloudFile>[];

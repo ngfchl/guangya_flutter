@@ -208,6 +208,14 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   WorkspaceTool? _cloudActiveTool;
   WorkspaceTool? _mediaActiveTool;
 
+  @override
+  void initState() {
+    super.initState();
+    if (StorageManager.get<String>(StorageKeys.workspaceMode) == 'media') {
+      _mode = WorkspaceMode.media;
+    }
+  }
+
   void _openTool(WorkspaceTool tool) {
     setState(() {
       if (_mode == WorkspaceMode.cloud) {
@@ -326,6 +334,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       _searchOpen = false;
       _searchController.clear();
     });
+    unawaited(StorageManager.set(StorageKeys.workspaceMode, mode.name));
     if (mode == WorkspaceMode.media) {
       ref.read(mediaLibraryProvider.notifier).api = ref
           .read(authProvider.notifier)
@@ -357,8 +366,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _showMobileMenu(BuildContext context) {
-    final width = (MediaQuery.sizeOf(context).width * 0.78)
-        .clamp(252.0, 300.0)
+    final width = (MediaQuery.sizeOf(context).width * 0.72)
+        .clamp(236.0, 280.0)
         .toDouble();
     showShadSheet(
       context: context,
@@ -373,6 +382,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
             backgroundColor: cs.background,
             border: const Border(),
             shadows: const [],
+            closeIcon: const SizedBox.shrink(),
             child: Material(
               color: cs.background,
               child: Column(
@@ -1111,6 +1121,7 @@ class _CloudSidebar extends StatelessWidget {
         radius: showBrand ? 24 : 0,
         opacity: showBrand ? 0.56 : 0,
         border: showBrand ? null : const Border(),
+        applyBlur: showBrand,
         padding: EdgeInsets.fromLTRB(14, showBrand ? 18 : 14, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1225,6 +1236,7 @@ class _MediaSidebar extends ConsumerWidget {
         radius: showBrand ? 24 : 0,
         opacity: showBrand ? 0.56 : 0,
         border: showBrand ? null : const Border(),
+        applyBlur: showBrand,
         padding: EdgeInsets.fromLTRB(14, showBrand ? 18 : 14, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

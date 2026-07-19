@@ -110,6 +110,7 @@ class OS26Glass extends StatelessWidget {
   final double radius;
   final double opacity;
   final Border? border;
+  final bool applyBlur;
 
   const OS26Glass({
     super.key,
@@ -118,26 +119,30 @@ class OS26Glass extends StatelessWidget {
     this.radius = 18,
     this.opacity = 0.48,
     this.border,
+    this.applyBlur = true,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
     final cs = theme.colorScheme;
+    final surface = Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: cs.card.withValues(alpha: opacity.clamp(0.0, 1.0)),
+        borderRadius: BorderRadius.circular(radius),
+        border: border ?? Border.all(color: cs.border, width: 1),
+      ),
+      child: child,
+    );
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: cs.card.withValues(alpha: opacity.clamp(0.0, 1.0)),
-            borderRadius: BorderRadius.circular(radius),
-            border: border ?? Border.all(color: cs.border, width: 1),
-          ),
-          child: child,
-        ),
-      ),
+      child: applyBlur
+          ? BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+              child: surface,
+            )
+          : surface,
     );
   }
 }
