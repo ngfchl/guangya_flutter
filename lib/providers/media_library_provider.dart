@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -537,14 +538,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     Directory? temporaryDirectory;
     try {
       final download = await _api!.downloadURL(backup.id);
-      final url = _findStringDeep(download, const [
-        'url',
-        'downloadUrl',
-        'download_url',
-        'dlink',
-      ]);
-      if (url == null || Uri.tryParse(url)?.hasScheme != true) {
-        throw Exception('云盘未返回有效下载地址');
+      final url = _findDownloadUrlDeep(download);
+      if (url == null) {
+        final fields = _describeDownloadResponse(download);
+        _appendBackupLog('下载地址解析失败，接口返回字段：$fields', isError: true);
+        throw Exception('云盘未返回有效下载地址（字段：$fields）');
       }
       temporaryDirectory = await Directory.systemTemp.createTemp(
         'guangya-media-',
@@ -2477,6 +2475,92 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
     }
     return null;
+  }
+
+  /// 下载接口有时会将签名链接包在对象或 JSON 字符串中，不能直接把
+  /// `url` 字段转换为字符串，否则会得到 "{url: ...}" 这样的无效地址。
+  String? _findDownloadUrlDeep(dynamic value) {
+    if (value is String) {
+      final text = value.trim();
+      final uri = Uri.tryParse(text);
+      if (uri != null && (uri.scheme == 'https' || uri.scheme == 'http')) {
+        return uri.toString();
+      }
+      if ((text.startsWith('{') && text.endsWith('}')) ||
+          (text.startsWith('[') && text.endsWith(']'))) {
+        try {
+          return _findDownloadUrlDeep(jsonDecode(text));
+        } on FormatException {
+          return null;
+        }
+      }
+      return null;
+    }
+    if (value is Map) {
+      const fields = <String>{
+        'url',
+        'downloadurl',
+        'download_url',
+        'downloadlink',
+        'download_link',
+        'signedurl',
+        'signed_url',
+        'signedlink',
+        'signed_link',
+        'directurl',
+        'direct_url',
+        'directlink',
+        'direct_link',
+        'dlink',
+      };
+      for (final entry in value.entries) {
+        if (fields.contains(entry.key.toString().toLowerCase())) {
+          final found = _findDownloadUrlDeep(entry.value);
+          if (found != null) return found;
+        }
+      }
+      for (final entry in value.values) {
+        final found = _findDownloadUrlDeep(entry);
+        if (found != null) return found;
+      }
+      return null;
+    }
+    if (value is Iterable) {
+      for (final entry in value) {
+        final found = _findDownloadUrlDeep(entry);
+        if (found != null) return found;
+      }
+    }
+    return null;
+  }
+
+  /// 仅记录字段名与类型，不写入包含临时签名的下载地址。
+  String _describeDownloadResponse(dynamic value) {
+    final entries = <String>[];
+    void collect(dynamic current, [String path = '', int depth = 0]) {
+      if (depth > 3 || entries.length >= 24) return;
+      if (current is Map) {
+        for (final entry in current.entries) {
+          if (entries.length >= 24) return;
+          final key = entry.key.toString();
+          final nextPath = path.isEmpty ? key : '$path.$key';
+          final type = entry.value is Map
+              ? '对象'
+              : entry.value is Iterable
+              ? '列表'
+              : entry.value.runtimeType.toString();
+          entries.add('$nextPath($type)');
+          collect(entry.value, nextPath, depth + 1);
+        }
+      } else if (current is Iterable && current is! String) {
+        for (final entry in current.take(3)) {
+          collect(entry, '$path[]', depth + 1);
+        }
+      }
+    }
+
+    collect(value);
+    return entries.isEmpty ? '无可用字段' : entries.join('、');
   }
 
   int? _findIntDeep(Map<String, dynamic> value, List<String> keys) {
