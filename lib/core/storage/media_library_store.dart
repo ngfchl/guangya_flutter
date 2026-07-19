@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 
+import '../logging/app_logger.dart';
 import '../../models/cloud_file.dart';
 import '../../models/media_library.dart';
 
@@ -11,10 +12,17 @@ import '../../models/media_library.dart';
 /// macOS client so its backup database can be merged without deserializing
 /// large poster/backdrop BLOBs in Dart.
 class MediaLibraryStore {
-  Database? _database;
+  static Database? _database;
+  static Future<Database>? _openingDatabase;
 
-  Future<Database> get _db async {
-    if (_database != null) return _database!;
+  Future<Database> get _db => _openDatabase();
+
+  Future<Database> _openDatabase() {
+    if (_database != null) return Future.value(_database!);
+    return _openingDatabase ??= _openDatabaseOnce();
+  }
+
+  Future<Database> _openDatabaseOnce() async {
     final databasePath = path.join(
       await getDatabasesPath(),
       'media-library.sqlite3',
@@ -33,7 +41,25 @@ class MediaLibraryStore {
       },
     );
     await _createSchema(_database!);
-    await _vacuumIfFragmented(_database!);
+    try {
+      final migration = await _migrateArtworkBlobSchema(_database!);
+      if (migration == null) {
+        AppLogger.info('Storage', '刮削数据库检查完成，未发现旧图片二进制缓存');
+      } else {
+        AppLogger.info(
+          'Storage',
+          '已迁移 ${migration.rows} 条刮削记录，移除 ${_formatBytes(migration.artworkBytes)} 图片二进制缓存',
+        );
+      }
+      await _vacuumIfFragmented(_database!);
+    } catch (error, stackTrace) {
+      AppLogger.error(
+        'Storage',
+        '刮削数据库迁移或压缩失败',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
     return _database!;
   }
 
@@ -599,9 +625,38 @@ class MediaLibraryStore {
     await _ensureColumn(db, 'media_items', 'backdrop_path', 'TEXT');
   }
 
-  Future<void> _migrateArtworkBlobSchema(Database db) async {
+  Future<({int rows, int artworkBytes})?> _migrateArtworkBlobSchema(
+    Database db,
+  ) async {
     final columns = await _tableColumns(db, 'main', 'media_items');
-    if (!columns.contains('poster') && !columns.contains('backdrop')) return;
+    if (!columns.contains('poster') && !columns.contains('backdrop')) {
+      return null;
+    }
+    final posterBytes = columns.contains('poster')
+        ? 'COALESCE(SUM(LENGTH(poster)), 0)'
+        : '0';
+    final backdropBytes = columns.contains('backdrop')
+        ? 'COALESCE(SUM(LENGTH(backdrop)), 0)'
+        : '0';
+    final artworkStats = await db.rawQuery('''
+      SELECT
+        COUNT(*) AS rows,
+        $posterBytes + $backdropBytes AS artwork_bytes
+      FROM media_items
+    ''');
+    final rows = _asInt(artworkStats.firstOrNull?['rows']) ?? 0;
+    final artworkBytes =
+        _asInt(artworkStats.firstOrNull?['artwork_bytes']) ?? 0;
+    final posterPathSource = columns.contains('poster_path')
+        ? 'poster_path'
+        : 'NULL';
+    final backdropPathSource = columns.contains('backdrop_path')
+        ? 'backdrop_path'
+        : 'NULL';
+    AppLogger.info(
+      'Storage',
+      '发现旧图片二进制缓存：$rows 条记录，${_formatBytes(artworkBytes)}，正在重建精简表',
+    );
     await db.transaction((txn) async {
       await txn.execute('''
         CREATE TABLE media_items_compact (
@@ -639,7 +694,7 @@ class MediaLibraryStore {
         SELECT
           library_id, file_id, resource_path, cloud_name, file_size, gcid,
           file_type, tmdb_id, media_kind, title, original_title, release_date,
-          overview, poster_path, backdrop_path, has_chinese_audio,
+          overview, $posterPathSource, $backdropPathSource, has_chinese_audio,
           has_chinese_subtitle, collection_id, collection_name, updated_at
         FROM media_items
       ''');
@@ -649,6 +704,7 @@ class MediaLibraryStore {
       );
       await _createMediaItemIndexes(txn);
     });
+    return (rows: rows, artworkBytes: artworkBytes);
   }
 
   Future<void> _vacuumIfFragmented(Database db) async {
@@ -656,12 +712,25 @@ class MediaLibraryStore {
     final freeList = await db.rawQuery('PRAGMA freelist_count');
     final pages = _asInt(pageCount.firstOrNull?['page_count']) ?? 0;
     final free = _asInt(freeList.firstOrNull?['freelist_count']) ?? 0;
-    if (pages == 0 || free < 1024 || free / pages < 0.2) return;
+    if (pages == 0 || free < 1024 || free / pages < 0.2) {
+      AppLogger.info('Storage', '刮削数据库无需压缩：共 $pages 页，空闲 $free 页');
+      return;
+    }
+    final before = await _databaseBytes(db.path);
+    AppLogger.info(
+      'Storage',
+      '开始压缩刮削数据库：共 $pages 页，空闲 $free 页，当前 ${_formatBytes(before)}',
+    );
     try {
       await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
       await db.execute('VACUUM');
-    } on DatabaseException {
-      // A failed optional compaction never prevents users from reading media.
+      final after = await _databaseBytes(db.path);
+      AppLogger.info(
+        'Storage',
+        '刮削数据库压缩完成：${_formatBytes(before)} -> ${_formatBytes(after)}，回收 ${_formatBytes((before - after).clamp(0, before))}',
+      );
+    } on DatabaseException catch (error) {
+      AppLogger.warning('Storage', '刮削数据库压缩未完成：$error');
     }
   }
 
@@ -789,6 +858,18 @@ class MediaLibraryStore {
       if (await file.exists()) bytes += await file.length();
     }
     return bytes;
+  }
+
+  static String _formatBytes(int bytes) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var value = bytes.toDouble();
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    final precision = unit == 0 || value >= 100 ? 0 : 1;
+    return '${value.toStringAsFixed(precision)} ${units[unit]}';
   }
 
   Future<Set<String>> _tableColumns(

@@ -922,7 +922,9 @@ class _MobileWorkspaceMenu extends StatelessWidget {
       constraints: BoxConstraints.tightFor(width: width),
       title: const Text('小黄鸭'),
       description: Text('$userName · $memberLevel'),
-      child: Column(
+      scrollable: false,
+      child: ListView(
+        padding: EdgeInsets.zero,
         children: [
           Container(
             width: double.infinity,
@@ -978,93 +980,86 @@ class _MobileWorkspaceMenu extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          Expanded(
-            child: ListView(
+          _MobileMenuGroup(
+            title: '常用入口',
+            children: [
+              _MobileMenuRow(
+                icon: Icons.search_rounded,
+                label: '全局搜索',
+                onTap: onSearch,
+              ),
+              _MobileMenuRow(
+                icon: Icons.folder_rounded,
+                label: '文件管理',
+                onTap: () => onSection(WorkspaceSection.files),
+              ),
+              _MobileMenuRow(
+                icon: Icons.movie_rounded,
+                label: '光鸭影视',
+                onTap: () => onSection(WorkspaceSection.mediaLibrary),
+              ),
+            ],
+          ),
+          if (isCloud)
+            _MobileMenuGroup(
+              title: '文件内容',
               children: [
-                _MobileMenuGroup(
-                  title: '常用入口',
-                  children: [
-                    _MobileMenuRow(
-                      icon: Icons.search_rounded,
-                      label: '全局搜索',
-                      onTap: onSearch,
-                    ),
-                    _MobileMenuRow(
-                      icon: Icons.folder_rounded,
-                      label: '文件管理',
-                      onTap: () => onSection(WorkspaceSection.files),
-                    ),
-                    _MobileMenuRow(
-                      icon: Icons.movie_rounded,
-                      label: '光鸭影视',
-                      onTap: () => onSection(WorkspaceSection.mediaLibrary),
-                    ),
-                  ],
-                ),
-                if (isCloud)
-                  _MobileMenuGroup(
-                    title: '文件内容',
-                    children: [
-                      for (final section in [
-                        WorkspaceSection.recentViewed,
-                        WorkspaceSection.photos,
-                        WorkspaceSection.videos,
-                        WorkspaceSection.audio,
-                        WorkspaceSection.documents,
-                        WorkspaceSection.shares,
-                        WorkspaceSection.recycle,
-                      ])
-                        _MobileMenuRow(
-                          icon: _mobileSectionIcon(section),
-                          label: section.label,
-                          onTap: () => onSection(section),
-                        ),
-                    ],
+                for (final section in [
+                  WorkspaceSection.recentViewed,
+                  WorkspaceSection.photos,
+                  WorkspaceSection.videos,
+                  WorkspaceSection.audio,
+                  WorkspaceSection.documents,
+                  WorkspaceSection.shares,
+                  WorkspaceSection.recycle,
+                ])
+                  _MobileMenuRow(
+                    icon: _mobileSectionIcon(section),
+                    label: section.label,
+                    onTap: () => onSection(section),
                   ),
-                _MobileMenuGroup(
-                  title: isCloud ? '文件工具' : '影视工具',
-                  children: [
-                    if (!isCloud)
-                      _MobileMenuRow(
-                        icon: Icons.add_rounded,
-                        label: '新建媒体库',
-                        onTap: onCreateLibrary,
-                      ),
-                    _MobileMenuRow(
-                      icon: isCloud
-                          ? Icons.manage_search_rounded
-                          : Icons.movie_filter_rounded,
-                      label: isCloud ? '文件扫描与清理' : '媒体库管理',
-                      onTap: () => onTool(
-                        isCloud ? WorkspaceTool.scan : WorkspaceTool.tmdb,
-                      ),
-                    ),
-                    if (isCloud) ...[
-                      _MobileMenuRow(
-                        icon: Icons.text_fields_rounded,
-                        label: '批量重命名',
-                        onTap: () => onTool(WorkspaceTool.rename),
-                      ),
-                      _MobileMenuRow(
-                        icon: Icons.bolt_rounded,
-                        label: '秒传工具',
-                        onTap: () => onTool(WorkspaceTool.fastTransfer),
-                      ),
-                    ],
-                  ],
-                ),
-                _MobileMenuGroup(
-                  title: '系统维护',
-                  children: [
-                    _MobileMenuRow(
-                      icon: Icons.settings_rounded,
-                      label: '设置中心',
-                      onTap: onSettings,
-                    ),
-                  ],
-                ),
               ],
             ),
+          _MobileMenuGroup(
+            title: isCloud ? '文件工具' : '影视工具',
+            children: [
+              if (!isCloud)
+                _MobileMenuRow(
+                  icon: Icons.add_rounded,
+                  label: '新建媒体库',
+                  onTap: onCreateLibrary,
+                ),
+              _MobileMenuRow(
+                icon: isCloud
+                    ? Icons.manage_search_rounded
+                    : Icons.movie_filter_rounded,
+                label: isCloud ? '文件扫描与清理' : '媒体库管理',
+                onTap: () =>
+                    onTool(isCloud ? WorkspaceTool.scan : WorkspaceTool.tmdb),
+              ),
+              if (isCloud) ...[
+                _MobileMenuRow(
+                  icon: Icons.text_fields_rounded,
+                  label: '批量重命名',
+                  onTap: () => onTool(WorkspaceTool.rename),
+                ),
+                _MobileMenuRow(
+                  icon: Icons.bolt_rounded,
+                  label: '秒传工具',
+                  onTap: () => onTool(WorkspaceTool.fastTransfer),
+                ),
+              ],
+            ],
+          ),
+          _MobileMenuGroup(
+            title: '系统维护',
+            children: [
+              _MobileMenuRow(
+                icon: Icons.settings_rounded,
+                label: '设置中心',
+                onTap: onSettings,
+              ),
+            ],
           ),
           const ShadSeparator.horizontal(),
           _MobileMenuRow(

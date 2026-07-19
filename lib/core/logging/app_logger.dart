@@ -38,6 +38,7 @@ class AppLogEntry {
     'Media' => '媒体库',
     'CloudIndex' => '全盘索引',
     'Player' => '播放器',
+    'Storage' => '本地存储',
     'App' => '应用',
     'Flutter' => '界面',
     'Dart' => '运行时',

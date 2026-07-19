@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:media_kit/media_kit.dart';
 import 'core/storage/storage_manager.dart';
+import 'core/storage/media_library_store.dart';
 import 'core/logging/app_logger.dart';
 import 'core/http/dio_client.dart';
 import 'app/app.dart';
@@ -51,6 +53,17 @@ void main() async {
   _triggerNetworkPermission();
 
   runApp(const ProviderScope(child: GuangyaApp()));
+
+  // Run legacy artwork cleanup once on every launch. It shares the database
+  // opening future with the media library, so entering the library while this
+  // runs cannot start another migration.
+  unawaited(_initializeMediaLibraryStorage());
+}
+
+Future<void> _initializeMediaLibraryStorage() async {
+  AppLogger.info('Storage', '正在检查刮削数据库中的旧图片缓存');
+  await MediaLibraryStore().initialize();
+  AppLogger.info('Storage', '刮削数据库检查与压缩任务完成');
 }
 
 /// Startup network permission trigger
