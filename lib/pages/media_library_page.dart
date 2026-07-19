@@ -1268,6 +1268,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       builder: (dialogContext) => ShadDialog(
         title: const Text('从云盘恢复刮削数据'),
         description: const Text('选择一个 SQLite 备份，恢复会合并到当前本地媒体库。'),
+        scrollable: false,
         actions: [
           ShadButton.outline(
             onPressed: () => Navigator.of(dialogContext).pop(),
