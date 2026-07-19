@@ -384,76 +384,79 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
         constraints: BoxConstraints.tightFor(width: width),
         padding: EdgeInsets.zero,
         scrollable: false,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _SegmentButton(
-                      icon: Icons.folder_rounded,
-                      label: '光鸭云盘',
-                      compact: false,
-                      selected: _mode == WorkspaceMode.cloud,
-                      onTap: () {
-                        Navigator.of(sheetContext).pop();
-                        _changeMode(WorkspaceMode.cloud);
-                      },
+        child: Material(
+          color: Colors.transparent,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _SegmentButton(
+                        icon: Icons.folder_rounded,
+                        label: '光鸭云盘',
+                        compact: false,
+                        selected: _mode == WorkspaceMode.cloud,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          _changeMode(WorkspaceMode.cloud);
+                        },
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: _SegmentButton(
-                      icon: Icons.movie_rounded,
-                      label: '光鸭影视',
-                      compact: false,
-                      selected: _mode == WorkspaceMode.media,
-                      onTap: () {
-                        Navigator.of(sheetContext).pop();
-                        _changeMode(WorkspaceMode.media);
-                      },
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _SegmentButton(
+                        icon: Icons.movie_rounded,
+                        label: '光鸭影视',
+                        compact: false,
+                        selected: _mode == WorkspaceMode.media,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          _changeMode(WorkspaceMode.media);
+                        },
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const ShadSeparator.horizontal(),
-            Expanded(
-              child: _mode == WorkspaceMode.cloud
-                  ? _CloudSidebar(
-                      state: ref.read(fileProvider),
-                      width: width,
-                      onSection: (section) {
-                        Navigator.of(sheetContext).pop();
-                        ref.read(fileProvider.notifier).setSection(section);
-                      },
-                      onSettings: () {
-                        Navigator.of(sheetContext).pop();
-                        _showSettings(context);
-                      },
-                      onSignOut: () {
-                        Navigator.of(sheetContext).pop();
-                        ref.read(authProvider.notifier).signOut();
-                      },
-                      onTool: (tool) {
-                        Navigator.of(sheetContext).pop();
-                        _openTool(tool);
-                      },
-                    )
-                  : _MediaSidebar(
-                      width: width,
-                      onCreate: () {
-                        Navigator.of(sheetContext).pop();
-                        MediaLibraryPage.showCreateDialog(context, ref);
-                      },
-                      onTool: (tool) {
-                        Navigator.of(sheetContext).pop();
-                        _openTool(tool);
-                      },
-                    ),
-            ),
-          ],
+              const ShadSeparator.horizontal(),
+              Expanded(
+                child: _mode == WorkspaceMode.cloud
+                    ? _CloudSidebar(
+                        state: ref.read(fileProvider),
+                        width: width,
+                        onSection: (section) {
+                          Navigator.of(sheetContext).pop();
+                          ref.read(fileProvider.notifier).setSection(section);
+                        },
+                        onSettings: () {
+                          Navigator.of(sheetContext).pop();
+                          _showSettings(context);
+                        },
+                        onSignOut: () {
+                          Navigator.of(sheetContext).pop();
+                          ref.read(authProvider.notifier).signOut();
+                        },
+                        onTool: (tool) {
+                          Navigator.of(sheetContext).pop();
+                          _openTool(tool);
+                        },
+                      )
+                    : _MediaSidebar(
+                        width: width,
+                        onCreate: () {
+                          Navigator.of(sheetContext).pop();
+                          MediaLibraryPage.showCreateDialog(context, ref);
+                        },
+                        onTool: (tool) {
+                          Navigator.of(sheetContext).pop();
+                          _openTool(tool);
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );
