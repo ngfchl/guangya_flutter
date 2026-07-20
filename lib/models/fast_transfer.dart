@@ -1,22 +1,42 @@
 import 'dart:convert';
 
+import 'package:uuid/uuid.dart';
+
+const _uuid = Uuid();
+
 class FastTransferEntry {
+  final String id;
   final String path;
   final int size;
   final String? md5;
   final String? gcid;
 
   const FastTransferEntry({
+    required this.id,
     required this.path,
     required this.size,
     this.md5,
     this.gcid,
   });
 
+  factory FastTransferEntry.create({
+    required String path,
+    required int size,
+    String? md5,
+    String? gcid,
+  }) => FastTransferEntry(
+    id: _uuid.v4(),
+    path: path,
+    size: size,
+    md5: md5,
+    gcid: gcid,
+  );
+
   String get name => path.split('/').last;
   String get directoryPath =>
       path.contains('/') ? path.substring(0, path.lastIndexOf('/')) : '';
   Map<String, dynamic> toJson() => {
+    'id': id,
     'path': path,
     'size': size,
     if (md5 != null) 'etag': md5,
@@ -25,6 +45,9 @@ class FastTransferEntry {
 
   factory FastTransferEntry.fromJson(Map<String, dynamic> value) =>
       FastTransferEntry(
+        id: value['id']?.toString().trim().isNotEmpty == true
+            ? value['id'].toString()
+            : _uuid.v4(),
         path: value['path']?.toString() ?? '',
         size: value['size'] is int
             ? value['size'] as int
@@ -32,6 +55,160 @@ class FastTransferEntry {
         md5: value['etag']?.toString(),
         gcid: value['gcid']?.toString(),
       );
+}
+
+enum FastTransferResultState { imported, skipped, failed, cancelled }
+
+class FastTransferResult {
+  final String id;
+  final FastTransferEntry entry;
+  final FastTransferResultState state;
+  final String message;
+  final DateTime createdAt;
+  final String? taskID;
+  final String? targetID;
+  final List<String> details;
+  final String? retryOf;
+
+  const FastTransferResult({
+    required this.id,
+    required this.entry,
+    required this.state,
+    required this.message,
+    required this.createdAt,
+    this.taskID,
+    this.targetID,
+    this.details = const [],
+    this.retryOf,
+  });
+
+  factory FastTransferResult.create({
+    required FastTransferEntry entry,
+    required FastTransferResultState state,
+    required String message,
+    String? taskID,
+    String? targetID,
+    List<String> details = const [],
+    String? retryOf,
+  }) => FastTransferResult(
+    id: _uuid.v4(),
+    entry: entry,
+    state: state,
+    message: message,
+    createdAt: DateTime.now(),
+    taskID: taskID,
+    targetID: targetID,
+    details: details,
+    retryOf: retryOf,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'entry': entry.toJson(),
+    'state': state.name,
+    'message': message,
+    'createdAt': createdAt.toIso8601String(),
+    if (taskID != null) 'taskID': taskID,
+    if (targetID != null) 'targetID': targetID,
+    'details': details,
+    if (retryOf != null) 'retryOf': retryOf,
+  };
+
+  factory FastTransferResult.fromJson(Map<String, dynamic> value) {
+    final state = FastTransferResultState.values.firstWhere(
+      (candidate) => candidate.name == value['state']?.toString(),
+      orElse: () => FastTransferResultState.failed,
+    );
+    return FastTransferResult(
+      id: value['id']?.toString().trim().isNotEmpty == true
+          ? value['id'].toString()
+          : _uuid.v4(),
+      entry: FastTransferEntry.fromJson(
+        Map<String, dynamic>.from(value['entry'] as Map),
+      ),
+      state: state,
+      message: value['message']?.toString() ?? '',
+      createdAt:
+          DateTime.tryParse(value['createdAt']?.toString() ?? '') ??
+          DateTime.now(),
+      taskID: value['taskID']?.toString(),
+      targetID: value['targetID']?.toString(),
+      details:
+          (value['details'] as List?)
+              ?.map((detail) => detail.toString())
+              .toList(growable: false) ??
+          const [],
+      retryOf: value['retryOf']?.toString(),
+    );
+  }
+}
+
+class FastTransferProgress {
+  final int total;
+  final int imported;
+  final int skipped;
+  final int failed;
+  final int cancelled;
+  final Set<String> activeEntryIDs;
+
+  const FastTransferProgress({
+    this.total = 0,
+    this.imported = 0,
+    this.skipped = 0,
+    this.failed = 0,
+    this.cancelled = 0,
+    this.activeEntryIDs = const {},
+  });
+
+  int get processed => imported + skipped + failed + cancelled;
+  double get fraction => total == 0 ? 0 : processed / total;
+}
+
+class FastTransferSession {
+  final List<FastTransferEntry> entries;
+  final List<FastTransferResult> results;
+  final String? targetID;
+  final String targetName;
+
+  const FastTransferSession({
+    this.entries = const [],
+    this.results = const [],
+    this.targetID,
+    this.targetName = '云盘根目录',
+  });
+
+  Map<String, dynamic> toJson() => {
+    'entries': entries.map((entry) => entry.toJson()).toList(),
+    'results': results.map((result) => result.toJson()).toList(),
+    'targetID': targetID,
+    'targetName': targetName,
+  };
+
+  factory FastTransferSession.fromJson(
+    Map<String, dynamic> value,
+  ) => FastTransferSession(
+    entries:
+        (value['entries'] as List?)
+            ?.whereType<Map>()
+            .map(
+              (entry) =>
+                  FastTransferEntry.fromJson(Map<String, dynamic>.from(entry)),
+            )
+            .toList(growable: false) ??
+        const [],
+    results:
+        (value['results'] as List?)
+            ?.whereType<Map>()
+            .map(
+              (result) => FastTransferResult.fromJson(
+                Map<String, dynamic>.from(result),
+              ),
+            )
+            .toList(growable: false) ??
+        const [],
+    targetID: value['targetID']?.toString(),
+    targetName: value['targetName']?.toString() ?? '云盘根目录',
+  );
 }
 
 List<FastTransferEntry> parseFastTransferJSON(String text) {
@@ -62,7 +239,7 @@ List<FastTransferEntry> parseFastTransferJSON(String text) {
       throw FormatException('第 ${index + 1} 项缺少有效 path、size 或 MD5/GCID');
     }
     entries.add(
-      FastTransferEntry(path: path, size: size, md5: md5, gcid: gcid),
+      FastTransferEntry.create(path: path, size: size, md5: md5, gcid: gcid),
     );
   }
   if (entries.isEmpty) throw const FormatException('files 不能为空');

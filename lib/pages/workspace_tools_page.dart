@@ -2320,7 +2320,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           final stat = await file.stat();
           final hashes = await _calculateLocalHashes(file, stat.size);
           entries.add(
-            FastTransferEntry(
+            FastTransferEntry.create(
               path: file.path.split('/').last,
               size: stat.size,
               md5: hashes.$1,

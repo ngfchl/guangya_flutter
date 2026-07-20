@@ -878,7 +878,7 @@ class FileNotifier extends StateNotifier<FileState> {
             continue;
           }
           entries.add(
-            FastTransferEntry(path: source.path, size: size, gcid: gcid),
+            FastTransferEntry.create(path: source.path, size: size, gcid: gcid),
           );
         }
       }
