@@ -9,7 +9,9 @@ void main() {
 
     final entry = AppLogger.entries.value.single;
     expect(entry.scope, 'Media');
-    expect(entry.origin, contains('app_logger_test.dart:'));
+    expect(entry.origin, startsWith('app_logger_test.dart:'));
+    expect(entry.origin, isNot(contains('/')));
+    expect(entry.origin, isNot(contains('main.<fn>')));
     expect(entry.text, contains('[媒体库]'));
     expect(entry.text, contains('测试日志来源'));
   });

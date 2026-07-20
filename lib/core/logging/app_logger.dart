@@ -149,8 +149,7 @@ class AppLogger {
       final relativePath = packageLocation?.group(1) ?? fileLocation?.group(2);
       final lineNumber = packageLocation?.group(2) ?? fileLocation?.group(3);
       if (relativePath == null || lineNumber == null) continue;
-      final function = RegExp(r'^#\d+\s+(.+?)\s+\(').firstMatch(line)?.group(1);
-      return '$relativePath:$lineNumber${function == null ? '' : ' $function'}';
+      return '${path.basename(relativePath)}:$lineNumber';
     }
     return '';
   }
