@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -107,6 +108,13 @@ class MediaLibraryPage extends ConsumerStatefulWidget {
     showShadDialog(
       context: context,
       builder: (_) => const _MediaLibraryManagementDialog(),
+    );
+  }
+
+  static void showScanTaskDialog(BuildContext context, WidgetRef ref) {
+    showShadDialog(
+      context: context,
+      builder: (_) => const _MediaLibraryScanTaskDialog(),
     );
   }
 
@@ -788,6 +796,17 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         onPressed: () => _showCreateLibraryDialog(context, ref),
         leading: const Icon(Icons.add_rounded, size: 16),
         child: const Text('新建媒体库'),
+      ),
+      ShadTooltip(
+        builder: (_) => const Text('查看所有媒体库的刮削任务'),
+        child: ShadButton.ghost(
+          size: ShadButtonSize.sm,
+          onPressed: () => MediaLibraryPage.showScanTaskDialog(context, ref),
+          leading: const Icon(Icons.assignment_rounded, size: 16),
+          child: Text(
+            state.activeScanCount == 0 ? '刮削任务' : '任务 ${state.activeScanCount}',
+          ),
+        ),
       ),
       _backupActionsMenu(state, compact: true),
       state.isScanning
@@ -1596,7 +1615,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   Widget _backupActionsMenu(MediaLibraryState state, {bool compact = false}) {
     return _BackupActionsMenu(
       compact: compact,
-      disabled: _backupBusy || state.isScanning,
+      disabled: _backupBusy || state.hasActiveScans,
       progress: state.cloudBackupSync,
       onExport: _exportScrapedData,
       onImport: _importScrapedData,
@@ -2064,6 +2083,513 @@ class _MediaLibraryManagementDialog extends ConsumerStatefulWidget {
       _MediaLibraryManagementDialogState();
 }
 
+class _MediaLibraryScanTaskDialog extends ConsumerStatefulWidget {
+  const _MediaLibraryScanTaskDialog();
+
+  @override
+  ConsumerState<_MediaLibraryScanTaskDialog> createState() =>
+      _MediaLibraryScanTaskDialogState();
+}
+
+class _MediaLibraryScanTaskDialogState
+    extends ConsumerState<_MediaLibraryScanTaskDialog> {
+  final _expandedTaskIDs = <String>{};
+  bool _copiedLogs = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(mediaLibraryProvider);
+    final cs = ShadTheme.of(context).colorScheme;
+    final size = MediaQuery.sizeOf(context);
+    final width = (size.width - 32).clamp(340.0, 920.0).toDouble();
+    final height = (size.height - 140).clamp(420.0, 700.0).toDouble();
+    final tasks = state.scanTasks;
+    return ShadDialog(
+      title: const Text('刮削任务管理'),
+      description: const Text('查看所有媒体库的扫描、识别、入库任务，并管理任务状态。'),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Icon(
+                  state.hasActiveScans
+                      ? Icons.sync_rounded
+                      : Icons.check_circle_outline_rounded,
+                  size: 18,
+                  color: state.hasActiveScans ? cs.primary : cs.mutedForeground,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    state.activeScanCount == 0
+                        ? '当前没有进行中的刮削任务'
+                        : '${state.activeScanCount} 个任务进行中',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, color: cs.mutedForeground),
+                  ),
+                ),
+                if (tasks.any((task) => !task.isActive))
+                  ShadTooltip(
+                    builder: (_) => const Text('清理已结束任务'),
+                    child: ShadButton.outline(
+                      width: 38,
+                      height: 34,
+                      padding: EdgeInsets.zero,
+                      onPressed: () => ref
+                          .read(mediaLibraryProvider.notifier)
+                          .clearFinishedScanTasks(),
+                      child: const Icon(
+                        Icons.cleaning_services_rounded,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: tasks.isEmpty
+                  ? _emptyState(context)
+                  : ListView.separated(
+                      itemCount: tasks.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        final task = tasks[index];
+                        return _taskRow(context, task);
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyState(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.assignment_outlined, size: 48, color: cs.mutedForeground),
+          const SizedBox(height: 12),
+          Text('暂无刮削任务', style: TextStyle(color: cs.foreground)),
+          const SizedBox(height: 4),
+          Text(
+            '从任意媒体库标题栏开始扫描后会出现在这里。',
+            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _taskRow(BuildContext context, MediaLibraryScanTask task) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final expanded = _expandedTaskIDs.contains(task.id);
+    final tint = _taskStatusColor(context, task.status);
+    final total = task.progress.total <= 0 ? null : task.progress.total;
+    final fraction = total == null || total == 0
+        ? null
+        : (task.progress.completed / total).clamp(0.0, 1.0);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 620;
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: cs.muted.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: cs.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Icon(_taskStatusIcon(task.status), size: 20, color: tint),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          task.libraryName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${task.mode.title} · ${task.progress.phase.isEmpty ? task.status.title : task.progress.phase}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: cs.mutedForeground,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (!narrow) ...[
+                    const SizedBox(width: 12),
+                    _statusPill(context, task.status),
+                    const SizedBox(width: 8),
+                  ],
+                  _taskActions(context, task, expanded),
+                ],
+              ),
+              if (narrow) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: _statusPill(context, task.status),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        value: fraction,
+                        minHeight: 6,
+                        color: tint,
+                        backgroundColor: cs.border.withValues(alpha: 0.55),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 68,
+                    child: Text(
+                      total == null
+                          ? '${task.progress.completed}'
+                          : '${task.progress.completed}/$total',
+                      textAlign: TextAlign.right,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: cs.mutedForeground,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (expanded) ...[
+                const SizedBox(height: 12),
+                if (task.failureReason?.isNotEmpty == true) ...[
+                  Text(
+                    task.failureReason!,
+                    style: TextStyle(fontSize: 12, color: cs.destructive),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                _taskLogs(context, task),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _statusPill(BuildContext context, MediaLibraryScanTaskStatus status) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final tint = _taskStatusColor(context, status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: tint.withValues(alpha: 0.28)),
+      ),
+      child: Text(
+        status.title,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color:
+              status == MediaLibraryScanTaskStatus.cancelled ||
+                  status == MediaLibraryScanTaskStatus.stopped
+              ? cs.mutedForeground
+              : tint,
+        ),
+      ),
+    );
+  }
+
+  Widget _taskActions(
+    BuildContext context,
+    MediaLibraryScanTask task,
+    bool expanded,
+  ) {
+    final notifier = ref.read(mediaLibraryProvider.notifier);
+    final actions = <Widget>[];
+    if (task.status.canPause) {
+      actions.add(
+        _taskIconButton(
+          tooltip: '暂停',
+          icon: Icons.pause_rounded,
+          onPressed: () => notifier.pauseScanTask(task.id),
+        ),
+      );
+    }
+    if (task.status.canResume) {
+      actions.add(
+        _taskIconButton(
+          tooltip: task.status == MediaLibraryScanTaskStatus.failed
+              ? '重试'
+              : '继续',
+          icon: Icons.play_arrow_rounded,
+          onPressed: () => unawaited(notifier.resumeScanTask(task.id)),
+        ),
+      );
+    }
+    if (task.status.canStop) {
+      actions.add(
+        _taskIconButton(
+          tooltip: '停止',
+          icon: Icons.stop_rounded,
+          destructive: true,
+          onPressed: () => notifier.stopScanTask(task.id),
+        ),
+      );
+    }
+    if (task.isActive) {
+      actions.add(
+        _taskIconButton(
+          tooltip: '取消',
+          icon: Icons.close_rounded,
+          destructive: true,
+          onPressed: () => notifier.cancelScanTask(task.id),
+        ),
+      );
+    } else {
+      actions.add(
+        _taskIconButton(
+          tooltip: '移除记录',
+          icon: Icons.delete_outline_rounded,
+          destructive: true,
+          onPressed: () => notifier.removeScanTask(task.id),
+        ),
+      );
+    }
+    actions.add(
+      _taskIconButton(
+        tooltip: expanded ? '收起日志' : '查看实时日志',
+        icon: expanded
+            ? Icons.keyboard_arrow_up_rounded
+            : Icons.keyboard_arrow_down_rounded,
+        onPressed: () {
+          setState(() {
+            if (expanded) {
+              _expandedTaskIDs.remove(task.id);
+            } else {
+              _expandedTaskIDs.add(task.id);
+            }
+          });
+        },
+      ),
+    );
+    return Wrap(spacing: 4, runSpacing: 4, children: actions);
+  }
+
+  Widget _taskIconButton({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    bool destructive = false,
+  }) {
+    return ShadTooltip(
+      builder: (_) => Text(tooltip),
+      child: destructive
+          ? ShadButton.destructive(
+              width: 34,
+              height: 32,
+              padding: EdgeInsets.zero,
+              onPressed: onPressed,
+              child: Icon(icon, size: 16),
+            )
+          : ShadButton.outline(
+              width: 34,
+              height: 32,
+              padding: EdgeInsets.zero,
+              onPressed: onPressed,
+              child: Icon(icon, size: 16),
+            ),
+    );
+  }
+
+  Widget _taskLogs(BuildContext context, MediaLibraryScanTask task) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final logs = task.logs.reversed.toList(growable: false);
+    return Container(
+      height: 190,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: cs.background.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: cs.border),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Text(
+                '实时日志',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: cs.mutedForeground,
+                ),
+              ),
+              const Spacer(),
+              _taskIconButton(
+                tooltip: _copiedLogs ? '已复制' : '复制日志',
+                icon: _copiedLogs
+                    ? Icons.check_rounded
+                    : Icons.copy_all_rounded,
+                onPressed: logs.isEmpty
+                    ? null
+                    : () {
+                        final text = task.logs
+                            .map(
+                              (entry) =>
+                                  '${_formatLogTime(entry.createdAt)} ${entry.message}',
+                            )
+                            .join('\n');
+                        Clipboard.setData(ClipboardData(text: text));
+                        setState(() => _copiedLogs = true);
+                        Future<void>.delayed(const Duration(seconds: 1), () {
+                          if (mounted) setState(() => _copiedLogs = false);
+                        });
+                      },
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Expanded(
+            child: logs.isEmpty
+                ? Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '暂无日志',
+                      style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: logs.length,
+                    itemBuilder: (context, index) {
+                      final entry = logs[index];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              width: 64,
+                              child: Text(
+                                _formatLogTime(entry.createdAt),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: cs.mutedForeground,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                entry.message,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: entry.isError
+                                      ? cs.destructive
+                                      : cs.foreground,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _taskStatusIcon(MediaLibraryScanTaskStatus status) {
+    switch (status) {
+      case MediaLibraryScanTaskStatus.queued:
+        return Icons.schedule_rounded;
+      case MediaLibraryScanTaskStatus.running:
+        return Icons.sync_rounded;
+      case MediaLibraryScanTaskStatus.paused:
+        return Icons.pause_circle_outline_rounded;
+      case MediaLibraryScanTaskStatus.stopping:
+        return Icons.stop_circle_outlined;
+      case MediaLibraryScanTaskStatus.stopped:
+        return Icons.stop_circle_outlined;
+      case MediaLibraryScanTaskStatus.cancelling:
+        return Icons.cancel_outlined;
+      case MediaLibraryScanTaskStatus.cancelled:
+        return Icons.cancel_outlined;
+      case MediaLibraryScanTaskStatus.completed:
+        return Icons.check_circle_outline_rounded;
+      case MediaLibraryScanTaskStatus.failed:
+        return Icons.error_outline_rounded;
+    }
+  }
+
+  Color _taskStatusColor(
+    BuildContext context,
+    MediaLibraryScanTaskStatus status,
+  ) {
+    final cs = ShadTheme.of(context).colorScheme;
+    switch (status) {
+      case MediaLibraryScanTaskStatus.running:
+        return cs.primary;
+      case MediaLibraryScanTaskStatus.paused:
+        return Colors.amber.shade700;
+      case MediaLibraryScanTaskStatus.completed:
+        return Colors.green.shade600;
+      case MediaLibraryScanTaskStatus.failed:
+        return cs.destructive;
+      case MediaLibraryScanTaskStatus.stopping:
+      case MediaLibraryScanTaskStatus.cancelling:
+        return Colors.orange.shade700;
+      case MediaLibraryScanTaskStatus.queued:
+      case MediaLibraryScanTaskStatus.stopped:
+      case MediaLibraryScanTaskStatus.cancelled:
+        return cs.mutedForeground;
+    }
+  }
+
+  String _formatLogTime(DateTime value) {
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(value.hour)}:${two(value.minute)}:${two(value.second)}';
+  }
+}
+
 class _MediaLibraryManagementDialogState
     extends ConsumerState<_MediaLibraryManagementDialog> {
   bool _backupBusy = false;
@@ -2093,19 +2619,18 @@ class _MediaLibraryManagementDialogState
               children: [
                 ShadButton(
                   size: ShadButtonSize.sm,
-                  onPressed: state.isScanning
-                      ? null
-                      : () => _MediaLibraryPageState._showCreateLibraryDialog(
-                          context,
-                          ref,
-                        ),
+                  onPressed: () =>
+                      _MediaLibraryPageState._showCreateLibraryDialog(
+                        context,
+                        ref,
+                      ),
                   leading: const Icon(Icons.add_rounded, size: 16),
                   child: const Text('新建媒体库'),
                 ),
                 const SizedBox(width: 8),
                 _BackupActionsMenu(
                   compact: true,
-                  disabled: _backupBusy || state.isScanning,
+                  disabled: _backupBusy || state.hasActiveScans,
                   progress: state.cloudBackupSync,
                   onExport: _exportScrapedData,
                   onImport: _importScrapedData,
@@ -2115,9 +2640,9 @@ class _MediaLibraryManagementDialogState
                 Expanded(
                   child: Align(
                     alignment: Alignment.centerRight,
-                    child: state.isScanning
+                    child: state.hasActiveScans
                         ? Text(
-                            '扫描中，请先停止扫描再调整媒体库',
+                            '${state.activeScanCount} 个刮削任务进行中，备份恢复暂不可用',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -2144,11 +2669,12 @@ class _MediaLibraryManagementDialogState
                             (item) => item.libraryID == library.id,
                           ),
                         );
+                        final scanning = state.isLibraryScanning(library.id);
                         return _ManagementLibraryRow(
                           library: library,
                           statistics: statistics,
                           selected: library.id == state.selectedLibraryID,
-                          disabled: state.isScanning,
+                          disabled: scanning,
                           onSelect: () => ref
                               .read(mediaLibraryProvider.notifier)
                               .selectLibrary(library.id),

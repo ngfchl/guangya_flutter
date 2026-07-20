@@ -1136,6 +1136,11 @@ class _TopBar extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               if (showLibraryScan) ...[
+                _MediaLibraryScanTaskTopAction(
+                  compact: true,
+                  state: mediaState,
+                ),
+                const SizedBox(width: 4),
                 _MediaLibraryScanTopAction(compact: true, state: mediaState),
                 const SizedBox(width: 4),
               ],
@@ -1177,6 +1182,11 @@ class _TopBar extends StatelessWidget {
                   ),
                 ],
                 if (showLibraryScan) ...[
+                  const SizedBox(width: 8),
+                  _MediaLibraryScanTaskTopAction(
+                    compact: compactActions,
+                    state: mediaState,
+                  ),
                   const SizedBox(width: 8),
                   _MediaLibraryScanTopAction(
                     compact: compactActions,
@@ -1633,6 +1643,71 @@ class _TopBarIconButton extends StatelessWidget {
         padding: EdgeInsets.zero,
         onPressed: onTap,
         child: Icon(icon, size: 18, color: cs.mutedForeground),
+      ),
+    );
+  }
+}
+
+class _MediaLibraryScanTaskTopAction extends ConsumerWidget {
+  final bool compact;
+  final MediaLibraryState state;
+
+  const _MediaLibraryScanTaskTopAction({
+    required this.compact,
+    required this.state,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = state.activeScanCount;
+    return ShadTooltip(
+      builder: (_) => const Text('刮削任务管理'),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          ShadButton.outline(
+            width: compact ? 38 : 108,
+            height: 36,
+            padding: compact
+                ? EdgeInsets.zero
+                : const EdgeInsets.symmetric(horizontal: 10),
+            onPressed: () => MediaLibraryPage.showScanTaskDialog(context, ref),
+            leading: compact
+                ? null
+                : const Icon(Icons.assignment_rounded, size: 16),
+            child: compact
+                ? const Icon(Icons.assignment_rounded, size: 18)
+                : const Text('刮削任务'),
+          ),
+          if (count > 0)
+            Positioned(
+              right: compact ? -3 : -5,
+              top: -5,
+              child: IgnorePointer(
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minWidth: 18,
+                    minHeight: 18,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.error,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    count > 99 ? '99+' : '$count',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      height: 1,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
