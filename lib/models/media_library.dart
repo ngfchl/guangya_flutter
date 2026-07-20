@@ -775,7 +775,13 @@ class ParsedMediaName {
     String? directoryName,
     String? directoryPath,
   }) {
-    final stem = name.replaceFirst(RegExp(r'\.[^.]+$'), '');
+    final stem = name.replaceFirst(
+      RegExp(
+        r'\.(?:mkv|mp4|avi|rmvb?|mov|m4v|wmv|flv|ts|m2ts|mts|iso|mpg|mpeg|webm|vob)$',
+        caseSensitive: false,
+      ),
+      '',
+    );
     final bracketedRelease = _parseBracketedRelease(stem);
     final normalized = stem
         .replaceAll('&', ' and ')
@@ -908,6 +914,13 @@ class ParsedMediaName {
         .replaceFirst(RegExp(r'(?:\s|[._-])+第\s*[一二三四五六七八九十两\d]+\s*季$'), '')
         .trim();
     ParsedMediaName? parent;
+    int? directoryEditionYear;
+    ParsedMediaName? immediateParent;
+    ParsedMediaName? parseImmediateParent() {
+      if (directoryName?.trim().isNotEmpty != true) return null;
+      return immediateParent ??= ParsedMediaName.parse(directoryName!.trim());
+    }
+
     if (episode == null && directoryName?.trim().isNotEmpty == true) {
       final trailingNumber = RegExp(
         r'^(?:(.+?[\u4e00-\u9fff])(\d{1,4})|(.+?)[\s._-]+(\d{1,4}))$',
@@ -919,18 +932,34 @@ class ParsedMediaName {
         final candidateEpisode = int.tryParse(
           trailingNumber.group(2) ?? trailingNumber.group(4)!,
         );
-        final directory = ParsedMediaName.parse(directoryName!.trim());
+        final directory = parseImmediateParent()!;
+        final directoryTitleWithoutEdition = directory.title.replaceFirst(
+          RegExp(r'(?<=[\u4e00-\u9fff])(?:19|20)?\d{2}$'),
+          '',
+        );
+        final editionMatch = RegExp(
+          r'(?<=[\u4e00-\u9fff])(\d{2})$',
+        ).firstMatch(directory.title);
         if (candidateEpisode != null &&
             candidateEpisode > 0 &&
-            _titleComparisonKey(candidateTitle) ==
-                _titleComparisonKey(directory.title)) {
+            (_titleComparisonKey(candidateTitle) ==
+                    _titleComparisonKey(directory.title) ||
+                _titleComparisonKey(candidateTitle) ==
+                    _titleComparisonKey(directoryTitleWithoutEdition))) {
           title = candidateTitle;
           episode = candidateEpisode;
           season ??= directory.season;
           parent = directory;
+          final edition = int.tryParse(editionMatch?.group(1) ?? '');
+          if (edition != null) {
+            directoryEditionYear = edition >= 70
+                ? 1900 + edition
+                : 2000 + edition;
+          }
         }
       }
     }
+    var inheritedTitleFromParent = false;
     final genericName =
         title.isEmpty ||
         RegExp(r'^\d+$').hasMatch(title) ||
@@ -939,7 +968,10 @@ class ParsedMediaName {
         ((directoryName != null && directoryName.trim().isNotEmpty) ||
             (directoryPath != null && directoryPath.trim().isNotEmpty))) {
       parent = _bestParentContext(directoryName, directoryPath);
-      if (parent?.title.isNotEmpty == true) title = parent!.title;
+      if (parent?.title.isNotEmpty == true) {
+        title = parent!.title;
+        inheritedTitleFromParent = true;
+      }
     }
     final seasonOnly = RegExp(
       r'\b(?:Season|S)\s*0?(\d{1,2})\b',
@@ -989,17 +1021,41 @@ class ParsedMediaName {
     }
     if (title.isEmpty) title = _cleanTitle(normalized);
 
+    final directory = parseImmediateParent();
+    final relatedDirectory =
+        directory != null && _titlesShareContext(title, directory.title)
+        ? directory
+        : null;
+    final metadataParent = parent ?? relatedDirectory;
     final resolvedSeason =
-        season ?? parent?.season ?? (episode == null ? null : 1);
-    var resolution = first(r'\b(?:2160p|1080p|720p|480p|4k|\d{3,4}x\d{3,4})\b');
+        season ?? metadataParent?.season ?? (episode == null ? null : 1);
+    var resolution = first(r'(?:2160p|1080p|720p|480p|4k|\d{3,4}x\d{3,4})');
     resolution ??= _repairSpacedResolution(normalized);
+    resolution ??= metadataParent?.resolution;
     final inheritedYear =
-        parent?.year ??
+        metadataParent?.year ??
+        directoryEditionYear ??
         (directoryName == null ? null : _repairSpacedYear(directoryName)) ??
         (directoryPath == null ? null : _repairSpacedYear(directoryPath));
+    final source =
+        first(r'\b(?:WEB[- ]?DL|WEBRip|BluRay|BDRip|REMUX|HDTV|DVD|UHD)\b') ??
+        metadataParent?.source;
+    final videoCodec =
+        first(r'\b(?:x26[45]|h\.?26[45]|AVC|HEVC|AV1|VC-1)\b') ??
+        metadataParent?.videoCodec;
+    final audio =
+        first(
+          r'\b(?:Atmos|TrueHD|DTS(?:-HD)?|DDP?(?: ?[0-9.]+)?|AAC|FLAC)\b',
+        ) ??
+        metadataParent?.audio;
+    final dynamicRange =
+        first(r'(?:HDR10?\+?|HDR|Dolby[ .-]?Vision|DV)') ??
+        metadataParent?.dynamicRange;
     return ParsedMediaName(
       title: title,
-      year: bracketedRelease.title != null && bracketedRelease.year != null
+      year: inheritedTitleFromParent && metadataParent?.year != null
+          ? metadataParent!.year
+          : bracketedRelease.title != null && bracketedRelease.year != null
           ? bracketedRelease.year
           : yearMatch == null
           ? (bracketedRelease.year ?? repairedYear ?? inheritedYear)
@@ -1008,15 +1064,20 @@ class ParsedMediaName {
       episode: episode,
       isEpisode: resolvedSeason != null && episode != null,
       resolution: resolution,
-      source: first(
-        r'\b(?:WEB[- ]?DL|WEBRip|BluRay|BDRip|REMUX|HDTV|DVD|UHD)\b',
-      ),
-      videoCodec: first(r'\b(?:x26[45]|h\.?26[45]|AVC|HEVC|AV1|VC-1)\b'),
-      audio: first(
-        r'\b(?:Atmos|TrueHD|DTS(?:-HD)?|DDP?(?: ?[0-9.]+)?|AAC|FLAC)\b',
-      ),
-      dynamicRange: first(r'(?:HDR10?\+?|HDR|Dolby[ .-]?Vision|DV)'),
+      source: source,
+      videoCodec: videoCodec,
+      audio: audio,
+      dynamicRange: dynamicRange,
     );
+  }
+
+  static bool _titlesShareContext(String first, String second) {
+    final firstKey = _titleComparisonKey(first);
+    final secondKey = _titleComparisonKey(second);
+    if (firstKey.isEmpty || secondKey.isEmpty) return false;
+    if (firstKey == secondKey) return true;
+    if (firstKey.length < 4 || secondKey.length < 4) return false;
+    return firstKey.contains(secondKey) || secondKey.contains(firstKey);
   }
 
   static ({String? title, int? year, int? episode}) _parseBracketedRelease(
@@ -1074,7 +1135,7 @@ class ParsedMediaName {
   static bool _isBracketMetadata(String value) {
     final normalized = value.trim();
     if (RegExp(
-      r'^(?:国漫|日漫|美漫|动漫|动画|国创|国产|剧集|电视剧|电影|合集|完结|连载|简中|繁中|中字|字幕|内封|国配|国语|粤语)$',
+      r'^(?:国漫|日漫|美漫|动漫|动画|国创|国产|国产剧|剧集|电视剧|电影|合集|完结|连载|简中|繁中|中字|字幕|内封|国配|国语|粤语)$',
       caseSensitive: false,
     ).hasMatch(normalized)) {
       return true;
@@ -1184,6 +1245,14 @@ class ParsedMediaName {
       '',
     );
 
+    // Broadcaster names are occasionally prepended to documentary releases,
+    // for example `BBC-One Life`. Keep this allowlist narrow so hyphenated
+    // work titles such as Spider-Man are not damaged.
+    title = title.replaceFirst(
+      RegExp(r'^\s*(?:BBC|PBS|NHK)[ ._-]+(?=[A-Za-z])', caseSensitive: false),
+      '',
+    );
+
     // Some folders are named as `2008见龙卸甲` (or `2008 见龙卸甲`) while
     // the file itself contains only the year. The year remains available to
     // the parser, but it must not become part of the TMDB search title.
@@ -1232,7 +1301,7 @@ class ParsedMediaName {
     // A few release tags are written without brackets. They are never part of
     // a searchable title and should terminate the human-readable name.
     final releaseBoundary = RegExp(
-      r'(?:\b(?:ULTRA[ .-]?HD|UHD|Blu[- ]?ray|BDRip|REMUX|BDJ|BDMV)\b|原盘|DIY|菜单|音轨|国语|国配|字幕|次时代|SGNB|CHDBits)',
+      r'(?:\b(?:ULTRA[ .-]?HD|UHD|Blu[- ]?ray|BDRip|REMUX|BDJ|BDMV)\b|蓝光(?:原盘)?|原盘|DIY|菜单|音轨|国语|国配|字幕|次时代|SGNB|CHDBits)',
       caseSensitive: false,
     ).firstMatch(title);
     if (releaseBoundary != null) {
@@ -1250,19 +1319,26 @@ class ParsedMediaName {
     }
 
     title = title
+        .replaceFirst(
+          RegExp(
+            r'[ ._-]*(?:国语|粤语|日语|韩语|英语|德语|法语|俄语)?(?:中字|无字|字幕)$',
+            caseSensitive: false,
+          ),
+          '',
+        )
         .replaceFirst(RegExp(r'^\s*[\[【(（]\s*\d{1,3}\s*[\]】)）][ ._-]*'), '')
         .replaceFirst(RegExp(r'^\s*\d{1,3}[ ._-]+'), '')
         .replaceAll(RegExp(r'[\(（](?:港台|港版?|台版?|国配|国语|简繁?|中字?)[\)）]'), ' ')
         .replaceAll(
           RegExp(
-            r'[\(（](?:高清(?:粤|国)?|超清|修复版?|完整版?|加长版?)[\)）]',
+            r'[\(（](?:高清(?:粤|国)?|超清|(?:美亚|泰吉)?修复版?|完整版?|加长版?)[\)）]',
             caseSensitive: false,
           ),
           ' ',
         )
         .replaceAll(
           RegExp(
-            r'(?:[ ._-]+|^)(?:国[粤英日韩][语字]?|国粤(?:双语)?(?:中字|中英(?:字幕|双字)?)?|国语|粤语|(?:中英|中日|中韩)(?:双语|字幕)?|中文字幕|中字|简繁(?:字幕)?|内封(?:特效)?中英(?:双字|字幕)?|CHINESE|CHN)(?=$|[ ._-])',
+            r'(?:[ ._-]+|^)(?:国[粤英日韩][语字]?|国粤(?:双语)?(?:中字|中英(?:字幕|双字)?)?|国语|粤语|日语|韩语|英语|德语|法语|俄语|(?:中英|中日|中韩)(?:双语|字幕)?|中文字幕|中字|无字|简繁(?:字幕)?|内封(?:特效)?中英(?:双字|字幕)?|CHINESE|CHN)(?=$|[ ._-])',
             caseSensitive: false,
           ),
           ' ',

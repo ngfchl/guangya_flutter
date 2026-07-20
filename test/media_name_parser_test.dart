@@ -59,6 +59,22 @@ void main() {
       expect(value.isEpisode, isTrue);
     });
 
+    test(
+      'matches numbered episodes against a versioned Chinese folder title',
+      () {
+        final value = ParsedMediaName.parse(
+          '[TxTPS]-笑傲江湖01.国语字幕.风中使者.d-vb.rmvb',
+          directoryName: '[Tvb][笑傲江湖96][国语字幕43集][DVD-RMVB][TxTPS]',
+        );
+
+        expect(value.title, '笑傲江湖');
+        expect(value.year, 1996);
+        expect(value.season, 1);
+        expect(value.episode, 1);
+        expect(value.isEpisode, isTrue);
+      },
+    );
+
     test('keeps apostrophes in English titles', () {
       final value = ParsedMediaName.parse(
         "Li'l.Miss.Vampire.Can't.Suck.Right.S01E01.1080p.WEB-DL.mkv",
@@ -135,6 +151,31 @@ void main() {
       expect(value.resolution, '2160p');
     });
 
+    test('inherits related release metadata from an immediate parent', () {
+      final value = ParsedMediaName.parse(
+        'abd-shanghaitriad1080p.mkv',
+        directoryName: 'Shanghai.Triad.1995.1080p.BluRay.x264-aBD',
+        directoryPath:
+            '/电影/Shanghai.Triad.1995.1080p.BluRay.x264-aBD/abd-shanghaitriad1080p.mkv',
+      );
+
+      expect(value.year, 1995);
+      expect(value.resolution, '1080p');
+      expect(value.source, 'BluRay');
+      expect(value.videoCodec?.toLowerCase(), 'x264');
+    });
+
+    test('does not inherit metadata from an unrelated collection folder', () {
+      final value = ParsedMediaName.parse(
+        'Another.Movie.mkv',
+        directoryName: 'Award Winners 1995 1080p BluRay',
+      );
+
+      expect(value.year, isNull);
+      expect(value.resolution, isNull);
+      expect(value.source, isNull);
+    });
+
     test('removes download-site prefixes from localized movie titles', () {
       final heaven = ParsedMediaName.parse(
         '[电影天堂www.dytt89.com]源氏物语：千年之谜BD日语中字.mp4',
@@ -145,6 +186,17 @@ void main() {
 
       expect(heaven.title, '源氏物语：千年之谜');
       expect(bay.title, '消失的子弹');
+    });
+
+    test('removes broadcaster prefixes and trailing language labels', () {
+      final documentary = ParsedMediaName.parse(
+        'BBC-One Life 2011 Blu-ray Remux AVC FLAC 5.1-AYU2D.mkv',
+      );
+      final archive = ParsedMediaName.parse('【226】血证.德语无字.mkv');
+
+      expect(documentary.title, 'One Life');
+      expect(documentary.year, 2011);
+      expect(archive.title, '血证');
     });
 
     test('uses the work suffix after bracketed collection metadata', () {
@@ -277,6 +329,28 @@ void main() {
 
         expect(value.title, '龙 珠 大 魔');
         expect(value.year, 2024);
+      },
+    );
+
+    test(
+      'prefers the parent year when the file only contains an episode marker',
+      () {
+        final parent = ParsedMediaName.parse(
+          '[国产剧][我是刑警][全38集][2024][4K-2160P]',
+        );
+        final value = ParsedMediaName.parse(
+          's01e03.2020.mp4',
+          directoryName: '[国产剧][我是刑警][全38集][2024][4K-2160P]',
+          directoryPath:
+              '/电视剧/国产剧/[国产剧][我是刑警][全38集][2024][4K-2160P]/s01e03.2020.mp4',
+        );
+
+        expect(parent.title, '我是刑警');
+        expect(parent.year, 2024);
+        expect(value.title, '我是刑警');
+        expect(value.year, 2024);
+        expect(value.season, 1);
+        expect(value.episode, 3);
       },
     );
 
