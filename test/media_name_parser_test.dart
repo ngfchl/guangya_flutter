@@ -164,6 +164,15 @@ void main() {
       expect(value.episode, 1);
     });
 
+    test('extracts a localized title from a season release folder', () {
+      final value = ParsedMediaName.parse(
+        'X医生：外科医生大门未知子 第5季[全10集][无字片源].1080p.AMZN.WEB-DL',
+      );
+
+      expect(value.title, 'X医生：外科医生大门未知子');
+      expect(value.season, 5);
+    });
+
     test('treats a short numeric file in a named folder as an episode', () {
       final value = ParsedMediaName.parse(
         '13.2160p.HD国语中字无水印.mkv',
@@ -176,6 +185,40 @@ void main() {
       expect(value.season, 1);
       expect(value.episode, 13);
       expect(value.isEpisode, isTrue);
+    });
+
+    test('uses the show folder for a dated variety-show episode', () {
+      final value = ParsedMediaName.parse(
+        '20260406.第1期加更.mp4',
+        directoryName: '哈｜哈哈哈哈 第六季',
+        directoryPath: '/电视剧/综艺/国产剧/Season6/哈｜哈哈哈哈 第六季/20260406.第1期加更.mp4',
+      );
+
+      expect(value.title, '哈 哈哈哈哈');
+      expect(value.season, 6);
+      expect(value.episode, 1);
+      expect(value.isEpisode, isTrue);
+    });
+
+    test('accepts spaced season and episode markers in damaged names', () {
+      final value = ParsedMediaName.parse(
+        '再见爱人 - S 2E2 - 第1 期：一生何求（下）.mp4',
+        directoryName: '再见爱人(2 21){TMDB-13 99}-1 8 p',
+      );
+
+      expect(value.title, '再见爱人');
+      expect(value.season, 2);
+      expect(value.episode, 2);
+      expect(value.isEpisode, isTrue);
+      final missingZero = ParsedMediaName.parse(
+        '再见爱人 - S 2E1 - 第5期：相爱后动物感伤（下）.mp4',
+      );
+      expect(missingZero.season, 2);
+      expect(missingZero.episode, 10);
+      expect(
+        ParsedMediaName.parse('再见爱人(2 21){TMDB-13 99}-1 8 p').resolution,
+        '1080p',
+      );
     });
   });
 }

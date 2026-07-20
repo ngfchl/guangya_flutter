@@ -427,6 +427,9 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _openTool(WorkspaceTool tool) {
+    if (_mode == WorkspaceMode.media) {
+      ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
+    }
     setState(() {
       if (_mode == WorkspaceMode.cloud) {
         _cloudActiveTool = tool;
@@ -437,6 +440,9 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _closeActiveTool() {
+    if (_mode == WorkspaceMode.media) {
+      ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
+    }
     setState(() {
       if (_mode == WorkspaceMode.cloud) {
         _cloudActiveTool = null;
@@ -579,6 +585,9 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
 
   void _changeMode(WorkspaceMode mode) {
     if (_mode == mode) return;
+    if (mode != WorkspaceMode.media) {
+      ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
+    }
     setState(() {
       _mode = mode;
       _searchOpen = false;
@@ -594,6 +603,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _changeMediaBrowseFilter(MediaLibraryBrowseFilter filter) {
+    ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
     setState(() {
       _mediaBrowseFilter = filter;
       _mediaHomeSelected = false;
@@ -602,6 +612,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _showMediaHome() {
+    ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
     setState(() {
       _mediaBrowseFilter = MediaLibraryBrowseFilter.all;
       _mediaHomeSelected = true;
@@ -610,6 +621,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _openCurrentMediaLibrary() {
+    ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
     setState(() {
       _mediaBrowseFilter = MediaLibraryBrowseFilter.all;
       _mediaHomeSelected = false;
@@ -618,6 +630,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _selectMediaLibrary(String id) {
+    ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
     setState(() {
       _mediaBrowseFilter = MediaLibraryBrowseFilter.all;
       _mediaHomeSelected = false;

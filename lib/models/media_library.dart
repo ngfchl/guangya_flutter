@@ -368,6 +368,8 @@ class MediaLibraryItem {
         gcid: json['gcid']?.toString(),
         modifiedAt: json['modifiedAt']?.toString() ?? '',
         cloudPath: json['resourcePath']?.toString() ?? '',
+        parentID: json['parentID']?.toString(),
+        fullParentIDs: json['fullParentIDs']?.toString(),
         fileType: _toInt(json['fileType']) ?? 2,
       ),
       tmdbID: _toInt(json['tmdbID']),
@@ -397,6 +399,8 @@ class MediaLibraryItem {
     'gcid': file.gcid,
     'fileType': file.fileType,
     'modifiedAt': file.modifiedAt,
+    'parentID': file.parentID,
+    'fullParentIDs': file.fullParentIDs,
     'tmdbID': tmdbID,
     'mediaKind': mediaKind?.name,
     'title': title,
@@ -535,7 +539,7 @@ class ParsedMediaName {
         .replaceAll('＆', ' and ')
         .replaceAll(RegExp(r'''[._!@#\$%^*+=|~`｜，、；？！…<>?"':;]+'''), ' ');
     final episodeMatch = RegExp(
-      r'\bS(\d{1,2})[ ._-]*E(\d{1,3})\b|\b(\d{1,2})x(\d{1,3})\b|第\s*(\d{1,2})\s*季\s*第?\s*(\d{1,3})\s*[集话]',
+      r'\bS\s*0?(\d{1,2})[ ._-]*E\s*0?(\d{1,3})\b|\b(\d{1,2})x(\d{1,3})\b|第\s*(\d{1,2})\s*季\s*第?\s*(\d{1,3})\s*[集话期]',
       caseSensitive: false,
     ).firstMatch(normalized);
     int? season;
@@ -558,15 +562,28 @@ class ParsedMediaName {
     }
     final episodeOnly = season == null
         ? RegExp(
-            r'\b(?:E|EP|Episode)[ ._-]*(\d{1,3})\b|第\s*(\d{1,3})\s*[集话]',
+            r'\b(?:E|EP|Episode)[ ._-]*(\d{1,3})\b|第\s*(\d{1,3})\s*[集话期]',
             caseSensitive: false,
           ).firstMatch(normalized)
         : null;
     if (episodeOnly != null) {
-      season = 1;
       episode = int.tryParse(
         episodeOnly.group(1) ?? episodeOnly.group(2) ?? '',
       );
+    }
+    final damagedSeasonEpisodeMarker = RegExp(
+      r'\bS\s+\d{1,2}|\bE\s+\d{1,3}',
+      caseSensitive: false,
+    ).hasMatch(normalized);
+    final varietyPhase = RegExp(r'第\s*(\d{1,3})\s*期').firstMatch(normalized);
+    final varietyPart = RegExp(r'[（(]\s*([上下])\s*[）)]').firstMatch(normalized);
+    if (damagedSeasonEpisodeMarker &&
+        varietyPhase != null &&
+        varietyPart != null) {
+      final phase = int.tryParse(varietyPhase.group(1)!);
+      if (phase != null && phase > 0) {
+        episode = (phase - 1) * 2 + (varietyPart.group(1) == '下' ? 2 : 1);
+      }
     }
     String? first(String pattern) =>
         RegExp(pattern, caseSensitive: false).firstMatch(normalized)?.group(0);
@@ -579,7 +596,7 @@ class ParsedMediaName {
         ? yearMatches.last
         : yearMatches.firstOrNull;
     final boundary = RegExp(
-      r'\b(?:19\d{2}|20\d{2}|S\d{1,2}[ ._-]*E\d{1,3}|\d{1,2}x\d{1,3}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b',
+      r'(?:\b(?:19\d{2}|20\d{2}|S\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,3}|\d{1,2}x\d{1,3}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b|第\s*\d{1,3}\s*[集话期])',
       caseSensitive: false,
     );
     final boundaryMatches = boundary.allMatches(normalized).toList();
@@ -605,6 +622,7 @@ class ParsedMediaName {
           RegExp(r'(?:\s|[._-])+S\s*0?\d{1,2}$', caseSensitive: false),
           '',
         )
+        .replaceFirst(RegExp(r'(?:\s|[._-])+第\s*[一二三四五六七八九十两\d]+\s*季$'), '')
         .trim();
     final genericName =
         title.isEmpty ||
@@ -623,6 +641,12 @@ class ParsedMediaName {
     ).firstMatch(normalized);
     if (season == null && seasonOnly != null) {
       season = int.tryParse(seasonOnly.group(1)!);
+    }
+    final chineseSeasonOnly = RegExp(
+      r'第\s*([一二三四五六七八九十两\d]{1,3})\s*季',
+    ).firstMatch(normalized);
+    if (season == null && chineseSeasonOnly != null) {
+      season = _parseChineseNumber(chineseSeasonOnly.group(1)!);
     }
     // Disc/episode files are frequently named only "0102" or "02". Use an
     // explicit season from the parent directory first; otherwise only infer
@@ -659,15 +683,19 @@ class ParsedMediaName {
     }
     if (title.isEmpty) title = _cleanTitle(normalized);
 
+    final resolvedSeason =
+        season ?? parent?.season ?? (episode == null ? null : 1);
+    var resolution = first(r'\b(?:2160p|1080p|720p|480p|4k|\d{3,4}x\d{3,4})\b');
+    resolution ??= _repairSpacedResolution(normalized);
     return ParsedMediaName(
       title: title,
       year: yearMatch == null
           ? parent?.year
           : int.tryParse(yearMatch.group(1)!),
-      season: season ?? parent?.season,
+      season: resolvedSeason,
       episode: episode,
-      isEpisode: (season ?? parent?.season) != null && episode != null,
-      resolution: first(r'\b(?:2160p|1080p|720p|480p|4k|\d{3,4}x\d{3,4})\b'),
+      isEpisode: resolvedSeason != null && episode != null,
+      resolution: resolution,
       source: first(
         r'\b(?:WEB[- ]?DL|WEBRip|BluRay|BDRip|REMUX|HDTV|DVD|UHD)\b',
       ),
@@ -677,6 +705,46 @@ class ParsedMediaName {
       ),
       dynamicRange: first(r'(?:HDR10?\+?|HDR|Dolby[ .-]?Vision|DV)'),
     );
+  }
+
+  static int? _parseChineseNumber(String value) {
+    final normalized = value.trim().replaceAll('两', '二');
+    final numeric = int.tryParse(normalized);
+    if (numeric != null) return numeric;
+    const digits = {
+      '一': 1,
+      '二': 2,
+      '三': 3,
+      '四': 4,
+      '五': 5,
+      '六': 6,
+      '七': 7,
+      '八': 8,
+      '九': 9,
+    };
+    if (normalized == '十') return 10;
+    final parts = normalized.split('十');
+    if (parts.length == 2) {
+      final tens = parts.first.isEmpty ? 1 : digits[parts.first];
+      final units = parts.last.isEmpty ? 0 : digits[parts.last];
+      if (tens != null && units != null) return tens * 10 + units;
+    }
+    return digits[normalized];
+  }
+
+  static String? _repairSpacedResolution(String value) {
+    const damaged = <String, String>{
+      r'\b216\s+p\b': '2160p',
+      r'\b1\s+8\s+p\b': '1080p',
+      r'\b72\s+p\b': '720p',
+      r'\b48\s+p\b': '480p',
+    };
+    for (final entry in damaged.entries) {
+      if (RegExp(entry.key, caseSensitive: false).hasMatch(value)) {
+        return entry.value;
+      }
+    }
+    return null;
   }
 
   static String _cleanTitle(String value) {
@@ -692,7 +760,10 @@ class ParsedMediaName {
 
     // Paths often preserve an already-known TMDB identifier. It is handled by
     // the recognizer directly and must never become part of the search title.
-    title = title.replaceAll(RegExp(r'\{\s*tmdb\s*[-_:]?\s*\d+\s*\}'), ' ');
+    title = title.replaceAll(
+      RegExp(r'\{\s*tmdb\s*[-_:]?\s*[\d\s]+\}', caseSensitive: false),
+      ' ',
+    );
 
     // Release collectors often prepend their collection date. It has no
     // relation to the movie year and degrades a TMDB query substantially.
@@ -758,6 +829,7 @@ class ParsedMediaName {
         .replaceAll(RegExp(r'[\[\]【】{}()（）]'), ' ')
         .replaceFirst(RegExp(r'^\s*[A-Za-z]\s+(?=[\u4e00-\u9fff])'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceFirst(RegExp(r'[\s._-]+$'), '')
         .trim();
     return title;
   }

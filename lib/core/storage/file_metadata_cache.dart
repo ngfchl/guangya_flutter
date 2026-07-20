@@ -33,6 +33,9 @@ class FileMetadataCache {
   static Future<List<CloudFile>?> siblingFiles(String fileID) =>
       _store.siblingFiles(fileID);
 
+  static Future<String?> parentFolderID(String fileID) =>
+      _store.parentFolderID(fileID);
+
   static Future<CloudFile?> file(String fileID) => _store.cachedFile(fileID);
 
   static Future<Map<String, List<CloudFile>>> liveFilesByGCIDs(

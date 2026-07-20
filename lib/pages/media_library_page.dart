@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -54,6 +55,8 @@ String _parentCloudPath(String cloudPath) {
   final index = normalized.lastIndexOf('/');
   return index <= 0 ? '' : normalized.substring(0, index);
 }
+
+String _mediaRecordKey(MediaLibraryItem item) => '${item.libraryID}:${item.id}';
 
 Widget _tmdbDirectFallback({
   required String path,
@@ -378,8 +381,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   List<Map<String, dynamic>> _tmdbResults = [];
   bool _backupBusy = false;
   bool _detailSyncing = false;
-  bool _manualMatchPreparing = false;
-  bool _manualMatchApplying = false;
+  String? _manualMatchPreparingResourceKey;
+  String? _manualMatchApplyingResourceKey;
+  Object? _manualMatchOperation;
   _MediaWork? _detailWork;
   var _detailSession = 0;
   late MediaLibraryBrowseFilter _wallFilter;
@@ -387,6 +391,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   void Function(MediaDetailHeader?) _setDetailHeader = (_) {};
   String? _activeCollectionKey;
   final _searchController = TextEditingController();
+
+  bool get _manualMatchBusy => _manualMatchOperation != null;
+
+  String? get _manualMatchLoadingResourceKey =>
+      _manualMatchPreparingResourceKey ?? _manualMatchApplyingResourceKey;
 
   @override
   void initState() {
@@ -408,12 +417,21 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   @override
   void didUpdateWidget(covariant MediaLibraryPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.browseFilter != widget.browseFilter) {
+    final browseFilterChanged = oldWidget.browseFilter != widget.browseFilter;
+    final enteredHome = !oldWidget.showHomePanel && widget.showHomePanel;
+    if (browseFilterChanged || enteredHome) {
       _wallFilter = widget.browseFilter;
       _activeCollectionKey = null;
       _detailWork = null;
       _detailSession += 1;
-      _setDetailHeader(null);
+      final detailSession = _detailSession;
+      // didUpdateWidget runs during the parent's build. Defer the provider
+      // write until that build has completed.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _detailSession == detailSession) {
+          _setDetailHeader(null);
+        }
+      });
     }
   }
 
@@ -439,9 +457,47 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     _setDetailHeader(null);
   }
 
+  Future<void> _removeMediaRecords(List<MediaLibraryItem> records) async {
+    if (records.isEmpty) return;
+    try {
+      await _mediaNotifier.removeMediaRecords(records);
+    } catch (_) {
+      return;
+    }
+    if (!mounted || _detailWork == null) return;
+
+    final state = ref.read(mediaLibraryProvider);
+    final useGlobalBrowse =
+        widget.showHomePanel ||
+        _wallFilter == MediaLibraryBrowseFilter.movies ||
+        _wallFilter == MediaLibraryBrowseFilter.series ||
+        _wallFilter == MediaLibraryBrowseFilter.unmatched;
+    final works = _MediaWork.fromItems(
+      useGlobalBrowse ? state.allItems : state.items,
+    );
+    final refreshed = works
+        .where((work) => work.key == _detailWork!.key)
+        .firstOrNull;
+    if (refreshed == null) {
+      _closeDetail();
+      return;
+    }
+
+    setState(() => _detailWork = refreshed);
+    _setDetailHeader(
+      MediaDetailHeader(
+        title: refreshed.primary.title,
+        mediaKind: refreshed.primary.mediaKind,
+        year: refreshed.primary.year,
+      ),
+    );
+  }
+
   @override
   void dispose() {
-    _setDetailHeader(null);
+    // Provider writes are forbidden while Flutter is unmounting this State.
+    // The workspace owns the header lifecycle; it clears the value when the
+    // media pane is left.  Do not update Riverpod from dispose.
     _searchController.dispose();
     super.dispose();
   }
@@ -893,8 +949,13 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             ),
             onRecognize: () =>
                 unawaited(_refreshAndRecognizeDetail(selectedWork)),
-            onManualMatch: () => unawaited(_showManualTMDBMatch(selectedWork)),
-            manualMatchLoading: _manualMatchPreparing || _manualMatchApplying,
+            onManualMatch: (resource) =>
+                unawaited(_showManualTMDBMatch(selectedWork, resource)),
+            manualMatchBusy: _manualMatchBusy,
+            manualMatchLoadingResourceKey: _manualMatchLoadingResourceKey,
+            onRemoveRecords: _removeMediaRecords,
+            removalDisabled:
+                state.isScanning || _detailSyncing || _manualMatchBusy,
           ),
           if (_detailSyncing)
             _detailLoadingOverlay(
@@ -913,10 +974,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         _wallFilter == MediaLibraryBrowseFilter.collections &&
         activeCollection == null;
     final wallContent =
-        widget.showHomePanel &&
-            _wallFilter == MediaLibraryBrowseFilter.all &&
-            works.isNotEmpty
-        ? _homePanel(context, works)
+        widget.showHomePanel && _wallFilter == MediaLibraryBrowseFilter.all
+        ? _homePanel(context, state)
         : showingCollectionOverview
         ? _collectionOverview(context, collections)
         : works.isEmpty
@@ -955,7 +1014,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                         },
                   onManualMatch: () {
                     _openDetail(works[index]);
-                    unawaited(_showManualTMDBMatch(works[index]));
+                    unawaited(
+                      _showManualTMDBMatch(works[index], works[index].primary),
+                    );
                   },
                 ),
               );
@@ -986,7 +1047,19 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     );
   }
 
-  Widget _homePanel(BuildContext context, List<_MediaWork> works) {
+  Widget _homePanel(BuildContext context, MediaLibraryState state) {
+    final compact = MediaQuery.sizeOf(context).width < 720;
+    final visibleItems = state.globalVisibleItems;
+    final librarySections = [
+      for (final library in state.libraries)
+        (
+          library: library,
+          works: _MediaWork.fromItems(
+            visibleItems.where((item) => item.libraryID == library.id),
+          ),
+        ),
+    ];
+    final works = [for (final section in librarySections) ...section.works];
     final history = ref.watch(watchHistoryProvider);
     final itemByID = {
       for (final work in works)
@@ -1004,60 +1077,87 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       if (entry.completed ||
           item == null ||
           work == null ||
-          !seenWorks.add(work.key)) {
+          !seenWorks.add('${item.libraryID}:${work.key}')) {
         continue;
       }
       continuing.add(
         _ContinueWatchingWork(work: work, item: item, entry: entry),
       );
     }
-    final movies = works
-        .where((work) => work.primary.mediaKind == TMDBMediaKind.movie)
-        .toList();
-    final series = works
-        .where((work) => work.primary.mediaKind == TMDBMediaKind.tv)
-        .toList();
-    final unmatched = works.where((work) => !work.primary.isMatched).toList();
+    final visibleContinuing = continuing.take(10).toList(growable: false);
+    final sections = <Widget>[];
+    if (visibleContinuing.isNotEmpty) {
+      sections.addAll([
+        _homeSectionTitle(context, '继续观看', '${visibleContinuing.length} 项'),
+        _horizontalHomeTrack(
+          context,
+          height: compact ? 170 : 178,
+          itemCount: visibleContinuing.length,
+          itemBuilder: (_, index) {
+            final value = visibleContinuing[index];
+            return _ContinueWatchingTile(
+              value: value,
+              onContinue: () => unawaited(
+                showMediaPlayerDialog(
+                  context,
+                  value.item.file,
+                  episodeCandidates: value.work.resources
+                      .map((item) => item.file)
+                      .toList(),
+                ),
+              ),
+            );
+          },
+        ),
+      ]);
+    }
+    for (final section in librarySections) {
+      if (sections.isNotEmpty) {
+        sections.add(SizedBox(height: compact ? 18 : 24));
+      }
+      sections.add(
+        _homeLibrarySection(
+          context,
+          library: section.library,
+          works: section.works,
+          compact: compact,
+          searchActive: state.searchQuery.trim().isNotEmpty,
+        ),
+      );
+    }
     return ListView(
+      primary: false,
       padding: const EdgeInsets.only(bottom: 24),
-      children: [
-        if (continuing.isNotEmpty) ...[
-          _homeSectionTitle(context, '继续观看', '${continuing.take(10).length} 项'),
-          SizedBox(
-            height: 178,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: continuing.take(10).length,
-              separatorBuilder: (_, _) => const SizedBox(width: 12),
-              itemBuilder: (_, index) {
-                final value = continuing.take(10).elementAt(index);
-                return _ContinueWatchingTile(
-                  value: value,
-                  onContinue: () => unawaited(
-                    showMediaPlayerDialog(
-                      context,
-                      value.item.file,
-                      episodeCandidates: value.work.resources
-                          .map((item) => item.file)
-                          .toList(),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 20),
-        ],
-        _homePosterSection(context, '电影', movies),
-        if (series.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _homePosterSection(context, '电视剧', series),
-        ],
-        if (unmatched.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _homePosterSection(context, '未识别', unmatched),
-        ],
-      ],
+      children: sections,
+    );
+  }
+
+  Widget _horizontalHomeTrack(
+    BuildContext context, {
+    required double height,
+    required int itemCount,
+    required IndexedWidgetBuilder itemBuilder,
+  }) {
+    return SizedBox(
+      height: height,
+      child: ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(
+          dragDevices: const {
+            PointerDeviceKind.touch,
+            PointerDeviceKind.mouse,
+            PointerDeviceKind.stylus,
+            PointerDeviceKind.invertedStylus,
+            PointerDeviceKind.trackpad,
+          },
+        ),
+        child: ListView.separated(
+          primary: false,
+          scrollDirection: Axis.horizontal,
+          itemCount: itemCount,
+          separatorBuilder: (_, _) => const SizedBox(width: 12),
+          itemBuilder: itemBuilder,
+        ),
+      ),
     );
   }
 
@@ -1067,43 +1167,85 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: cs.foreground,
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: cs.foreground,
+              ),
             ),
           ),
           const SizedBox(width: 7),
-          Text(
-            count,
-            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+          Flexible(
+            child: Text(
+              count,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+              style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _homePosterSection(
-    BuildContext context,
-    String title,
-    List<_MediaWork> works,
-  ) {
-    if (works.isEmpty) return const SizedBox.shrink();
+  Widget _homeLibrarySection(
+    BuildContext context, {
+    required MediaLibraryDefinition library,
+    required List<_MediaWork> works,
+    required bool compact,
+    required bool searchActive,
+  }) {
     final visibleWorks = works.take(10).toList();
+    final count = works.length > visibleWorks.length
+        ? '前 ${visibleWorks.length} 个 · 共 ${works.length} 个作品'
+        : '${works.length} 个作品';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _homeSectionTitle(context, title, '${visibleWorks.length} 部'),
-        SizedBox(
-          height: 272,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
+        _homeSectionTitle(context, library.name, count),
+        if (visibleWorks.isEmpty)
+          SizedBox(
+            height: compact ? 72 : 84,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.video_library_outlined,
+                    size: compact ? 22 : 24,
+                    color: ShadTheme.of(context).colorScheme.mutedForeground,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      searchActive ? '当前搜索在此媒体库中没有结果' : '此媒体库暂无资源',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: ShadTheme.of(
+                          context,
+                        ).colorScheme.mutedForeground,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          _horizontalHomeTrack(
+            context,
+            height: compact ? 252 : 272,
             itemCount: visibleWorks.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 12),
             itemBuilder: (_, index) => SizedBox(
-              width: 142,
+              width: compact ? 132 : 142,
               child: _MediaPosterTile(
                 work: visibleWorks[index],
                 onOpen: () => _openDetail(visibleWorks[index]),
@@ -1116,12 +1258,16 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 },
                 onManualMatch: () {
                   _openDetail(visibleWorks[index]);
-                  unawaited(_showManualTMDBMatch(visibleWorks[index]));
+                  unawaited(
+                    _showManualTMDBMatch(
+                      visibleWorks[index],
+                      visibleWorks[index].primary,
+                    ),
+                  );
                 },
               ),
             ),
           ),
-        ),
       ],
     );
   }
@@ -1603,13 +1749,29 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       }
       for (final request in groupedMatches.values) {
         if (!mounted) return;
+        final parsed = ParsedMediaName.parse(
+          request.items.first.file.name,
+          directoryName: _parentDirectoryName(
+            request.items.first.file.cloudPath,
+          ),
+        );
         final candidate = await _showManualMatchPopover(
           initialQuery: request.items.first.title,
           initialResults: request.candidates,
+          initialSeason: parsed.season,
+          initialEpisode: parsed.episode,
         );
         if (candidate == null) continue;
-        for (final resource in request.items) {
-          await notifier.applyTMDBMatch(resource, candidate);
+        if (candidate['media_type'] == 'tv') {
+          await notifier.applyTMDBMatch(request.items.first, candidate);
+        } else {
+          for (var index = 0; index < request.items.length; index++) {
+            await notifier.applyTMDBMatch(
+              request.items[index],
+              candidate,
+              applyManualEpisodeOverride: index == 0,
+            );
+          }
         }
       }
       if (!mounted || _detailWork == null || _detailSession != detailSession) {
@@ -1701,34 +1863,73 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     );
   }
 
-  Future<void> _showManualTMDBMatch(_MediaWork work) async {
-    if (_manualMatchPreparing) return;
+  Future<void> _showManualTMDBMatch(
+    _MediaWork work,
+    MediaLibraryItem target,
+  ) async {
+    if (_manualMatchBusy) return;
+    final targetKey = _mediaRecordKey(target);
+    final operation = Object();
     final detailSession = _detailSession;
     final notifier = ref.read(mediaLibraryProvider.notifier);
-    setState(() => _manualMatchPreparing = true);
-    late final List<MediaLibraryItem> resources;
+    setState(() {
+      _manualMatchOperation = operation;
+      _manualMatchPreparingResourceKey = targetKey;
+    });
     try {
-      resources = await notifier.refreshParsedTitles(work.resources);
-    } finally {
-      if (mounted) setState(() => _manualMatchPreparing = false);
-    }
-    if (!mounted || resources.isEmpty) return;
-    final parsed = ParsedMediaName.parse(
-      resources.first.file.name,
-      directoryName: _parentDirectoryName(resources.first.file.cloudPath),
-    );
-    final candidate = await _showManualMatchPopover(
-      initialQuery: parsed.title,
-      initialYear: parsed.year,
-      initialMediaKind: 'auto',
-      initialSeason: parsed.season,
-      initialEpisode: parsed.episode,
-    );
-    if (candidate == null || !mounted) return;
-    setState(() => _manualMatchApplying = true);
-    try {
-      for (final resource in resources) {
-        await notifier.applyTMDBMatch(resource, candidate);
+      final resources = await notifier.refreshParsedTitles(work.resources);
+      if (!mounted ||
+          _detailSession != detailSession ||
+          _detailWork == null ||
+          resources.isEmpty) {
+        return;
+      }
+      setState(() => _manualMatchPreparingResourceKey = null);
+      final refreshedTarget = resources
+          .where(
+            (resource) =>
+                resource.libraryID == target.libraryID &&
+                (resource.id == target.id ||
+                    (target.file.gcid?.isNotEmpty == true &&
+                        resource.file.gcid == target.file.gcid)),
+          )
+          .firstOrNull;
+      final queryResource = refreshedTarget ?? resources.first;
+      final parsed = ParsedMediaName.parse(
+        queryResource.file.name,
+        directoryName: _parentDirectoryName(queryResource.file.cloudPath),
+      );
+      final candidate = await _showManualMatchPopover(
+        initialQuery: parsed.title,
+        initialYear: parsed.year,
+        initialMediaKind: 'auto',
+        initialSeason: parsed.season,
+        initialEpisode: parsed.episode,
+      );
+      if (candidate == null ||
+          !mounted ||
+          _detailSession != detailSession ||
+          _detailWork == null) {
+        return;
+      }
+      setState(() => _manualMatchApplyingResourceKey = targetKey);
+      if (candidate['media_type'] == 'tv') {
+        await notifier.applyTMDBMatch(queryResource, candidate);
+      } else {
+        final orderedResources = [
+          queryResource,
+          ...resources.where(
+            (resource) =>
+                _mediaRecordKey(resource) != _mediaRecordKey(queryResource),
+          ),
+        ];
+        for (var index = 0; index < orderedResources.length; index++) {
+          await notifier.applyTMDBMatch(
+            orderedResources[index],
+            candidate,
+            applyManualEpisodeOverride: index == 0,
+          );
+        }
       }
       if (!mounted || _detailSession != detailSession || _detailWork == null) {
         return;
@@ -1744,7 +1945,13 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               .firstOrNull;
       if (refreshed != null) setState(() => _detailWork = refreshed);
     } finally {
-      if (mounted) setState(() => _manualMatchApplying = false);
+      if (mounted && identical(_manualMatchOperation, operation)) {
+        setState(() {
+          _manualMatchOperation = null;
+          _manualMatchPreparingResourceKey = null;
+          _manualMatchApplyingResourceKey = null;
+        });
+      }
     }
   }
 
@@ -2876,8 +3083,11 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final ValueChanged<MediaLibraryItem> onPlay;
   final ValueChanged<MediaLibraryItem> onExternalPlay;
   final VoidCallback onRecognize;
-  final VoidCallback onManualMatch;
-  final bool manualMatchLoading;
+  final ValueChanged<MediaLibraryItem> onManualMatch;
+  final Future<void> Function(List<MediaLibraryItem>) onRemoveRecords;
+  final bool manualMatchBusy;
+  final String? manualMatchLoadingResourceKey;
+  final bool removalDisabled;
 
   const _MediaDetailPanel({
     required this.work,
@@ -2886,7 +3096,10 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onExternalPlay,
     required this.onRecognize,
     required this.onManualMatch,
-    this.manualMatchLoading = false,
+    required this.onRemoveRecords,
+    this.manualMatchBusy = false,
+    this.manualMatchLoadingResourceKey,
+    this.removalDisabled = false,
   });
 
   @override
@@ -2902,8 +3115,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   String? _selectedEpisodeID;
   bool _loadingTMDBDetails = false;
   bool _loadingEpisodeDetails = false;
+  bool _removingRecords = false;
   bool _initialEpisodeSelectionRequested = false;
   final _backdropController = PageController();
+  final _removeMenuController = ShadPopoverController();
   Timer? _backdropTimer;
   var _backdropIndex = 0;
 
@@ -2930,6 +3145,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       _resource = updatedResource;
     } else {
       _resource = widget.work.primary;
+      if (_selectedEpisodeID != null) {
+        _selectedEpisodeID = null;
+        _episodeDetails = null;
+        _initialEpisodeSelectionRequested = false;
+        Future.microtask(_selectInitialEpisode);
+      }
     }
     if (widget.work.primary.tmdbID != _loadedTMDBID) {
       _selectedSeason = null;
@@ -2943,6 +3164,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   void dispose() {
     _backdropTimer?.cancel();
     _backdropController.dispose();
+    _removeMenuController.dispose();
     super.dispose();
   }
 
@@ -3325,7 +3547,168 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     );
   }
 
+  bool get _removalBlocked => widget.removalDisabled || _removingRecords;
+
+  bool get _manualMatchLoading =>
+      widget.manualMatchLoadingResourceKey == _mediaRecordKey(_resource);
+
+  ParsedMediaName _parsedResource(MediaLibraryItem resource) =>
+      ParsedMediaName.parse(
+        resource.file.name,
+        directoryName: _parentDirectoryName(resource.file.cloudPath),
+      );
+
+  List<MediaLibraryItem> _episodeRecords(MediaLibraryItem resource) {
+    final parsed = _parsedResource(resource);
+    final episode = parsed.episode;
+    if (episode == null) return [resource];
+    final season = parsed.season ?? 1;
+    return widget.work.resources.where((candidate) {
+      if (candidate.libraryID != resource.libraryID) return false;
+      final candidateParsed = _parsedResource(candidate);
+      return (candidateParsed.season ?? 1) == season &&
+          candidateParsed.episode == episode;
+    }).toList();
+  }
+
+  List<MediaLibraryItem> _currentLibraryWorkRecords() => widget.work.resources
+      .where((resource) => resource.libraryID == _resource.libraryID)
+      .toList();
+
+  MediaLibraryItem? _nextResourceAfterRemoving(Set<String> removedKeys) {
+    final ordered = widget.work.resources.toList()
+      ..sort((left, right) {
+        final leftParsed = _parsedResource(left);
+        final rightParsed = _parsedResource(right);
+        final season = (leftParsed.season ?? 1).compareTo(
+          rightParsed.season ?? 1,
+        );
+        if (season != 0) return season;
+        final episode = (leftParsed.episode ?? 0).compareTo(
+          rightParsed.episode ?? 0,
+        );
+        if (episode != 0) return episode;
+        return left.file.name.toLowerCase().compareTo(
+          right.file.name.toLowerCase(),
+        );
+      });
+    final currentIndex = ordered.indexWhere(
+      (resource) => _mediaRecordKey(resource) == _mediaRecordKey(_resource),
+    );
+    if (currentIndex < 0) {
+      return ordered
+          .where((resource) => !removedKeys.contains(_mediaRecordKey(resource)))
+          .firstOrNull;
+    }
+    for (var index = currentIndex + 1; index < ordered.length; index++) {
+      if (!removedKeys.contains(_mediaRecordKey(ordered[index]))) {
+        return ordered[index];
+      }
+    }
+    for (var index = currentIndex - 1; index >= 0; index--) {
+      if (!removedKeys.contains(_mediaRecordKey(ordered[index]))) {
+        return ordered[index];
+      }
+    }
+    return null;
+  }
+
+  Future<void> _confirmAndRemoveRecords({
+    required Iterable<MediaLibraryItem> records,
+    required String title,
+    required String description,
+  }) async {
+    if (_removalBlocked) return;
+    final unique = <String, MediaLibraryItem>{
+      for (final record in records) _mediaRecordKey(record): record,
+    }.values.toList();
+    if (unique.isEmpty) return;
+    _removeMenuController.hide();
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: Text(title),
+        description: Text(description),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton.destructive(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            leading: const Icon(LucideIcons.trash2, size: 16),
+            child: const Text('移除'),
+          ),
+        ],
+        child: const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text('只会移除媒体库记录及相关观看历史，不会删除云盘中的实际文件。后续强制扫描时仍可能重新加入。'),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted || _removalBlocked) return;
+
+    final removedKeys = unique.map(_mediaRecordKey).toSet();
+    final removesCurrent = removedKeys.contains(_mediaRecordKey(_resource));
+    final nextResource = removesCurrent
+        ? _nextResourceAfterRemoving(removedKeys)
+        : null;
+    setState(() => _removingRecords = true);
+    try {
+      await widget.onRemoveRecords(unique);
+    } finally {
+      if (mounted) setState(() => _removingRecords = false);
+    }
+    if (!mounted || !removesCurrent || nextResource == null) return;
+    if (widget.work.primary.mediaKind == TMDBMediaKind.tv) {
+      await _selectEpisode(nextResource);
+    } else {
+      setState(() => _resource = nextResource);
+    }
+  }
+
+  Future<void> _removeResource(MediaLibraryItem resource) =>
+      _confirmAndRemoveRecords(
+        records: [resource],
+        title: '移除当前资源？',
+        description: resource.file.name,
+      );
+
+  Future<void> _removeEpisode(MediaLibraryItem resource) {
+    final parsed = _parsedResource(resource);
+    final records = _episodeRecords(resource);
+    final season = parsed.season ?? 1;
+    final episode = parsed.episode;
+    return _confirmAndRemoveRecords(
+      records: records,
+      title: episode == null ? '移除当前剧集资源？' : '移除第 $season 季第 $episode 集？',
+      description: records.length == 1
+          ? records.first.file.name
+          : '将移除本集的 ${records.length} 个资源版本。',
+    );
+  }
+
+  Future<void> _removeCurrentLibraryWork() {
+    final isSeries = widget.work.primary.mediaKind == TMDBMediaKind.tv;
+    final records = _currentLibraryWorkRecords();
+    final episodeCount = records
+        .map((resource) {
+          final parsed = _parsedResource(resource);
+          return '${parsed.season ?? 1}:${parsed.episode ?? resource.id}';
+        })
+        .toSet()
+        .length;
+    return _confirmAndRemoveRecords(
+      records: records,
+      title: '从当前媒体库移除「${widget.work.primary.title}」？',
+      description: isSeries
+          ? '将移除整部剧集的 $episodeCount 集，共 ${records.length} 个资源记录。'
+          : '将移除整部电影的 ${records.length} 个资源版本。',
+    );
+  }
+
   Widget _mediaActions() {
+    final manualMatchLoading = _manualMatchLoading;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -3356,16 +3739,144 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         ),
         ShadButton.outline(
           size: ShadButtonSize.sm,
-          onPressed: widget.manualMatchLoading ? null : widget.onManualMatch,
-          leading: widget.manualMatchLoading
+          onPressed: widget.manualMatchBusy
+              ? null
+              : () => widget.onManualMatch(_resource),
+          leading: manualMatchLoading
               ? const AppLoadingIndicator(
                   size: AppLoadingSize.inline,
                   semanticsLabel: '正在准备手动匹配',
                 )
               : const Icon(Icons.manage_search_rounded, size: 16),
-          child: Text(widget.manualMatchLoading ? '正在匹配' : '手动匹配'),
+          child: Text(manualMatchLoading ? '正在匹配' : '手动匹配'),
         ),
+        _removeActionsPopover(),
       ],
+    );
+  }
+
+  Widget _removeActionsPopover() {
+    final cs = ShadTheme.of(context).colorScheme;
+    final isSeries = widget.work.primary.mediaKind == TMDBMediaKind.tv;
+    final parsed = _parsedResource(_resource);
+    final episodeRecords = isSeries ? _episodeRecords(_resource) : const [];
+    final libraryRecords = _currentLibraryWorkRecords();
+    return ShadPopover(
+      controller: _removeMenuController,
+      popover: (_) => SizedBox(
+        width: 292,
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 7),
+                child: Text(
+                  '管理媒体库记录',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: cs.mutedForeground,
+                  ),
+                ),
+              ),
+              _removalMenuItem(
+                icon: LucideIcons.fileX,
+                title: '移除当前资源',
+                description: _resource.file.name,
+                onPressed: () => _removeResource(_resource),
+              ),
+              if (isSeries && parsed.episode != null) ...[
+                const SizedBox(height: 3),
+                _removalMenuItem(
+                  icon: LucideIcons.listX,
+                  title: '移除第 ${parsed.season ?? 1} 季第 ${parsed.episode} 集',
+                  description: episodeRecords.length > 1
+                      ? '包含 ${episodeRecords.length} 个资源版本'
+                      : '移除当前单集记录',
+                  onPressed: () => _removeEpisode(_resource),
+                ),
+              ],
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 5),
+                child: ShadSeparator.horizontal(),
+              ),
+              _removalMenuItem(
+                icon: LucideIcons.trash2,
+                title: isSeries ? '移除当前媒体库内整部剧集' : '移除当前媒体库内整部电影',
+                description: isSeries
+                    ? '${libraryRecords.length} 个资源记录'
+                    : '${libraryRecords.length} 个资源版本',
+                onPressed: _removeCurrentLibraryWork,
+              ),
+            ],
+          ),
+        ),
+      ),
+      child: ShadTooltip(
+        builder: (_) => const Text('更多媒体操作'),
+        child: ShadButton.outline(
+          size: ShadButtonSize.sm,
+          onPressed: _removalBlocked ? null : _removeMenuController.toggle,
+          leading: _removingRecords
+              ? const AppLoadingIndicator(
+                  size: AppLoadingSize.inline,
+                  semanticsLabel: '正在移除媒体库记录',
+                )
+              : const Icon(Icons.more_horiz_rounded, size: 16),
+          child: Text(_removingRecords ? '正在移除' : '更多'),
+        ),
+      ),
+    );
+  }
+
+  Widget _removalMenuItem({
+    required IconData icon,
+    required String title,
+    required String description,
+    required Future<void> Function() onPressed,
+  }) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadButton.ghost(
+      width: double.infinity,
+      height: 54,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      mainAxisAlignment: MainAxisAlignment.start,
+      leading: Icon(icon, size: 17, color: cs.destructive),
+      onPressed: _removalBlocked
+          ? null
+          : () {
+              _removeMenuController.hide();
+              unawaited(onPressed());
+            },
+      child: SizedBox(
+        width: 226,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: cs.destructive,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              description,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -3719,16 +4230,42 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               final label = episode == null
                   ? '未编号'
                   : 'E${episode.toString().padLeft(2, '0')}';
-              return ShadTooltip(
-                builder: (_) =>
-                    Text(episode == null ? '未识别集号' : '第 $episode 集'),
-                child: ShadButton.outline(
-                  size: ShadButtonSize.sm,
-                  width: 58,
-                  backgroundColor: selected ? cs.primary : null,
-                  foregroundColor: selected ? cs.primaryForeground : null,
-                  onPressed: () => unawaited(_selectEpisode(resource)),
-                  child: Text(label),
+              return ShadContextMenuRegion(
+                tapEnabled: false,
+                items: [
+                  ShadContextMenuItem.inset(
+                    leading: Icon(
+                      LucideIcons.trash2,
+                      size: 16,
+                      color: cs.destructive,
+                    ),
+                    onPressed: _removalBlocked
+                        ? null
+                        : () => unawaited(_removeEpisode(resource)),
+                    child: Text(
+                      episode == null ? '移除当前剧集资源' : '移除本集',
+                      style: TextStyle(color: cs.destructive),
+                    ),
+                  ),
+                ],
+                child: ShadTooltip(
+                  builder: (_) =>
+                      Text(episode == null ? '未识别集号' : '第 $episode 集'),
+                  child: ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    width: 58,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    backgroundColor: selected ? cs.primary : null,
+                    foregroundColor: selected ? cs.primaryForeground : null,
+                    onPressed: () => unawaited(_selectEpisode(resource)),
+                    child: SizedBox(
+                      width: 50,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(label, maxLines: 1),
+                      ),
+                    ),
+                  ),
                 ),
               );
             },
@@ -3880,6 +4417,14 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             leading: const Icon(LucideIcons.download, size: 16),
             onPressed: () => widget.onDownload(resource),
             child: const Text('下载'),
+          ),
+          const Divider(height: 8),
+          ShadContextMenuItem.inset(
+            leading: Icon(LucideIcons.trash2, size: 16, color: cs.destructive),
+            onPressed: _removalBlocked
+                ? null
+                : () => unawaited(_removeResource(resource)),
+            child: Text('从媒体库移除此资源', style: TextStyle(color: cs.destructive)),
           ),
         ],
         child: Material(

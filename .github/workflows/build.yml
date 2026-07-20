@@ -206,7 +206,9 @@ jobs:
           echo "name=${VERSION%%+*}" >> "$GITHUB_OUTPUT"
           echo "package=${VERSION//+/_}" >> "$GITHUB_OUTPUT"
       - run: flutter pub get
-      - name: Build macOS app
+      - name: Build macOS x86_64 app
+        env:
+          FLUTTER_XCODE_ARCHS: x86_64
         shell: bash
         run: |
           set -euo pipefail
@@ -219,10 +221,18 @@ jobs:
         run: |
           set -euo pipefail
           APP=build/macos/Build/Products/Release/小黄鸭.app
+          EXECUTABLE="$APP/Contents/MacOS/小黄鸭"
           PKG=dist/macos/guangya_flutter-${{ steps.version.outputs.package }}-macos-x86_64.pkg
           STAGING=$(mktemp -d "$RUNNER_TEMP/guangya-pkg.XXXXXX")
           STAGED_APP="$STAGING/小黄鸭.app"
           test -d "$APP"
+          test -x "$EXECUTABLE"
+          ARCHS=$(lipo -archs "$EXECUTABLE")
+          echo "macOS executable architectures: $ARCHS"
+          if [ "$ARCHS" != "x86_64" ]; then
+            echo "::error::Expected an x86_64-only macOS executable, got: $ARCHS"
+            exit 1
+          fi
           codesign --verify --deep --strict --verbose=2 "$APP"
           mkdir -p dist/macos
           ditto --norsrc --noextattr "$APP" "$STAGED_APP"
@@ -276,7 +286,9 @@ jobs:
           echo "name=${VERSION%%+*}" >> "$GITHUB_OUTPUT"
           echo "package=${VERSION//+/_}" >> "$GITHUB_OUTPUT"
       - run: flutter pub get
-      - name: Build macOS app
+      - name: Build macOS arm64 app
+        env:
+          FLUTTER_XCODE_ARCHS: arm64
         shell: bash
         run: |
           set -euo pipefail
@@ -289,10 +301,18 @@ jobs:
         run: |
           set -euo pipefail
           APP=build/macos/Build/Products/Release/小黄鸭.app
+          EXECUTABLE="$APP/Contents/MacOS/小黄鸭"
           PKG=dist/macos/guangya_flutter-${{ steps.version.outputs.package }}-macos-arm64.pkg
           STAGING=$(mktemp -d "$RUNNER_TEMP/guangya-pkg.XXXXXX")
           STAGED_APP="$STAGING/小黄鸭.app"
           test -d "$APP"
+          test -x "$EXECUTABLE"
+          ARCHS=$(lipo -archs "$EXECUTABLE")
+          echo "macOS executable architectures: $ARCHS"
+          if [ "$ARCHS" != "arm64" ]; then
+            echo "::error::Expected an arm64-only macOS executable, got: $ARCHS"
+            exit 1
+          fi
           codesign --verify --deep --strict --verbose=2 "$APP"
           mkdir -p dist/macos
           ditto --norsrc --noextattr "$APP" "$STAGED_APP"

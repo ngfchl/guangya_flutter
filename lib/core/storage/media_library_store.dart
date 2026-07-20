@@ -14,6 +14,8 @@ import '../../models/media_library.dart';
 class MediaLibraryStore {
   static Database? _database;
   static Future<Database>? _openingDatabase;
+  bool _mediaItemLocationColumnsReady = false;
+  Future<void>? _mediaItemLocationColumnsCheck;
 
   Future<Database> get _db => _openDatabase();
 
@@ -29,7 +31,7 @@ class MediaLibraryStore {
     );
     _database = await openDatabase(
       databasePath,
-      version: 5,
+      version: 6,
       onCreate: (db, _) async {
         await _createSchema(db);
       },
@@ -123,7 +125,9 @@ class MediaLibraryStore {
   }
 
   Future<List<MediaLibraryItem>> items({String? libraryID}) async {
-    final rows = await (await _db).query(
+    final db = await _db;
+    await _ensureMediaItemLocationColumns(db);
+    final rows = await db.query(
       'media_items',
       columns: _itemMetadataColumns,
       where: libraryID == null ? null : 'library_id = ?',
@@ -175,7 +179,11 @@ class MediaLibraryStore {
   }
 
   Future<void> replaceItems(List<MediaLibraryItem> items) async {
+    final uniqueItems = <(String, String), MediaLibraryItem>{
+      for (final item in items) (item.libraryID, item.id): item,
+    }.values.toList(growable: false);
     final db = await _db;
+    await _ensureMediaItemLocationColumns(db);
     await db.transaction((txn) async {
       await txn.execute('''
         CREATE TEMP TABLE IF NOT EXISTS desired_media_items (
@@ -185,7 +193,7 @@ class MediaLibraryStore {
         )
       ''');
       await txn.delete('desired_media_items');
-      for (final item in items) {
+      for (final item in uniqueItems) {
         await txn.insert('desired_media_items', {
           'library_id': item.libraryID,
           'file_id': item.file.id,
@@ -205,10 +213,31 @@ class MediaLibraryStore {
     });
   }
 
+  Future<int> deleteItems(Iterable<MediaLibraryItem> items) async {
+    final values = <(String, String), MediaLibraryItem>{
+      for (final item in items) (item.libraryID, item.id): item,
+    }.values.toList(growable: false);
+    if (values.isEmpty) return 0;
+
+    return (await _db).transaction((txn) async {
+      var removed = 0;
+      for (final item in values) {
+        removed += await txn.delete(
+          'media_items',
+          where: 'library_id = ? AND file_id = ?',
+          whereArgs: [item.libraryID, item.id],
+        );
+      }
+      return removed;
+    });
+  }
+
   Future<void> upsertItems(Iterable<MediaLibraryItem> items) async {
     final values = items.toList();
     if (values.isEmpty) return;
-    await (await _db).transaction((txn) async {
+    final db = await _db;
+    await _ensureMediaItemLocationColumns(db);
+    await db.transaction((txn) async {
       for (final item in values) {
         await _upsertItem(txn, item);
       }
@@ -217,6 +246,7 @@ class MediaLibraryStore {
 
   Future<MediaLibraryStorageStats> importBackup(String backupPath) async {
     final db = await _db;
+    await _ensureMediaItemLocationColumns(db);
     await db.execute('ATTACH DATABASE ? AS imported_backup', [backupPath]);
     try {
       await db.transaction((txn) async {
@@ -237,17 +267,26 @@ class MediaLibraryStore {
         final importedBackdropPath = importedColumns.contains('backdrop_path')
             ? 'backdrop_path'
             : 'NULL';
+        final importedParentID = importedColumns.contains('parent_id')
+            ? 'parent_id'
+            : 'NULL';
+        final importedFullParentIDs =
+            importedColumns.contains('full_parent_ids')
+            ? 'full_parent_ids'
+            : 'NULL';
         await txn.execute('''
           INSERT OR REPLACE INTO media_items (
             library_id, file_id, resource_path, cloud_name, file_size, gcid,
-            file_type, tmdb_id, media_kind, title, original_title,
+            file_type, parent_id, full_parent_ids, tmdb_id, media_kind,
+            title, original_title,
             release_date, overview, poster_path, backdrop_path,
             has_chinese_audio, has_chinese_subtitle, collection_id,
             collection_name, updated_at
           )
           SELECT
             library_id, file_id, resource_path, cloud_name, file_size, gcid,
-            file_type, tmdb_id, media_kind, title, original_title,
+            file_type, $importedParentID, $importedFullParentIDs,
+            tmdb_id, media_kind, title, original_title,
             release_date, overview, $importedPosterPath, $importedBackdropPath,
             has_chinese_audio, has_chinese_subtitle, collection_id,
             collection_name, updated_at
@@ -576,6 +615,31 @@ class MediaLibraryStore {
     return null;
   }
 
+  /// Returns the folder snapshot that still contains [fileID]. An empty
+  /// string represents the cloud root; null means no cached parent exists.
+  Future<String?> parentFolderID(String fileID) async {
+    final rows = await (await _db).query(
+      'folder_children',
+      columns: const ['folder_id', 'child_ids'],
+      where: 'child_ids LIKE ?',
+      whereArgs: ['%"$fileID"%'],
+    );
+    for (final row in rows) {
+      try {
+        final raw = jsonDecode(row['child_ids']?.toString() ?? '[]');
+        if (raw is! List || !raw.any((value) => value.toString() == fileID)) {
+          continue;
+        }
+        final folderID = row['folder_id']?.toString();
+        if (folderID == null) continue;
+        return folderID == _rootFolderID ? '' : folderID;
+      } catch (_) {
+        // Ignore malformed snapshots and continue with the next match.
+      }
+    }
+    return null;
+  }
+
   Future<CloudFile?> cachedFile(String fileID) async {
     final rows = await (await _db).rawQuery(
       '''SELECT d.file_json FROM file_index i
@@ -700,6 +764,8 @@ class MediaLibraryStore {
         file_size INTEGER,
         gcid TEXT,
         file_type INTEGER NOT NULL,
+        parent_id TEXT,
+        full_parent_ids TEXT,
         tmdb_id INTEGER,
         media_kind TEXT,
         title TEXT NOT NULL,
@@ -748,6 +814,8 @@ class MediaLibraryStore {
     );
     await _ensureColumn(db, 'media_items', 'poster_path', 'TEXT');
     await _ensureColumn(db, 'media_items', 'backdrop_path', 'TEXT');
+    await _ensureColumn(db, 'media_items', 'parent_id', 'TEXT');
+    await _ensureColumn(db, 'media_items', 'full_parent_ids', 'TEXT');
   }
 
   Future<({int rows, int artworkBytes})?> _migrateArtworkBlobSchema(
@@ -778,6 +846,10 @@ class MediaLibraryStore {
     final backdropPathSource = columns.contains('backdrop_path')
         ? 'backdrop_path'
         : 'NULL';
+    final parentIDSource = columns.contains('parent_id') ? 'parent_id' : 'NULL';
+    final fullParentIDsSource = columns.contains('full_parent_ids')
+        ? 'full_parent_ids'
+        : 'NULL';
     AppLogger.info(
       'Storage',
       '发现旧图片二进制缓存：$rows 条记录，${_formatBytes(artworkBytes)}，正在重建精简表',
@@ -792,6 +864,8 @@ class MediaLibraryStore {
           file_size INTEGER,
           gcid TEXT,
           file_type INTEGER NOT NULL,
+          parent_id TEXT,
+          full_parent_ids TEXT,
           tmdb_id INTEGER,
           media_kind TEXT,
           title TEXT NOT NULL,
@@ -812,14 +886,16 @@ class MediaLibraryStore {
       await txn.execute('''
         INSERT INTO media_items_compact (
           library_id, file_id, resource_path, cloud_name, file_size, gcid,
-          file_type, tmdb_id, media_kind, title, original_title, release_date,
-          overview, poster_path, backdrop_path, has_chinese_audio,
-          has_chinese_subtitle, collection_id, collection_name, updated_at
+          file_type, parent_id, full_parent_ids, tmdb_id, media_kind, title,
+          original_title, release_date, overview, poster_path, backdrop_path,
+          has_chinese_audio, has_chinese_subtitle, collection_id,
+          collection_name, updated_at
         )
         SELECT
           library_id, file_id, resource_path, cloud_name, file_size, gcid,
-          file_type, tmdb_id, media_kind, title, original_title, release_date,
-          overview, $posterPathSource, $backdropPathSource, has_chinese_audio,
+          file_type, $parentIDSource, $fullParentIDsSource, tmdb_id,
+          media_kind, title, original_title, release_date, overview,
+          $posterPathSource, $backdropPathSource, has_chinese_audio,
           has_chinese_subtitle, collection_id, collection_name, updated_at
         FROM media_items
       ''');
@@ -897,6 +973,8 @@ class MediaLibraryStore {
       'fileSize': row['file_size'],
       'gcid': row['gcid'],
       'fileType': row['file_type'],
+      'parentID': row['parent_id'],
+      'fullParentIDs': row['full_parent_ids'],
       'tmdbID': row['tmdb_id'],
       'mediaKind': row['media_kind'],
       'title': row['title'],
@@ -921,6 +999,8 @@ class MediaLibraryStore {
     'file_size': item.file.size,
     'gcid': item.file.gcid,
     'file_type': item.file.fileType,
+    'parent_id': item.file.parentID,
+    'full_parent_ids': item.file.fullParentIDs,
     'tmdb_id': item.tmdbID,
     'media_kind': item.mediaKind?.name,
     'title': item.title,
@@ -971,6 +1051,8 @@ class MediaLibraryStore {
     'file_size',
     'gcid',
     'file_type',
+    'parent_id',
+    'full_parent_ids',
     'tmdb_id',
     'media_kind',
     'title',
@@ -1029,6 +1111,26 @@ class MediaLibraryStore {
     final columns = await _tableColumns(db, 'main', table);
     if (!columns.contains(column)) {
       await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
+    }
+  }
+
+  Future<void> _ensureMediaItemLocationColumns(DatabaseExecutor db) async {
+    if (_mediaItemLocationColumnsReady) return;
+    final pending = _mediaItemLocationColumnsCheck;
+    if (pending != null) {
+      await pending;
+      return;
+    }
+    final check = () async {
+      await _ensureColumn(db, 'media_items', 'parent_id', 'TEXT');
+      await _ensureColumn(db, 'media_items', 'full_parent_ids', 'TEXT');
+      _mediaItemLocationColumnsReady = true;
+    }();
+    _mediaItemLocationColumnsCheck = check;
+    try {
+      await check;
+    } finally {
+      _mediaItemLocationColumnsCheck = null;
     }
   }
 }
