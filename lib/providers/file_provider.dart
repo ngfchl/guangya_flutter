@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../api/guangya_api.dart';
+import '../core/logging/app_logger.dart';
 import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
@@ -232,7 +233,7 @@ class FileNotifier extends StateNotifier<FileState> {
     final generation = ++_detailGeneration;
     final resolvedParentID = parentID ?? _currentParentID;
     final cacheKey =
-        '${state.section.name}:${resolvedParentID ?? 'root'}:${state.currentPage}:${state.pageSize}:${state.serverSort.name}:${state.serverSortDirection.name}';
+        'v2|${state.section.name}|${resolvedParentID ?? 'root'}|${state.currentPage}|${state.pageSize}|${state.serverSort.name}|${state.serverSortDirection.name}';
     final cached = _readCachedFiles(cacheKey);
     if (cached != null) {
       state = state.copyWith(files: cached, clearError: true);
@@ -279,6 +280,7 @@ class FileNotifier extends StateNotifier<FileState> {
           .map((value) => CloudFile.fromJson(Map<String, dynamic>.from(value)))
           .toList();
     } catch (_) {
+      AppLogger.debug('Storage', '文件列表缓存解析失败，key=$key');
       return null;
     }
   }
@@ -371,8 +373,11 @@ class FileNotifier extends StateNotifier<FileState> {
             cache[file.id] = {'size': size, 'cachedAt': now};
             resolved[file.id] = size;
             apply({file.id: size});
-          } catch (_) {
-            // A missing detail must not block the rest of the visible page.
+          } catch (e) {
+            AppLogger.debug(
+              'Storage',
+              '文件夹 size enrichment 失败：fileId=${file.id}，$e',
+            );
           }
         }
       }),
@@ -748,8 +753,8 @@ class FileNotifier extends StateNotifier<FileState> {
     }
   }
 
-  Future<void> deleteFiles(List<CloudFile> files) async {
-    if (_api == null) return;
+  Future<bool> deleteFiles(List<CloudFile> files) async {
+    if (_api == null || files.isEmpty) return false;
     state = state.copyWith(statusMessage: '正在删除…');
     try {
       await _api!.fsDelete(files.map((f) => f.id).toList());
@@ -766,8 +771,10 @@ class FileNotifier extends StateNotifier<FileState> {
         selectedIDs: {},
       );
       await loadFiles(parentID: _currentParentID);
+      return true;
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
+      return false;
     }
   }
 
@@ -1253,7 +1260,8 @@ class FileNotifier extends StateNotifier<FileState> {
         );
         completed += 1;
         completedBytes += fileSize;
-      } catch (_) {
+      } catch (e) {
+        AppLogger.warning('Storage', '上传文件失败：$fileName，$e');
         failed += 1;
         completedBytes += fileSize;
       }
@@ -1340,7 +1348,12 @@ class FileNotifier extends StateNotifier<FileState> {
         try {
           final file = CloudFile.fromJson(map);
           if (seen.add(file.id)) result.add(file);
-        } catch (_) {}
+        } catch (_) {
+          AppLogger.debug(
+            'Storage',
+            'CloudFile 解析跳过：id=${map['fileId'] ?? map['id']}',
+          );
+        }
         for (final v in map.values) {
           visit(v);
         }
