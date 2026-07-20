@@ -1312,7 +1312,7 @@ class ParsedMediaName {
     // TMDB receives a compact Chinese query first; the original title remains
     // available from TMDB after matching.
     final chineseEnglishBoundary = RegExp(
-      r'[\u4e00-\u9fff\)）]\s*(?=[A-Z][A-Za-z])',
+      r'[\u4e00-\u9fff\d\)）]\s*(?=[A-Z][A-Za-z])',
     ).firstMatch(title);
     if (chineseEnglishBoundary != null) {
       title = title.substring(0, chineseEnglishBoundary.start + 1);

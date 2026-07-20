@@ -469,6 +469,20 @@ void main() {
       expect(value.episode, 1);
     });
 
+    test(
+      'separates a numbered Chinese title from its English release title',
+      () {
+        final value = ParsedMediaName.parse(
+          '守护解放西2.Guard.Jie.Fang.Xi.S02E01.2020.2160p.WEB-DL.mkv',
+        );
+
+        expect(value.title, '守护解放西2');
+        expect(value.year, 2020);
+        expect(value.season, 2);
+        expect(value.episode, 1);
+      },
+    );
+
     test('extracts a season marker attached directly to a Chinese title', () {
       final value = ParsedMediaName.parse('骄阳伴我S01');
 
