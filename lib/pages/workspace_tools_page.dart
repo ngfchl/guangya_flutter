@@ -2871,104 +2871,107 @@ class _MediaOrganizerFilePickerState
           child: const Text('取消'),
         ),
       ],
-      child: SizedBox(
-        width: 620,
-        height: 430,
-        child: Column(
-          children: [
-            Row(
-              children: [
-                ShadButton.ghost(
-                  size: ShadButtonSize.sm,
-                  onPressed: _path.isEmpty
-                      ? null
-                      : () {
-                          setState(() => _path.removeLast());
-                          _load();
-                        },
-                  leading: const Icon(Icons.arrow_back_rounded, size: 16),
-                  child: const Text('返回上级'),
-                ),
-                const Spacer(),
-                ShadTooltip(
-                  builder: (_) => const Text('刷新'),
-                  child: ShadButton.ghost(
+      child: Material(
+        type: MaterialType.transparency,
+        child: SizedBox(
+          width: 620,
+          height: 430,
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  ShadButton.ghost(
                     size: ShadButtonSize.sm,
-                    onPressed: _loading ? null : _load,
-                    child: const Icon(Icons.refresh_rounded, size: 16),
+                    onPressed: _path.isEmpty
+                        ? null
+                        : () {
+                            setState(() => _path.removeLast());
+                            _load();
+                          },
+                    leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                    child: const Text('返回上级'),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  border: Border.all(color: cs.border),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: _loading
-                    ? const Center(
-                        child: AppLoadingIndicator(
-                          size: AppLoadingSize.page,
-                          label: '正在读取目录',
-                        ),
-                      )
-                    : _error != null
-                    ? Center(
-                        child: Text(
-                          _error!,
-                          style: TextStyle(color: cs.destructive),
-                        ),
-                      )
-                    : _files.isEmpty
-                    ? Center(
-                        child: Text(
-                          '当前目录没有文件夹或视频',
-                          style: TextStyle(color: cs.mutedForeground),
-                        ),
-                      )
-                    : ListView.separated(
-                        itemCount: _files.length,
-                        separatorBuilder: (_, _) =>
-                            Divider(height: 1, color: cs.border),
-                        itemBuilder: (context, index) {
-                          final file = _files[index];
-                          return ListTile(
-                            leading: Icon(
-                              file.isDirectory
-                                  ? Icons.folder_rounded
-                                  : Icons.movie_outlined,
-                              color: file.isDirectory
-                                  ? cs.primary
-                                  : cs.mutedForeground,
-                            ),
-                            title: Text(
-                              file.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: file.isDirectory
-                                ? null
-                                : Text(file.formattedSize),
-                            trailing: Icon(
-                              file.isDirectory
-                                  ? Icons.chevron_right_rounded
-                                  : Icons.check_circle_outline_rounded,
-                              size: 18,
-                            ),
-                            onTap: file.isDirectory
-                                ? () {
-                                    setState(() => _path.add(file));
-                                    _load();
-                                  }
-                                : () => _selectFile(file),
-                          );
-                        },
-                      ),
+                  const Spacer(),
+                  ShadTooltip(
+                    builder: (_) => const Text('刷新'),
+                    child: ShadButton.ghost(
+                      size: ShadButtonSize.sm,
+                      onPressed: _loading ? null : _load,
+                      child: const Icon(Icons.refresh_rounded, size: 16),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
+              const SizedBox(height: 8),
+              Expanded(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: cs.border),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: _loading
+                      ? const Center(
+                          child: AppLoadingIndicator(
+                            size: AppLoadingSize.page,
+                            label: '正在读取目录',
+                          ),
+                        )
+                      : _error != null
+                      ? Center(
+                          child: Text(
+                            _error!,
+                            style: TextStyle(color: cs.destructive),
+                          ),
+                        )
+                      : _files.isEmpty
+                      ? Center(
+                          child: Text(
+                            '当前目录没有文件夹或视频',
+                            style: TextStyle(color: cs.mutedForeground),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: _files.length,
+                          separatorBuilder: (_, _) =>
+                              Divider(height: 1, color: cs.border),
+                          itemBuilder: (context, index) {
+                            final file = _files[index];
+                            return ListTile(
+                              leading: Icon(
+                                file.isDirectory
+                                    ? Icons.folder_rounded
+                                    : Icons.movie_outlined,
+                                color: file.isDirectory
+                                    ? cs.primary
+                                    : cs.mutedForeground,
+                              ),
+                              title: Text(
+                                file.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: file.isDirectory
+                                  ? null
+                                  : Text(file.formattedSize),
+                              trailing: Icon(
+                                file.isDirectory
+                                    ? Icons.chevron_right_rounded
+                                    : Icons.check_circle_outline_rounded,
+                                size: 18,
+                              ),
+                              onTap: file.isDirectory
+                                  ? () {
+                                      setState(() => _path.add(file));
+                                      _load();
+                                    }
+                                  : () => _selectFile(file),
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
