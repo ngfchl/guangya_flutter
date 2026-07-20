@@ -19,7 +19,7 @@ import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
 import 'media_library_page.dart';
 
-enum WorkspaceTool { scan, rename, fastTransfer, tmdb, categories }
+enum WorkspaceTool { scan, rename, fastTransfer, tmdb, organize, categories }
 
 extension WorkspaceToolDetails on WorkspaceTool {
   String get title {
@@ -32,6 +32,8 @@ extension WorkspaceToolDetails on WorkspaceTool {
         return '秒传工具';
       case WorkspaceTool.tmdb:
         return '媒体库管理';
+      case WorkspaceTool.organize:
+        return '文件整理';
       case WorkspaceTool.categories:
         return '分类管理';
     }
@@ -47,6 +49,8 @@ extension WorkspaceToolDetails on WorkspaceTool {
         return Icons.bolt_rounded;
       case WorkspaceTool.tmdb:
         return Icons.auto_fix_high_rounded;
+      case WorkspaceTool.organize:
+        return Icons.drive_file_move_rounded;
       case WorkspaceTool.categories:
         return Icons.grid_view_rounded;
     }
@@ -73,6 +77,7 @@ class WorkspaceToolsPage extends StatelessWidget {
         showLibrarySidebar: true,
         showManagementToolbar: true,
       ),
+      WorkspaceTool.organize => const _MediaOrganizerTool(),
       WorkspaceTool.categories => const _CategoryManagementTool(),
     };
     return Column(
@@ -2766,6 +2771,914 @@ class _ToolSection extends StatelessWidget {
             ],
           ),
           child,
+        ],
+      ),
+    );
+  }
+}
+
+class _MediaOrganizerFilePicker extends ConsumerStatefulWidget {
+  const _MediaOrganizerFilePicker();
+
+  @override
+  ConsumerState<_MediaOrganizerFilePicker> createState() =>
+      _MediaOrganizerFilePickerState();
+}
+
+class _MediaOrganizerFilePickerState
+    extends ConsumerState<_MediaOrganizerFilePicker> {
+  final _path = <CloudFile>[];
+  List<CloudFile> _files = const [];
+  bool _loading = true;
+  String? _error;
+
+  String? get _parentID => _path.lastOrNull?.id;
+  String get _pathLabel =>
+      _path.isEmpty ? '云盘根目录' : _path.map((file) => file.name).join(' / ');
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final response = await ref
+          .read(authProvider.notifier)
+          .api
+          .fsFiles(parentID: _parentID, pageSize: 1000);
+      final files =
+          _extractCloudFiles(
+              response,
+            ).where((file) => file.isDirectory || file.isVideo).toList()
+            ..sort((a, b) {
+              if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
+              return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+            });
+      if (mounted) setState(() => _files = files);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  List<CloudFile> _extractCloudFiles(Map<String, dynamic> response) {
+    final files = <String, CloudFile>{};
+    void visit(dynamic node) {
+      if (node is Map) {
+        try {
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(node));
+          if (file.id.isNotEmpty) files[file.id] = file;
+        } catch (_) {}
+        for (final child in node.values) {
+          visit(child);
+        }
+      } else if (node is List) {
+        for (final child in node) {
+          visit(child);
+        }
+      }
+    }
+
+    visit(response);
+    return files.values.toList(growable: false);
+  }
+
+  void _selectFile(CloudFile file) {
+    final path = _pathLabel == '云盘根目录'
+        ? '/${file.name}'
+        : '/$_pathLabel/${file.name}';
+    Navigator.of(
+      context,
+    ).pop(file.copyWith(parentID: _parentID, cloudPath: path));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadDialog(
+      title: const Text('选择整理起点'),
+      description: Text('选择一个媒体文件，将整理它所在文件夹中的已识别视频。\n当前：$_pathLabel'),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+      ],
+      child: SizedBox(
+        width: 620,
+        height: 430,
+        child: Column(
+          children: [
+            Row(
+              children: [
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: _path.isEmpty
+                      ? null
+                      : () {
+                          setState(() => _path.removeLast());
+                          _load();
+                        },
+                  leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                  child: const Text('返回上级'),
+                ),
+                const Spacer(),
+                ShadTooltip(
+                  builder: (_) => const Text('刷新'),
+                  child: ShadButton.ghost(
+                    size: ShadButtonSize.sm,
+                    onPressed: _loading ? null : _load,
+                    child: const Icon(Icons.refresh_rounded, size: 16),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: cs.border),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: _loading
+                    ? const Center(
+                        child: AppLoadingIndicator(
+                          size: AppLoadingSize.page,
+                          label: '正在读取目录',
+                        ),
+                      )
+                    : _error != null
+                    ? Center(
+                        child: Text(
+                          _error!,
+                          style: TextStyle(color: cs.destructive),
+                        ),
+                      )
+                    : _files.isEmpty
+                    ? Center(
+                        child: Text(
+                          '当前目录没有文件夹或视频',
+                          style: TextStyle(color: cs.mutedForeground),
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: _files.length,
+                        separatorBuilder: (_, _) =>
+                            Divider(height: 1, color: cs.border),
+                        itemBuilder: (context, index) {
+                          final file = _files[index];
+                          return ListTile(
+                            leading: Icon(
+                              file.isDirectory
+                                  ? Icons.folder_rounded
+                                  : Icons.movie_outlined,
+                              color: file.isDirectory
+                                  ? cs.primary
+                                  : cs.mutedForeground,
+                            ),
+                            title: Text(
+                              file.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: file.isDirectory
+                                ? null
+                                : Text(file.formattedSize),
+                            trailing: Icon(
+                              file.isDirectory
+                                  ? Icons.chevron_right_rounded
+                                  : Icons.check_circle_outline_rounded,
+                              size: 18,
+                            ),
+                            onTap: file.isDirectory
+                                ? () {
+                                    setState(() => _path.add(file));
+                                    _load();
+                                  }
+                                : () => _selectFile(file),
+                          );
+                        },
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaOrganizerEntry {
+  final MediaLibraryItem item;
+  final String? rootID;
+  final List<String> folders;
+  final String targetPath;
+
+  const _MediaOrganizerEntry({
+    required this.item,
+    required this.rootID,
+    required this.folders,
+    required this.targetPath,
+  });
+}
+
+class _MediaOrganizerTool extends ConsumerStatefulWidget {
+  const _MediaOrganizerTool();
+
+  @override
+  ConsumerState<_MediaOrganizerTool> createState() =>
+      _MediaOrganizerToolState();
+}
+
+class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
+  List<_MediaOrganizerEntry> _entries = const [];
+  final _selectedKeys = <String>{};
+  final _folderIDs = <String, String>{};
+  final _tmdbDetailsCache = <String, Map<String, dynamic>>{};
+  final _destinationFiles = <String, Map<String, String>>{};
+  final _failures = <String, String>{};
+  CloudFile? _anchorFile;
+  String? _libraryName;
+  int _folderVideoCount = 0;
+  int _unmatchedCount = 0;
+  bool _loading = false;
+  bool _running = false;
+  bool _stopRequested = false;
+  int _runTotal = 0;
+  int _completed = 0;
+  int _failed = 0;
+  String _status = '';
+
+  String _key(MediaLibraryItem item) => '${item.libraryID}:${item.id}';
+
+  List<MediaCategoryRule> _categoryRules() {
+    final raw = StorageManager.get<dynamic>(StorageKeys.mediaCategoryRules);
+    if (raw is! List) return MediaCategoryRule.presets();
+    return raw
+        .whereType<Map>()
+        .map(
+          (value) =>
+              MediaCategoryRule.fromJson(Map<String, dynamic>.from(value)),
+        )
+        .toList(growable: false);
+  }
+
+  String _categoryFor(
+    TMDBMediaKind kind,
+    String language,
+    List<MediaCategoryRule> rules,
+  ) {
+    final sameKind = rules.where((rule) => rule.mediaKind == kind).toList();
+    final normalized = language.trim().toLowerCase();
+    final explicit = sameKind
+        .where((rule) => !rule.isFallback)
+        .where((rule) => rule.languages.contains(normalized))
+        .firstOrNull;
+    return explicit?.name ??
+        sameKind.where((rule) => rule.isFallback).firstOrNull?.name ??
+        (kind == TMDBMediaKind.movie ? '其他电影' : '其他剧集');
+  }
+
+  Future<void> _prepare() async {
+    if (_loading || _running) return;
+    final state = ref.read(mediaLibraryProvider);
+    final anchorFile = _anchorFile;
+    if (anchorFile == null) {
+      setState(() => _status = '请先选择一个媒体文件');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _status = '正在读取已识别项目';
+    });
+    try {
+      final folderResponse = await ref
+          .read(authProvider.notifier)
+          .api
+          .fsFiles(parentID: anchorFile.parentID, pageSize: 1000);
+      final folderFiles = _extractFiles(folderResponse)
+          .where((file) => !file.isDirectory && file.isVideo)
+          .toList(growable: false);
+      final folderIDs = folderFiles.map((file) => file.id).toSet();
+      final library = _libraryForFolder(anchorFile, folderIDs, state);
+      if (library == null) {
+        if (mounted) {
+          setState(() {
+            _entries = const [];
+            _status = '当前文件夹的内容未关联到任何媒体库';
+          });
+        }
+        return;
+      }
+      final items = <(String, String), MediaLibraryItem>{
+        for (final item in state.allItems)
+          if (item.libraryID == library.id &&
+              folderIDs.contains(item.file.id) &&
+              item.tmdbID != null &&
+              (item.mediaKind == TMDBMediaKind.movie ||
+                  item.mediaKind == TMDBMediaKind.tv))
+            (item.libraryID, item.id): item,
+      }.values.toList(growable: false);
+      final api = ref.read(authProvider.notifier).api;
+      final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+      final proxyHost =
+          StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
+      final proxyPort =
+          StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
+      final details = <String, Map<String, dynamic>>{
+        for (final entry in _tmdbDetailsCache.entries) entry.key: entry.value,
+      };
+      final prototypes = <String, MediaLibraryItem>{
+        for (final item in items)
+          if (!details.containsKey('${item.mediaKind!.name}:${item.tmdbID}'))
+            '${item.mediaKind!.name}:${item.tmdbID}': item,
+      }.values.toList(growable: false);
+      for (var start = 0; start < prototypes.length; start += 4) {
+        final batch = prototypes.sublist(
+          start,
+          (start + 4).clamp(0, prototypes.length),
+        );
+        final values = await Future.wait(
+          batch.map((item) async {
+            if (apiKey.isEmpty) {
+              return (item: item, detail: <String, dynamic>{});
+            }
+            try {
+              final detail = await api.tmdbDetails(
+                item.tmdbID!,
+                mediaKind: item.mediaKind!.name,
+                apiKey: apiKey,
+                proxyHost: proxyHost,
+                proxyPort: proxyPort,
+              );
+              return (item: item, detail: detail);
+            } catch (_) {
+              return (item: item, detail: <String, dynamic>{});
+            }
+          }),
+        );
+        for (final value in values) {
+          final key = '${value.item.mediaKind!.name}:${value.item.tmdbID}';
+          details[key] = value.detail;
+          if (value.detail.isNotEmpty) _tmdbDetailsCache[key] = value.detail;
+        }
+      }
+      final rules = _categoryRules();
+      final entries = <_MediaOrganizerEntry>[];
+      for (final item in items) {
+        final detail = details['${item.mediaKind!.name}:${item.tmdbID}'];
+        final language =
+            (detail?['original_language'] ?? detail?['originalLanguage'] ?? '')
+                .toString();
+        final category = _categoryFor(item.mediaKind!, language, rules);
+        final year = item.year.isEmpty ? '0000' : item.year;
+        final workName = safeMediaCloudName(
+          '${item.title} ($year) {tmdb-${item.tmdbID}}',
+        );
+        final parsed = ParsedMediaName.parse(
+          item.file.name,
+          directoryName: item.file.cloudPath
+              .replaceAll(RegExp(r'\\+'), '/')
+              .split('/')
+              .where((part) => part.isNotEmpty)
+              .toList()
+              .reversed
+              .skip(1)
+              .firstOrNull,
+          directoryPath: item.file.cloudPath,
+        );
+        final folders = <String>[
+          item.mediaKind == TMDBMediaKind.movie ? '电影' : '剧集',
+          safeMediaCloudName(category),
+          year,
+          workName,
+          if (item.mediaKind == TMDBMediaKind.tv && parsed.season != null)
+            'Season ${parsed.season!.toString().padLeft(2, '0')}',
+        ];
+        final currentPath = _parentPath(anchorFile.cloudPath);
+        final targetPath = [
+          if (currentPath.isNotEmpty) currentPath,
+          ...folders,
+        ].join('/');
+        entries.add(
+          _MediaOrganizerEntry(
+            item: item,
+            rootID: anchorFile.parentID,
+            folders: folders,
+            targetPath: targetPath,
+          ),
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _entries = entries;
+        _anchorFile = anchorFile;
+        _libraryName = library.name;
+        _folderVideoCount = folderFiles.length;
+        _unmatchedCount = folderFiles.length - items.length;
+        _failures.clear();
+        _selectedKeys.clear();
+        _status = entries.isEmpty
+            ? '所选文件夹没有可整理的已识别资源'
+            : '已读取 ${folderFiles.length} 个视频，生成 ${entries.length} 条整理预览';
+      });
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  MediaLibraryDefinition? _libraryForFolder(
+    CloudFile file,
+    Set<String> folderFileIDs,
+    MediaLibraryState state,
+  ) {
+    final counts = <String, int>{};
+    for (final item in state.allItems) {
+      if (folderFileIDs.contains(item.file.id)) {
+        counts.update(item.libraryID, (count) => count + 1, ifAbsent: () => 1);
+      }
+    }
+    if (counts.isNotEmpty) {
+      final libraryID = counts.entries
+          .reduce((a, b) => a.value >= b.value ? a : b)
+          .key;
+      final indexed = state.libraries
+          .where((library) => library.id == libraryID)
+          .firstOrNull;
+      if (indexed != null) return indexed;
+    }
+    final path = file.cloudPath.replaceAll(RegExp(r'\\+'), '/');
+    final matches = <MediaLibraryDefinition>[];
+    for (final library in state.libraries) {
+      if (library.sources.any((source) {
+        final sourcePath = source.path
+            .replaceAll(RegExp(r'\\+'), '/')
+            .replaceFirst(RegExp(r'/$'), '');
+        return source.rootID == file.parentID ||
+            (sourcePath.isNotEmpty &&
+                (path == sourcePath || path.startsWith('$sourcePath/')));
+      })) {
+        matches.add(library);
+      }
+    }
+    matches.sort((a, b) => b.rootPath.length.compareTo(a.rootPath.length));
+    return matches.firstOrNull;
+  }
+
+  String _parentPath(String path) {
+    final normalized = path.replaceAll(RegExp(r'\\+'), '/');
+    final index = normalized.lastIndexOf('/');
+    if (index <= 0) return '';
+    return normalized.substring(0, index);
+  }
+
+  Future<void> _chooseFile() async {
+    final file = await showShadDialog<CloudFile>(
+      context: context,
+      builder: (_) => const _MediaOrganizerFilePicker(),
+    );
+    if (file == null || !mounted) return;
+    setState(() {
+      _anchorFile = file;
+      _libraryName = null;
+      _folderVideoCount = 0;
+      _unmatchedCount = 0;
+      _entries = const [];
+      _failures.clear();
+      _status = '正在读取 ${file.name} 所在文件夹';
+    });
+    await _prepare();
+  }
+
+  List<CloudFile> _extractFiles(Map<String, dynamic> value) {
+    final files = <String, CloudFile>{};
+    void visit(dynamic node) {
+      if (node is Map) {
+        try {
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(node));
+          files[file.id] = file;
+        } catch (_) {}
+        for (final child in node.values) {
+          visit(child);
+        }
+      } else if (node is List) {
+        for (final child in node) {
+          visit(child);
+        }
+      }
+    }
+
+    visit(value);
+    return files.values.toList(growable: false);
+  }
+
+  String? _findID(dynamic node) {
+    if (node is Map) {
+      for (final key in const ['fileId', 'file_id', 'resId', 'id']) {
+        final value = node[key];
+        if (value != null && value.toString().trim().isNotEmpty) {
+          return value.toString();
+        }
+      }
+      for (final child in node.values) {
+        final value = _findID(child);
+        if (value != null) return value;
+      }
+    } else if (node is List) {
+      for (final child in node) {
+        final value = _findID(child);
+        if (value != null) return value;
+      }
+    }
+    return null;
+  }
+
+  Future<String> _ensureFolder(String? parentID, String name) async {
+    final cacheKey = '${parentID ?? '@root'}/$name';
+    final cached = _folderIDs[cacheKey];
+    if (cached != null) return cached;
+    final api = ref.read(authProvider.notifier).api;
+    final response = await api.fsFiles(parentID: parentID, pageSize: 1000);
+    final existing = _extractFiles(
+      response,
+    ).where((file) => file.isDirectory && file.name == name).firstOrNull;
+    if (existing != null) {
+      _folderIDs[cacheKey] = existing.id;
+      return existing.id;
+    }
+    final created = await api.fsCreateDir(name, parentID: parentID);
+    var id = _extractFiles(
+      created,
+    ).where((file) => file.isDirectory && file.name == name).firstOrNull?.id;
+    if (id == null || id.isEmpty) {
+      final refreshed = await api.fsFiles(parentID: parentID, pageSize: 1000);
+      id = _extractFiles(
+        refreshed,
+      ).where((file) => file.isDirectory && file.name == name).firstOrNull?.id;
+    }
+    id ??= _findID(created);
+    if (id == null || id.isEmpty) throw Exception('无法获取目录 ID：$name');
+    _folderIDs[cacheKey] = id;
+    return id;
+  }
+
+  Future<void> _confirmRun() async {
+    final selected = _entries
+        .where((entry) => _selectedKeys.contains(_key(entry.item)))
+        .toList(growable: false);
+    if (selected.isEmpty || _running) return;
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('确认整理文件'),
+        description: Text('将移动 ${selected.length} 个媒体文件，原文件路径会发生变化。'),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('开始整理'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _run(selected);
+  }
+
+  Future<void> _run(List<_MediaOrganizerEntry> selected) async {
+    setState(() {
+      _running = true;
+      _stopRequested = false;
+      _runTotal = selected.length;
+      _completed = 0;
+      _failed = 0;
+      _failures.clear();
+      _status = '正在整理 ${selected.length} 个文件';
+    });
+    _destinationFiles.clear();
+    final api = ref.read(authProvider.notifier).api;
+    final movedFiles = <CloudFile>[];
+    final movedKeys = <String>{};
+    for (final entry in selected) {
+      if (_stopRequested) break;
+      try {
+        String? parentID = entry.rootID;
+        for (final folder in entry.folders) {
+          parentID = await _ensureFolder(parentID, folder);
+        }
+        final destinationKey = parentID ?? '@root';
+        var filesByName = _destinationFiles[destinationKey];
+        if (filesByName == null) {
+          final response = await api.fsFiles(
+            parentID: parentID,
+            pageSize: 1000,
+          );
+          filesByName = {
+            for (final file in _extractFiles(response))
+              if (!file.isDirectory) file.name.toLowerCase(): file.id,
+          };
+          _destinationFiles[destinationKey] = filesByName;
+        }
+        final existingID = filesByName[entry.item.file.name.toLowerCase()];
+        if (existingID != null && existingID != entry.item.id) {
+          throw Exception('目标目录已有同名文件');
+        }
+        if (entry.item.file.parentID != parentID) {
+          await api.fsMove([entry.item.id], parentID: parentID);
+        }
+        filesByName[entry.item.file.name.toLowerCase()] = entry.item.id;
+        final targetPath = '${entry.targetPath}/${entry.item.file.name}';
+        movedFiles.add(
+          entry.item.file.copyWith(parentID: parentID, cloudPath: targetPath),
+        );
+        movedKeys.add(_key(entry.item));
+        if (mounted) setState(() => _completed += 1);
+      } catch (error) {
+        if (mounted) {
+          setState(() {
+            _failed += 1;
+            _failures[_key(entry.item)] = error.toString().replaceFirst(
+              'Exception: ',
+              '',
+            );
+          });
+        }
+      }
+    }
+    if (movedFiles.isNotEmpty) {
+      await ref
+          .read(mediaLibraryProvider.notifier)
+          .synchronizeRenamedFiles(movedFiles);
+    }
+    if (!mounted) return;
+    setState(() {
+      _running = false;
+      _entries = _entries
+          .where((entry) => !movedKeys.contains(_key(entry.item)))
+          .toList(growable: false);
+      _selectedKeys
+        ..clear()
+        ..addAll(_failures.keys);
+      _status = _stopRequested
+          ? '已停止：$_completed 个成功，$_failed 个失败'
+          : _failed == 0
+          ? '整理完成，共移动 $_completed 个文件'
+          : '整理完成：$_completed 个成功，$_failed 个失败';
+      _stopRequested = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final selectedCount = _selectedKeys.length;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 620;
+        return Padding(
+          padding: EdgeInsets.all(compact ? 12 : 18),
+          child: Column(
+            children: [
+              _ToolSection(
+                title: '媒体文件整理',
+                description: _status.isEmpty
+                    ? '选择一个文件，预览并整理它所在文件夹中的已识别视频。'
+                    : _status,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_anchorFile != null) ...[
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _OrganizerMetric(
+                            icon: Icons.folder_outlined,
+                            label: _parentPath(_anchorFile!.cloudPath),
+                          ),
+                          if (_libraryName != null)
+                            _OrganizerMetric(
+                              icon: Icons.video_library_outlined,
+                              label: _libraryName!,
+                            ),
+                          _OrganizerMetric(
+                            icon: Icons.movie_outlined,
+                            label: '$_folderVideoCount 个视频',
+                          ),
+                          if (_unmatchedCount > 0)
+                            _OrganizerMetric(
+                              icon: Icons.help_outline_rounded,
+                              label: '$_unmatchedCount 个未识别',
+                            ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ShadButton.outline(
+                          onPressed: _loading || _running ? null : _chooseFile,
+                          leading: const Icon(
+                            Icons.file_open_rounded,
+                            size: 16,
+                          ),
+                          child: Text(_anchorFile == null ? '选择文件' : '更换文件'),
+                        ),
+                        if (_anchorFile != null)
+                          ShadButton.outline(
+                            onPressed: _loading || _running ? null : _prepare,
+                            leading: const Icon(
+                              Icons.refresh_rounded,
+                              size: 16,
+                            ),
+                            child: const Text('刷新预览'),
+                          ),
+                        if (_running)
+                          ShadButton.outline(
+                            onPressed: _stopRequested
+                                ? null
+                                : () => setState(() => _stopRequested = true),
+                            leading: const Icon(Icons.stop_rounded, size: 16),
+                            child: const Text('完成当前项后停止'),
+                          )
+                        else
+                          ShadButton(
+                            onPressed: selectedCount == 0 ? null : _confirmRun,
+                            leading: const Icon(
+                              Icons.drive_file_move_rounded,
+                              size: 16,
+                            ),
+                            child: Text('整理 $selectedCount 项'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  ShadButton.ghost(
+                    size: ShadButtonSize.sm,
+                    onPressed: _running
+                        ? null
+                        : () => setState(() {
+                            _selectedKeys
+                              ..clear()
+                              ..addAll(
+                                _entries.map((entry) => _key(entry.item)),
+                              );
+                          }),
+                    child: const Text('全选'),
+                  ),
+                  ShadButton.ghost(
+                    size: ShadButtonSize.sm,
+                    onPressed: _running
+                        ? null
+                        : () => setState(_selectedKeys.clear),
+                    child: const Text('全不选'),
+                  ),
+                  const Spacer(),
+                  if (_running)
+                    Text(
+                      '${_completed + _failed} / $_runTotal',
+                      style: TextStyle(color: cs.mutedForeground, fontSize: 12),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: cs.border),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: _loading
+                      ? const Center(
+                          child: AppLoadingIndicator(
+                            size: AppLoadingSize.page,
+                            label: '正在生成整理预览',
+                          ),
+                        )
+                      : _entries.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _anchorFile == null
+                                    ? Icons.file_open_outlined
+                                    : Icons.check_circle_outline_rounded,
+                                size: 34,
+                                color: cs.mutedForeground,
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                _anchorFile == null
+                                    ? '选择一个媒体文件开始预览'
+                                    : '当前文件夹没有待整理的已识别资源',
+                                style: TextStyle(color: cs.mutedForeground),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: _entries.length,
+                          separatorBuilder: (_, _) =>
+                              Divider(height: 1, color: cs.border),
+                          itemBuilder: (context, index) {
+                            final entry = _entries[index];
+                            final key = _key(entry.item);
+                            final failure = _failures[key];
+                            return CheckboxListTile(
+                              value: _selectedKeys.contains(key),
+                              enabled: !_running,
+                              onChanged: (value) => setState(() {
+                                if (value == true) {
+                                  _selectedKeys.add(key);
+                                } else {
+                                  _selectedKeys.remove(key);
+                                }
+                              }),
+                              title: Text(
+                                entry.item.file.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    entry.targetPath,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  if (failure != null)
+                                    Text(
+                                      failure,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(color: cs.destructive),
+                                    ),
+                                ],
+                              ),
+                              secondary: Icon(
+                                entry.item.mediaKind == TMDBMediaKind.movie
+                                    ? Icons.movie_rounded
+                                    : Icons.tv_rounded,
+                                color: cs.primary,
+                              ),
+                              controlAffinity: ListTileControlAffinity.leading,
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _OrganizerMetric extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _OrganizerMetric({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 260),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: cs.mutedForeground),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+            ),
+          ),
         ],
       ),
     );

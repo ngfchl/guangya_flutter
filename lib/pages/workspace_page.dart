@@ -2355,6 +2355,12 @@ class _MediaSidebar extends ConsumerWidget {
               onTap: onScanTasks,
             ),
             _SidebarTile(
+              icon: Icons.drive_file_move_rounded,
+              label: '文件整理',
+              selected: activeTool == WorkspaceTool.organize,
+              onTap: () => onTool(WorkspaceTool.organize),
+            ),
+            _SidebarTile(
               icon: Icons.category_rounded,
               label: '分类管理',
               selected: activeTool == WorkspaceTool.categories,
