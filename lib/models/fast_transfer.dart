@@ -213,12 +213,18 @@ class FastTransferSession {
 
 List<FastTransferEntry> parseFastTransferJSON(String text) {
   final root = jsonDecode(text);
-  final raw = root is Map ? root['files'] : root;
-  if (raw is! List) throw const FormatException('顶层需要包含 files 数组');
+  final raw = root is Map && root.containsKey('files') ? root['files'] : root;
+  final values = raw is List
+      ? raw
+      : raw is Map
+      ? [raw]
+      : throw const FormatException('JSON 需要是单个秒传对象、数组或包含 files 数组');
   final entries = <FastTransferEntry>[];
-  for (var index = 0; index < raw.length; index++) {
-    if (raw[index] is! Map) throw FormatException('第 ${index + 1} 项格式无效');
-    final value = Map<String, dynamic>.from(raw[index] as Map);
+  for (var index = 0; index < values.length; index++) {
+    if (values[index] is! Map) {
+      throw FormatException('第 ${index + 1} 项格式无效');
+    }
+    final value = Map<String, dynamic>.from(values[index] as Map);
     final path = (value['path'] ?? value['filePath'] ?? value['name'] ?? '')
         .toString()
         .replaceAll('\\', '/')
