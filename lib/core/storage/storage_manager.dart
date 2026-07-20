@@ -30,6 +30,7 @@ class StorageKeys {
   static const String defaultFilePageSize = 'guangya.defaultFilePageSize';
   static const String fastTransferSession = 'guangya.fastTransferSession';
   static const String mediaScanHistory = 'guangya.mediaScanHistory';
+  static const String mediaScanTaskHistory = 'guangya.mediaScanTaskHistory';
   static const String cloudIndexRefreshMinutes =
       'guangya.cloudIndexRefreshMinutes';
   static const String cloudIndexConcurrency = 'guangya.cloudIndexConcurrency';

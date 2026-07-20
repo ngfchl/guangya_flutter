@@ -17,6 +17,8 @@ import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import 'watch_history_provider.dart';
 
+const _mediaScanTaskZoneKey = #mediaScanTaskID;
+
 /// Blu-ray and DVD folders contain transport streams rather than standalone
 /// media. They must be handled as a disc structure, never as individual files.
 bool isMediaScanDiscInternalPath(String path) {
@@ -240,10 +242,9 @@ class MediaLibraryState {
   final List<MediaLibraryItem> items;
   final List<MediaLibraryItem> allItems;
   final bool isLoading;
-  final bool isScanning;
+  final List<MediaLibraryScanTask> scanTasks;
   final bool isRefreshingCloudIndex;
   final CloudBackupSyncProgress? cloudBackupSync;
-  final MediaLibraryScanProgress progress;
   final List<MediaLibraryScanLog> scanLogs;
   final String searchQuery;
   final String? errorMessage;
@@ -255,10 +256,9 @@ class MediaLibraryState {
     this.items = const [],
     this.allItems = const [],
     this.isLoading = false,
-    this.isScanning = false,
+    this.scanTasks = const [],
     this.isRefreshingCloudIndex = false,
     this.cloudBackupSync,
-    this.progress = const MediaLibraryScanProgress(),
     this.scanLogs = const [],
     this.searchQuery = '',
     this.errorMessage,
@@ -271,6 +271,41 @@ class MediaLibraryState {
     }
     return libraries.isEmpty ? null : libraries.first;
   }
+
+  MediaLibraryScanTask? taskForLibrary(String? libraryID) {
+    if (libraryID == null) return null;
+    for (final task in scanTasks) {
+      if (task.libraryID == libraryID && task.isActive) return task;
+    }
+    for (final task in scanTasks) {
+      if (task.libraryID == libraryID) return task;
+    }
+    return null;
+  }
+
+  MediaLibraryScanTask? taskByID(String taskID) {
+    for (final task in scanTasks) {
+      if (task.id == taskID) return task;
+    }
+    return null;
+  }
+
+  bool isLibraryScanning(String? libraryID) =>
+      taskForLibrary(libraryID)?.isActive == true;
+
+  bool get isScanning => isLibraryScanning(selectedLibraryID);
+
+  bool get hasActiveScans => scanTasks.any((task) => task.isActive);
+
+  int get activeScanCount => scanTasks.where((task) => task.isActive).length;
+
+  MediaLibraryScanProgress progressForLibrary(String? libraryID) {
+    return taskForLibrary(libraryID)?.progress ??
+        const MediaLibraryScanProgress();
+  }
+
+  MediaLibraryScanProgress get progress =>
+      progressForLibrary(selectedLibraryID);
 
   List<MediaLibraryItem> get visibleItems {
     final query = searchQuery.trim().toLowerCase();
@@ -305,11 +340,10 @@ class MediaLibraryState {
     List<MediaLibraryItem>? items,
     List<MediaLibraryItem>? allItems,
     bool? isLoading,
-    bool? isScanning,
+    List<MediaLibraryScanTask>? scanTasks,
     bool? isRefreshingCloudIndex,
     CloudBackupSyncProgress? cloudBackupSync,
     bool clearCloudBackupSync = false,
-    MediaLibraryScanProgress? progress,
     List<MediaLibraryScanLog>? scanLogs,
     String? searchQuery,
     String? errorMessage,
@@ -325,13 +359,12 @@ class MediaLibraryState {
       items: items ?? this.items,
       allItems: allItems ?? this.allItems,
       isLoading: isLoading ?? this.isLoading,
-      isScanning: isScanning ?? this.isScanning,
+      scanTasks: scanTasks ?? this.scanTasks,
       isRefreshingCloudIndex:
           isRefreshingCloudIndex ?? this.isRefreshingCloudIndex,
       cloudBackupSync: clearCloudBackupSync
           ? null
           : (cloudBackupSync ?? this.cloudBackupSync),
-      progress: progress ?? this.progress,
       scanLogs: scanLogs ?? this.scanLogs,
       searchQuery: searchQuery ?? this.searchQuery,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
@@ -350,7 +383,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   final _searchResultsCache = <String, List<MediaLibraryItem>>{};
   final _artworkHydrationLibraries = <String>{};
   bool _loaded = false;
-  bool _cancelScan = false;
+  final _cancelledScanLibraries = <String>{};
+  final _stoppedScanLibraries = <String>{};
+  final _pausedScanLibraries = <String>{};
+  final _scanPauseGates = <String, Completer<void>>{};
+  final _scanRuns = <String, Future<void>>{};
   bool _cancelDetailSync = false;
   bool _refreshingCloudIndex = false;
   bool _reconcilingMediaGCIDs = false;
@@ -386,12 +423,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           : await _loadItems(selectedID);
       final allItems = await _loadAllItems();
       final logs = _loadScanHistory();
+      final scanTasks = _loadScanTaskHistory();
       state = state.copyWith(
         libraries: libraries,
         selectedLibraryID: selectedID,
         items: items,
         allItems: allItems,
         scanLogs: logs,
+        scanTasks: scanTasks,
         statusMessage: removedDiscStreams == 0
             ? null
             : '已清理 $removedDiscStreams 个光盘目录内部文件',
@@ -472,6 +511,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> deleteLibrary(String id) async {
+    if (state.isLibraryScanning(id)) {
+      state = state.copyWith(
+        statusMessage: '请先停止该媒体库的扫描任务，再删除媒体库',
+        clearError: true,
+      );
+      return;
+    }
     final libraries = state.libraries
         .where((library) => library.id != id)
         .toList();
@@ -493,9 +539,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<int> removeMediaRecords(Iterable<MediaLibraryItem> values) {
     final requested = values.toList(growable: false);
     if (requested.isEmpty) return Future.value(0);
-    if (state.isScanning) {
+    final blockedLibrary = requested
+        .map((item) => item.libraryID)
+        .where(state.isLibraryScanning)
+        .firstOrNull;
+    if (blockedLibrary != null) {
       state = state.copyWith(
-        statusMessage: '请先停止媒体库扫描，再移除影视记录',
+        statusMessage: '请先停止该媒体库的扫描任务，再移除影视记录',
         clearError: true,
       );
       return Future.value(0);
@@ -605,6 +655,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> updateLibrary(MediaLibraryDefinition library) async {
     if (library.name.trim().isEmpty || library.sources.isEmpty) return;
+    if (state.isLibraryScanning(library.id)) {
+      state = state.copyWith(
+        statusMessage: '请先停止该媒体库的扫描任务，再修改媒体库',
+        clearError: true,
+      );
+      return;
+    }
     final libraries = state.libraries
         .map((item) => item.id == library.id ? library : item)
         .toList();
@@ -618,7 +675,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> importScrapedData(String backupPath) async {
-    if (state.isLoading || state.isScanning) return;
+    if (state.isLoading || state.hasActiveScans) return;
     state = state.copyWith(
       isLoading: true,
       clearError: true,
@@ -634,7 +691,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> exportScrapedData(String destinationPath) async {
-    if (state.isLoading || state.isScanning) return;
+    if (state.isLoading || state.hasActiveScans) return;
     state = state.copyWith(
       isLoading: true,
       clearError: true,
@@ -651,7 +708,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> exportScrapedDataToCloud() async {
-    if (_api == null || state.isLoading || state.isScanning) return;
+    if (_api == null || state.isLoading || state.hasActiveScans) return;
     _appendBackupLog('开始同步刮削数据到云盘');
     state = state.copyWith(
       clearError: true,
@@ -858,7 +915,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> importScrapedDataFromCloud(CloudFile backup) async {
-    if (_api == null || state.isLoading || state.isScanning) return;
+    if (_api == null || state.isLoading || state.hasActiveScans) return;
     _appendBackupLog('开始从云盘恢复：${backup.name}');
     state = state.copyWith(
       isLoading: true,
@@ -965,7 +1022,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> optimizeLocalStorage() async {
-    if (state.isLoading || state.isScanning) return;
+    if (state.isLoading || state.hasActiveScans) return;
     state = state.copyWith(
       isLoading: true,
       clearError: true,
@@ -985,6 +1042,129 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
   }
 
+  void _updateScanTask(
+    String taskID, {
+    MediaLibraryScanTaskStatus? status,
+    MediaLibraryScanProgress? progress,
+    String? log,
+    bool isError = false,
+    String? failureReason,
+    bool clearFailure = false,
+  }) {
+    final current = state.taskByID(taskID);
+    if (current == null) return;
+    var logs = current.logs;
+    if (log != null) {
+      logs = [
+        ...logs,
+        MediaLibraryScanLog(
+          createdAt: DateTime.now(),
+          message: log,
+          isError: isError,
+        ),
+      ];
+      if (logs.length > 240) {
+        logs = logs.sublist(logs.length - 240);
+      }
+    }
+    final updated = current.copyWith(
+      status: status,
+      progress: progress,
+      logs: logs,
+      updatedAt: DateTime.now(),
+      failureReason: failureReason,
+      clearFailure: clearFailure,
+    );
+    state = state.copyWith(
+      scanTasks: [
+        for (final task in state.scanTasks)
+          if (task.id == taskID) updated else task,
+      ],
+    );
+    unawaited(_persistScanTaskHistory());
+    if (isError) {
+      AppLogger.error('Media', log ?? failureReason ?? '媒体库任务失败');
+    } else if (log != null) {
+      AppLogger.info('Media', log);
+    }
+  }
+
+  void _setScanProgress(String libraryID, MediaLibraryScanProgress progress) {
+    final task = state.taskForLibrary(libraryID);
+    if (task == null) return;
+    _updateScanTask(task.id, progress: progress);
+  }
+
+  bool _scanShouldAbort(String libraryID) =>
+      _cancelledScanLibraries.contains(libraryID) ||
+      _stoppedScanLibraries.contains(libraryID);
+
+  Future<bool> _waitIfScanPaused(String libraryID) async {
+    if (_scanShouldAbort(libraryID)) return false;
+    while (_pausedScanLibraries.contains(libraryID)) {
+      final gate = _scanPauseGates.putIfAbsent(
+        libraryID,
+        () => Completer<void>(),
+      );
+      await gate.future;
+      if (_scanShouldAbort(libraryID)) return false;
+    }
+    return !_scanShouldAbort(libraryID);
+  }
+
+  void _releaseScanPauseGate(String libraryID) {
+    _scanPauseGates.remove(libraryID)?.complete();
+  }
+
+  List<MediaLibraryScanTask> _loadScanTaskHistory() {
+    final raw = StorageManager.get<dynamic>(StorageKeys.mediaScanTaskHistory);
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map(
+          (entry) =>
+              MediaLibraryScanTask.fromJson(Map<String, dynamic>.from(entry)),
+        )
+        .where((task) => task.libraryID.isNotEmpty)
+        .take(80)
+        .toList(growable: false);
+  }
+
+  Future<void> _persistScanTaskHistory() => StorageManager.set(
+    StorageKeys.mediaScanTaskHistory,
+    state.scanTasks.take(80).map((task) => task.toJson()).toList(),
+  );
+
+  Future<void> scanLibrary(
+    String libraryID, {
+    MediaLibraryScanMode mode = MediaLibraryScanMode.unrecognizedOnly,
+  }) async {
+    final library = state.libraries
+        .where((candidate) => candidate.id == libraryID)
+        .firstOrNull;
+    if (library == null || _api == null || state.isLibraryScanning(libraryID)) {
+      return;
+    }
+    _cancelledScanLibraries.remove(libraryID);
+    _stoppedScanLibraries.remove(libraryID);
+    _pausedScanLibraries.remove(libraryID);
+    _releaseScanPauseGate(libraryID);
+    final task = MediaLibraryScanTask.create(library: library, mode: mode);
+    state = state.copyWith(
+      scanTasks: [task, ...state.scanTasks.where((item) => item.id != task.id)],
+      clearError: true,
+      clearStatus: true,
+    );
+    unawaited(_persistScanTaskHistory());
+    final run = runZoned(
+      () => _runLibraryScan(library, taskID: task.id, mode: mode),
+      zoneValues: {_mediaScanTaskZoneKey: task.id},
+    );
+    _scanRuns[libraryID] = run;
+    await run;
+    _scanRuns.remove(libraryID);
+  }
+
   /// Scans only the folders configured by the selected media library. A
   /// rescan bypasses the directory cache, but deliberately never falls back
   /// to the account-wide cloud index: that index is slow and cannot provide
@@ -992,10 +1172,24 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<void> scanSelectedLibrary({
     MediaLibraryScanMode mode = MediaLibraryScanMode.unrecognizedOnly,
   }) async {
-    final library = state.selectedLibrary;
-    if (library == null || _api == null || state.isScanning) return;
+    final libraryID = state.selectedLibraryID;
+    if (libraryID == null) return;
+    await scanLibrary(libraryID, mode: mode);
+  }
+
+  Future<void> _runLibraryScan(
+    MediaLibraryDefinition library, {
+    required String taskID,
+    required MediaLibraryScanMode mode,
+  }) async {
     _cachedCloudEntries = null;
     if (_pendingMediaRemovals > 0) {
+      _updateScanTask(
+        taskID,
+        status: MediaLibraryScanTaskStatus.stopped,
+        progress: const MediaLibraryScanProgress(phase: '等待移除影视记录完成'),
+        log: '正在移除影视记录，任务未启动',
+      );
       state = state.copyWith(
         statusMessage: '正在移除影视记录，请稍后开始扫描',
         clearError: true,
@@ -1005,18 +1199,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final forceAll = mode.refreshesFileIndex;
     final modeLabel = forceAll ? '强制全部重新识别' : '仅扫描未识别资源';
 
-    _cancelScan = false;
-    state = state.copyWith(
-      isScanning: true,
+    _updateScanTask(
+      taskID,
+      status: MediaLibraryScanTaskStatus.running,
       progress: const MediaLibraryScanProgress(phase: '准备扫描'),
-      scanLogs: [
-        MediaLibraryScanLog(
-          createdAt: DateTime.now(),
-          message: '任务已创建，$modeLabel：「${library.name}」',
-        ),
-      ],
-      clearError: true,
-      clearStatus: true,
+      log: '开始$modeLabel：「${library.name}」',
+      clearFailure: true,
     );
 
     try {
@@ -1032,8 +1220,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         for (final item in previousLibraryItems)
           if (item.file.gcid?.isNotEmpty == true) item.file.gcid!: item,
       };
-      final initialItems = await _loadAllItems()
-        ..removeWhere((item) => item.libraryID == library.id);
       final unique = <String, MediaLibraryItem>{
         if (!forceAll)
           for (final item in previousLibraryItems) item.id: item,
@@ -1094,10 +1280,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
       Future<void> indexBatch(List<CloudFile> files) async {
         final pending = files.toList();
-        if (pending.isEmpty || _cancelScan) return;
+        if (pending.isEmpty || _scanShouldAbort(library.id)) return;
         var next = 0;
         Future<void> worker() async {
-          while (!_cancelScan && next < pending.length) {
+          while (!_scanShouldAbort(library.id) && next < pending.length) {
+            if (!await _waitIfScanPaused(library.id)) return;
             final file = pending[next++];
             final fallback = MediaLibraryItem.fromFile(
               library.id,
@@ -1184,7 +1371,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 }
               }
             }
-            if (_cancelScan) return;
+            if (_scanShouldAbort(library.id)) return;
             // Do not lose an existing match solely because a transient TMDB
             // lookup failed while filling an incomplete record.
             if (item.tmdbID == null && existing?.tmdbID != null) {
@@ -1196,7 +1383,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               seriesMatches[seriesKey] = item;
             }
             item = await _renameMatchedMediaFile(item);
-            if (_cancelScan) return;
+            if (_scanShouldAbort(library.id)) return;
             unique[file.id] = item;
             completed += 1;
             final visible = unique.values.toList()
@@ -1208,13 +1395,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               (_) => _upsertItems([item]),
             );
             await pendingPersistence;
-            state = state.copyWith(
-              items: visible,
-              progress: MediaLibraryScanProgress(
-                phase: tmdbApiKey.isEmpty ? '正在建立本地索引' : '正在识别 ${file.name}',
-                completed: completed,
-              ),
+            final progress = MediaLibraryScanProgress(
+              phase: tmdbApiKey.isEmpty ? '正在建立本地索引' : '正在识别 ${file.name}',
+              completed: completed,
             );
+            _setScanProgress(library.id, progress);
+            if (state.selectedLibraryID == library.id) {
+              state = state.copyWith(items: visible);
+            }
             _appendScanLog(
               item.tmdbID == null
                   ? '已入库：${file.name}（未匹配 TMDB）'
@@ -1240,6 +1428,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
 
       Future<void> enqueueForRecognition(List<CloudFile> files) async {
+        if (_scanShouldAbort(library.id)) return;
+        if (!await _waitIfScanPaused(library.id)) return;
         for (final file in files) {
           if (queuedRecognitionIDs.add(file.id)) {
             queuedForRecognition.add(file);
@@ -1261,26 +1451,30 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         await recognitionTail;
       }
 
-      if (forceAll && !_cancelScan) {
+      if (forceAll && !_scanShouldAbort(library.id)) {
         _appendScanLog('正在强制刷新当前媒体库目录…');
-        state = state.copyWith(
-          progress: const MediaLibraryScanProgress(phase: '正在读取当前媒体库目录'),
+        _setScanProgress(
+          library.id,
+          const MediaLibraryScanProgress(phase: '正在读取当前媒体库目录'),
         );
         List<CloudFile> mediaFiles;
         try {
           mediaFiles = await _scanLibrarySourcesConcurrently(
             library,
             concurrency: concurrency,
+            libraryID: library.id,
             onMediaFiles: enqueueForRecognition,
           );
         } catch (error) {
           _appendScanLog('媒体库目录并发刷新失败，回退逐目录读取：$error', isError: true);
           final fallback = <String, CloudFile>{};
           for (final source in library.sources) {
-            if (_cancelScan) break;
+            if (_scanShouldAbort(library.id)) break;
+            if (!await _waitIfScanPaused(library.id)) break;
             await _scanSource(
               source.rootID,
               source.path,
+              libraryID: library.id,
               recursive: library.recursive,
               minimumSizeBytes: library.minimumSizeMB * 1024 * 1024,
               forceRemote: true,
@@ -1296,21 +1490,22 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           mediaFiles = fallback.values.toList(growable: false);
         }
         _appendScanLog('当前媒体库目录刷新完成，发现 ${mediaFiles.length} 个媒体文件');
-      } else if (!_cancelScan) {
+      } else if (!_scanShouldAbort(library.id)) {
         final unrecognized = previousLibraryItems
             .where((item) => !item.isMatched)
             .map((item) => item.file)
             .toList(growable: false);
         _appendScanLog('未刷新文件索引，直接识别媒体库中 ${unrecognized.length} 个未识别资源');
-        state = state.copyWith(
-          progress: MediaLibraryScanProgress(
+        _setScanProgress(
+          library.id,
+          MediaLibraryScanProgress(
             phase: '正在识别未匹配资源',
             total: unrecognized.length,
           ),
         );
         await enqueueForRecognition(unrecognized);
       }
-      if (!_cancelScan) await flushRecognitionQueue();
+      if (!_scanShouldAbort(library.id)) await flushRecognitionQueue();
       await pendingPersistence;
       var items = unique.values.toList()
         ..sort(
@@ -1318,7 +1513,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         );
       // A cancelled rescan has only seen part of the configured folders. Keep
       // unseen rows rather than incorrectly treating them as deleted.
-      if (_cancelScan) {
+      if (_scanShouldAbort(library.id)) {
         final merged = <String, MediaLibraryItem>{
           for (final item in previousLibraryItems) item.id: item,
           for (final item in items) item.id: item,
@@ -1328,9 +1523,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
           );
       }
-      final allItems = [...initialItems, ...items];
       final discoveredIDs = items.map((item) => item.id).toSet();
-      final removedMissing = _cancelScan || !forceAll
+      final removedMissing = _scanShouldAbort(library.id) || !forceAll
           ? 0
           : previousLibraryItems
                 .where((item) => !discoveredIDs.contains(item.id))
@@ -1340,43 +1534,241 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           .map((item) => item.id == library.id ? updatedLibrary : item)
           .toList();
 
-      await _saveAllItems(allItems);
+      await _store.replaceLibraryItems(library.id, items);
       await _saveLibraries(libraries);
+      final allItems = await _loadAllItems();
+      final visibleItems = state.selectedLibraryID == library.id
+          ? await _loadItems(library.id)
+          : state.items;
+      final aborted = _scanShouldAbort(library.id);
+      final finalStatus = _cancelledScanLibraries.contains(library.id)
+          ? MediaLibraryScanTaskStatus.cancelled
+          : _stoppedScanLibraries.contains(library.id)
+          ? MediaLibraryScanTaskStatus.stopped
+          : MediaLibraryScanTaskStatus.completed;
       state = state.copyWith(
         libraries: libraries,
-        items: items,
+        items: visibleItems,
         allItems: allItems,
-        statusMessage: _cancelScan
+        statusMessage: aborted
             ? '扫描已停止，已保留 ${items.length} 个项目'
             : removedMissing == 0
             ? '$modeLabel完成：${items.length} 个视频文件'
             : '$modeLabel完成：${items.length} 个视频文件，已移除 $removedMissing 个不存在的条目',
       );
       _appendScanLog(
-        _cancelScan
+        aborted
             ? '扫描已停止，已保留 ${items.length} 个条目'
             : removedMissing == 0
             ? '$modeLabel完成，共入库 ${items.length} 个条目'
             : '$modeLabel完成，共入库 ${items.length} 个条目，已清理 $removedMissing 个失效条目',
       );
+      _updateScanTask(
+        taskID,
+        status: finalStatus,
+        progress: MediaLibraryScanProgress(
+          phase: aborted ? '扫描已停止' : '任务完成',
+          completed: items.length,
+          total: forceAll ? items.length + removedMissing : items.length,
+        ),
+      );
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
       _appendScanLog('扫描失败：$e', isError: true);
-    } finally {
-      state = state.copyWith(
-        isScanning: false,
-        progress: const MediaLibraryScanProgress(),
+      _updateScanTask(
+        taskID,
+        status: MediaLibraryScanTaskStatus.failed,
+        progress: const MediaLibraryScanProgress(phase: '扫描失败'),
+        failureReason: e.toString(),
+        log: '扫描失败：$e',
+        isError: true,
       );
+    } finally {
+      _pausedScanLibraries.remove(library.id);
+      _stoppedScanLibraries.remove(library.id);
+      _cancelledScanLibraries.remove(library.id);
+      _releaseScanPauseGate(library.id);
       unawaited(_persistScanHistory());
+      unawaited(_persistScanTaskHistory());
     }
   }
 
   void cancelScan() {
-    _cancelScan = true;
-    state = state.copyWith(
-      progress: const MediaLibraryScanProgress(phase: '正在停止扫描'),
+    final libraryID = state.selectedLibraryID;
+    if (libraryID == null) return;
+    stopLibraryScan(libraryID);
+  }
+
+  void pauseLibraryScan(String libraryID) {
+    final task = state.taskForLibrary(libraryID);
+    if (task == null || !task.status.canPause) return;
+    _pausedScanLibraries.add(libraryID);
+    _updateScanTask(
+      task.id,
+      status: MediaLibraryScanTaskStatus.paused,
+      progress: MediaLibraryScanProgress(
+        phase: '扫描已暂停',
+        completed: task.progress.completed,
+        total: task.progress.total,
+      ),
+      log: '用户暂停了任务',
     );
-    _appendScanLog('正在请求停止扫描…');
+  }
+
+  Future<void> resumeLibraryScan(String libraryID) async {
+    final task = state.taskForLibrary(libraryID);
+    if (task == null || !task.status.canResume) return;
+    if (task.status == MediaLibraryScanTaskStatus.paused) {
+      _pausedScanLibraries.remove(libraryID);
+      _releaseScanPauseGate(libraryID);
+      _updateScanTask(
+        task.id,
+        status: MediaLibraryScanTaskStatus.running,
+        progress: MediaLibraryScanProgress(
+          phase: '正在继续扫描',
+          completed: task.progress.completed,
+          total: task.progress.total,
+        ),
+        log: '用户继续了任务',
+      );
+      return;
+    }
+    await resumeScanTask(task.id);
+  }
+
+  void stopLibraryScan(String libraryID) {
+    final task = state.taskForLibrary(libraryID);
+    if (task == null || !task.status.canStop) return;
+    _stoppedScanLibraries.add(libraryID);
+    _pausedScanLibraries.remove(libraryID);
+    _releaseScanPauseGate(libraryID);
+    _updateScanTask(
+      task.id,
+      status: MediaLibraryScanTaskStatus.stopping,
+      progress: MediaLibraryScanProgress(
+        phase: '正在停止扫描',
+        completed: task.progress.completed,
+        total: task.progress.total,
+      ),
+      log: '正在请求停止扫描…',
+    );
+  }
+
+  void cancelLibraryScan(String libraryID) {
+    final task = state.taskForLibrary(libraryID);
+    if (task == null) return;
+    cancelScanTask(task.id);
+  }
+
+  void pauseScanTask(String taskID) {
+    final task = state.taskByID(taskID);
+    if (task == null) return;
+    pauseLibraryScan(task.libraryID);
+  }
+
+  Future<void> resumeScanTask(String taskID) async {
+    final task = state.taskByID(taskID);
+    if (task == null || !task.status.canResume) return;
+    if (task.status == MediaLibraryScanTaskStatus.paused) {
+      _pausedScanLibraries.remove(task.libraryID);
+      _releaseScanPauseGate(task.libraryID);
+      _updateScanTask(
+        task.id,
+        status: MediaLibraryScanTaskStatus.running,
+        progress: MediaLibraryScanProgress(
+          phase: '正在继续扫描',
+          completed: task.progress.completed,
+          total: task.progress.total,
+        ),
+        log: '用户继续了任务',
+      );
+      return;
+    }
+    final library = state.libraries
+        .where((candidate) => candidate.id == task.libraryID)
+        .firstOrNull;
+    if (library == null ||
+        _api == null ||
+        state.scanTasks.any(
+          (candidate) =>
+              candidate.id != task.id &&
+              candidate.libraryID == task.libraryID &&
+              candidate.isActive,
+        )) {
+      return;
+    }
+    _cancelledScanLibraries.remove(task.libraryID);
+    _stoppedScanLibraries.remove(task.libraryID);
+    _pausedScanLibraries.remove(task.libraryID);
+    _releaseScanPauseGate(task.libraryID);
+    _updateScanTask(
+      task.id,
+      status: MediaLibraryScanTaskStatus.queued,
+      progress: MediaLibraryScanProgress(
+        phase: '准备继续任务',
+        completed: task.progress.completed,
+        total: task.progress.total,
+      ),
+      log: task.status == MediaLibraryScanTaskStatus.failed
+          ? '用户重试任务'
+          : '用户继续任务',
+      clearFailure: true,
+    );
+    final run = runZoned(
+      () => _runLibraryScan(library, taskID: task.id, mode: task.mode),
+      zoneValues: {_mediaScanTaskZoneKey: task.id},
+    );
+    _scanRuns[task.libraryID] = run;
+    await run;
+    _scanRuns.remove(task.libraryID);
+  }
+
+  void stopScanTask(String taskID) {
+    final task = state.taskByID(taskID);
+    if (task == null) return;
+    stopLibraryScan(task.libraryID);
+  }
+
+  void cancelScanTask(String taskID) {
+    final task = state.taskByID(taskID);
+    if (task == null) return;
+    _cancelledScanLibraries.add(task.libraryID);
+    _stoppedScanLibraries.remove(task.libraryID);
+    _pausedScanLibraries.remove(task.libraryID);
+    _releaseScanPauseGate(task.libraryID);
+    _updateScanTask(
+      task.id,
+      status: task.isActive
+          ? MediaLibraryScanTaskStatus.cancelling
+          : MediaLibraryScanTaskStatus.cancelled,
+      progress: MediaLibraryScanProgress(
+        phase: task.isActive ? '正在取消任务' : '任务已取消',
+        completed: task.progress.completed,
+        total: task.progress.total,
+      ),
+      log: '用户取消了任务',
+    );
+  }
+
+  void removeScanTask(String taskID) {
+    final task = state.taskByID(taskID);
+    if (task == null || task.isActive) return;
+    state = state.copyWith(
+      scanTasks: [
+        for (final candidate in state.scanTasks)
+          if (candidate.id != taskID) candidate,
+      ],
+    );
+    unawaited(_persistScanTaskHistory());
+  }
+
+  void clearFinishedScanTasks() {
+    state = state.copyWith(
+      scanTasks: state.scanTasks
+          .where((task) => task.isActive)
+          .toList(growable: false),
+    );
+    unawaited(_persistScanTaskHistory());
   }
 
   Future<void> rescanSelectedLibrary({
@@ -1914,10 +2306,36 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   void _appendScanLog(String message, {bool isError = false}) {
+    final taskID = Zone.current[_mediaScanTaskZoneKey] as String?;
     if (isError) {
       AppLogger.error('Media', message);
     } else {
       AppLogger.info('Media', message);
+    }
+    if (taskID != null) {
+      final current = state.taskByID(taskID);
+      if (current != null) {
+        var logs = [
+          ...current.logs,
+          MediaLibraryScanLog(
+            createdAt: DateTime.now(),
+            message: message,
+            isError: isError,
+          ),
+        ];
+        if (logs.length > 240) {
+          logs = logs.sublist(logs.length - 240);
+        }
+        state = state.copyWith(
+          scanTasks: [
+            for (final task in state.scanTasks)
+              if (task.id == taskID)
+                current.copyWith(logs: logs, updatedAt: DateTime.now())
+              else
+                task,
+          ],
+        );
+      }
     }
     final logs = [
       ...state.scanLogs,
@@ -4048,6 +4466,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<List<CloudFile>> _scanLibrarySourcesConcurrently(
     MediaLibraryDefinition library, {
     required int concurrency,
+    required String libraryID,
     required Future<void> Function(List<CloudFile> files) onMediaFiles,
   }) async {
     final folders = [
@@ -4058,7 +4477,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final mediaFiles = <String, CloudFile>{};
     var nextFolder = 0;
 
-    while (nextFolder < folders.length && !_cancelScan) {
+    while (nextFolder < folders.length && !_scanShouldAbort(libraryID)) {
+      if (!await _waitIfScanPaused(libraryID)) break;
       final batch = <_ScanFolder>[];
       while (nextFolder < folders.length && batch.length < concurrency) {
         final folder = folders[nextFolder++];
@@ -4078,15 +4498,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         batch,
         concurrency: concurrency,
         action: (folder) async {
-          if (_cancelScan) return const <CloudFile>[];
+          if (_scanShouldAbort(libraryID)) return const <CloudFile>[];
+          if (!await _waitIfScanPaused(libraryID)) return const <CloudFile>[];
           final files = await _loadCloudIndexFolder(
             _CloudIndexFolder(folder.id, folder.path),
           );
-          if (_cancelScan) return const <CloudFile>[];
-          return _enrichAndCacheFiles(files, concurrency: detailConcurrency);
+          if (_scanShouldAbort(libraryID)) return const <CloudFile>[];
+          return _enrichAndCacheFiles(
+            files,
+            concurrency: detailConcurrency,
+            libraryID: libraryID,
+          );
         },
       );
-      if (_cancelScan) break;
+      if (_scanShouldAbort(libraryID)) break;
       final pathfulSnapshots = [
         for (var index = 0; index < batch.length; index++)
           [
@@ -4130,8 +4555,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           await onMediaFiles(discoveredBatch);
         }
       }
-      state = state.copyWith(
-        progress: MediaLibraryScanProgress(
+      _setScanProgress(
+        libraryID,
+        MediaLibraryScanProgress(
           phase: '正在刷新媒体库目录，已检查 ${visited.length} 个文件夹',
           completed: mediaFiles.length,
         ),
@@ -4147,6 +4573,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<void> _scanSource(
     String? rootID,
     String rootPath, {
+    required String libraryID,
     required bool recursive,
     required int minimumSizeBytes,
     required bool forceRemote,
@@ -4157,7 +4584,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final visited = <String>{};
     var discovered = 0;
 
-    while (folders.isNotEmpty && !_cancelScan) {
+    while (folders.isNotEmpty && !_scanShouldAbort(libraryID)) {
+      if (!await _waitIfScanPaused(libraryID)) break;
       final folder = folders.removeAt(0);
       final visitKey = folder.id ?? 'root';
       if (!visited.add(visitKey)) continue;
@@ -4176,22 +4604,25 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final folderSnapshot = <CloudFile>[];
       if (cachedFolder != null) {
         final cacheLabel = '正在从目录缓存读取 ${folder.path}';
-        state = state.copyWith(
-          progress: MediaLibraryScanProgress(
+        _setScanProgress(
+          libraryID,
+          MediaLibraryScanProgress(
             phase: cacheLabel,
             completed: initialCompleted + discovered,
           ),
         );
         _appendScanLog(cacheLabel);
       }
-      while (!_cancelScan) {
+      while (!_scanShouldAbort(libraryID)) {
+        if (!await _waitIfScanPaused(libraryID)) break;
         late List<CloudFile> files;
         if (cachedFolder != null) {
           files = cachedFolder;
         } else {
           final pageLabel = '正在读取目录 ${folder.path}，第 ${page + 1} 页';
-          state = state.copyWith(
-            progress: MediaLibraryScanProgress(
+          _setScanProgress(
+            libraryID,
+            MediaLibraryScanProgress(
               phase: pageLabel,
               completed: initialCompleted + discovered,
             ),
@@ -4205,14 +4636,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             orderBy: 0,
             sortType: 0,
           );
-          if (_cancelScan) break;
+          if (_scanShouldAbort(libraryID)) break;
           files = _extractFiles(response);
           AppLogger.info(
             'Media',
             '目录「${folder.path}」第 ${page + 1} 页读取完成，获取 ${files.length} 项',
           );
-          files = await _enrichAndCacheFiles(files);
-          if (_cancelScan) break;
+          files = await _enrichAndCacheFiles(files, libraryID: libraryID);
+          if (_scanShouldAbort(libraryID)) break;
         }
         files = [
           for (final file in files)
@@ -4247,11 +4678,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         );
         if (mediaBatch.isNotEmpty) {
           await onMediaFiles(mediaBatch);
-          if (_cancelScan) break;
+          if (_scanShouldAbort(libraryID)) break;
         }
 
-        state = state.copyWith(
-          progress: MediaLibraryScanProgress(
+        _setScanProgress(
+          libraryID,
+          MediaLibraryScanProgress(
             phase: '已读取 ${folder.path}，正在识别与刮削',
             completed: initialCompleted + discovered,
           ),
@@ -4272,6 +4704,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<List<CloudFile>> _enrichAndCacheFiles(
     List<CloudFile> files, {
     int concurrency = 6,
+    String? libraryID,
   }) async {
     final resolved = <CloudFile>[];
     final pending = <CloudFile>[];
@@ -4308,7 +4741,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     };
     var next = 0;
     Future<void> worker() async {
-      while (!_cancelScan && next < pending.length) {
+      while ((libraryID == null || !_scanShouldAbort(libraryID)) &&
+          next < pending.length) {
+        if (libraryID != null && !await _waitIfScanPaused(libraryID)) return;
         final file = pending[next++];
         try {
           final detail = await _api!.fsDetail(file.id);
@@ -4351,7 +4786,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
 
     await Future.wait(List.generate(concurrency, (_) => worker()));
-    if (_cancelScan) return resolved;
+    if (libraryID != null && _scanShouldAbort(libraryID)) return resolved;
     final values = [for (final file in files) enriched[file.id] ?? file];
     await FileMetadataCache.cacheFiles(values);
     return values;

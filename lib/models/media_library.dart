@@ -499,6 +499,15 @@ enum MediaLibraryScanMode { unrecognizedOnly, forceAll }
 
 extension MediaLibraryScanModeBehavior on MediaLibraryScanMode {
   bool get refreshesFileIndex => this == MediaLibraryScanMode.forceAll;
+
+  String get title {
+    switch (this) {
+      case MediaLibraryScanMode.unrecognizedOnly:
+        return '扫描未识别';
+      case MediaLibraryScanMode.forceAll:
+        return '强制重新扫描';
+    }
+  }
 }
 
 class MediaLibraryScanLog {
@@ -524,6 +533,215 @@ class MediaLibraryScanLog {
     'createdAt': createdAt.toIso8601String(),
     'message': message,
     'isError': isError,
+  };
+}
+
+enum MediaLibraryScanTaskStatus {
+  queued,
+  running,
+  paused,
+  stopping,
+  stopped,
+  cancelling,
+  cancelled,
+  completed,
+  failed,
+}
+
+extension MediaLibraryScanTaskStatusX on MediaLibraryScanTaskStatus {
+  String get title {
+    switch (this) {
+      case MediaLibraryScanTaskStatus.queued:
+        return '等待开始';
+      case MediaLibraryScanTaskStatus.running:
+        return '正在刮削';
+      case MediaLibraryScanTaskStatus.paused:
+        return '已暂停';
+      case MediaLibraryScanTaskStatus.stopping:
+        return '正在停止';
+      case MediaLibraryScanTaskStatus.stopped:
+        return '已停止';
+      case MediaLibraryScanTaskStatus.cancelling:
+        return '正在取消';
+      case MediaLibraryScanTaskStatus.cancelled:
+        return '已取消';
+      case MediaLibraryScanTaskStatus.completed:
+        return '已完成';
+      case MediaLibraryScanTaskStatus.failed:
+        return '失败';
+    }
+  }
+
+  bool get isActive => switch (this) {
+    MediaLibraryScanTaskStatus.queued ||
+    MediaLibraryScanTaskStatus.running ||
+    MediaLibraryScanTaskStatus.paused ||
+    MediaLibraryScanTaskStatus.stopping ||
+    MediaLibraryScanTaskStatus.cancelling => true,
+    _ => false,
+  };
+
+  bool get canPause => this == MediaLibraryScanTaskStatus.running;
+
+  bool get canResume =>
+      this == MediaLibraryScanTaskStatus.paused ||
+      this == MediaLibraryScanTaskStatus.stopped ||
+      this == MediaLibraryScanTaskStatus.failed;
+
+  bool get canStop =>
+      this == MediaLibraryScanTaskStatus.queued ||
+      this == MediaLibraryScanTaskStatus.running ||
+      this == MediaLibraryScanTaskStatus.paused;
+}
+
+class MediaLibraryScanTask {
+  final String id;
+  final String libraryID;
+  final String libraryName;
+  final MediaLibraryScanMode mode;
+  final MediaLibraryScanTaskStatus status;
+  final MediaLibraryScanProgress progress;
+  final List<MediaLibraryScanLog> logs;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final String? failureReason;
+
+  const MediaLibraryScanTask({
+    required this.id,
+    required this.libraryID,
+    required this.libraryName,
+    required this.mode,
+    required this.status,
+    required this.progress,
+    required this.logs,
+    required this.createdAt,
+    required this.updatedAt,
+    this.failureReason,
+  });
+
+  factory MediaLibraryScanTask.create({
+    required MediaLibraryDefinition library,
+    required MediaLibraryScanMode mode,
+  }) {
+    final now = DateTime.now();
+    return MediaLibraryScanTask(
+      id: '${library.id}-${now.microsecondsSinceEpoch}',
+      libraryID: library.id,
+      libraryName: library.name,
+      mode: mode,
+      status: MediaLibraryScanTaskStatus.queued,
+      progress: const MediaLibraryScanProgress(phase: '等待开始'),
+      logs: [
+        MediaLibraryScanLog(
+          createdAt: now,
+          message: '任务已创建，等待${mode.title}「${library.name}」',
+        ),
+      ],
+      createdAt: now,
+      updatedAt: now,
+    );
+  }
+
+  bool get isActive => status.isActive;
+
+  MediaLibraryScanTask copyWith({
+    String? libraryName,
+    MediaLibraryScanMode? mode,
+    MediaLibraryScanTaskStatus? status,
+    MediaLibraryScanProgress? progress,
+    List<MediaLibraryScanLog>? logs,
+    DateTime? updatedAt,
+    String? failureReason,
+    bool clearFailure = false,
+  }) {
+    return MediaLibraryScanTask(
+      id: id,
+      libraryID: libraryID,
+      libraryName: libraryName ?? this.libraryName,
+      mode: mode ?? this.mode,
+      status: status ?? this.status,
+      progress: progress ?? this.progress,
+      logs: logs ?? this.logs,
+      createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      failureReason: clearFailure
+          ? null
+          : (failureReason ?? this.failureReason),
+    );
+  }
+
+  factory MediaLibraryScanTask.fromJson(Map<String, dynamic> json) {
+    final createdAt = _parseDate(json['createdAt']) ?? DateTime.now();
+    final restoredStatus = MediaLibraryScanTaskStatus.values.firstWhere(
+      (status) => status.name == json['status']?.toString(),
+      orElse: () => MediaLibraryScanTaskStatus.stopped,
+    );
+    final status = restoredStatus.isActive
+        ? MediaLibraryScanTaskStatus.stopped
+        : restoredStatus;
+    final rawProgress = json['progress'];
+    final progressMap = rawProgress is Map
+        ? Map<String, dynamic>.from(rawProgress)
+        : const <String, dynamic>{};
+    final logs =
+        (json['logs'] as List?)
+            ?.whereType<Map>()
+            .map(
+              (entry) => MediaLibraryScanLog.fromJson(
+                Map<String, dynamic>.from(entry),
+              ),
+            )
+            .toList() ??
+        <MediaLibraryScanLog>[];
+    if (restoredStatus.isActive) {
+      logs.add(
+        MediaLibraryScanLog(
+          createdAt: DateTime.now(),
+          message: '应用重新启动，未完成任务已停止',
+        ),
+      );
+    }
+    return MediaLibraryScanTask(
+      id:
+          json['id']?.toString() ??
+          'restored-${createdAt.microsecondsSinceEpoch}',
+      libraryID: json['libraryID']?.toString() ?? '',
+      libraryName: json['libraryName']?.toString() ?? '未知媒体库',
+      mode: MediaLibraryScanMode.values.firstWhere(
+        (mode) => mode.name == json['mode']?.toString(),
+        orElse: () => MediaLibraryScanMode.unrecognizedOnly,
+      ),
+      status: status,
+      progress: MediaLibraryScanProgress(
+        phase: restoredStatus.isActive
+            ? '应用重新启动，任务已停止'
+            : progressMap['phase']?.toString() ?? '',
+        completed:
+            int.tryParse(progressMap['completed']?.toString() ?? '') ?? 0,
+        total: int.tryParse(progressMap['total']?.toString() ?? '') ?? 0,
+      ),
+      logs: logs,
+      createdAt: createdAt,
+      updatedAt: _parseDate(json['updatedAt']) ?? createdAt,
+      failureReason: json['failureReason']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'libraryID': libraryID,
+    'libraryName': libraryName,
+    'mode': mode.name,
+    'status': status.name,
+    'progress': {
+      'phase': progress.phase,
+      'completed': progress.completed,
+      'total': progress.total,
+    },
+    'logs': logs.map((entry) => entry.toJson()).toList(),
+    'createdAt': createdAt.toIso8601String(),
+    'updatedAt': updatedAt.toIso8601String(),
+    'failureReason': failureReason,
   };
 }
 

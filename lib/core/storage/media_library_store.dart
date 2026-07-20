@@ -213,6 +213,41 @@ class MediaLibraryStore {
     });
   }
 
+  Future<void> replaceLibraryItems(
+    String libraryID,
+    Iterable<MediaLibraryItem> items,
+  ) async {
+    final uniqueItems = <String, MediaLibraryItem>{
+      for (final item in items)
+        if (item.libraryID == libraryID) item.id: item,
+    }.values.toList(growable: false);
+    final db = await _db;
+    await _ensureMediaItemLocationColumns(db);
+    await db.transaction((txn) async {
+      await txn.execute('''
+        CREATE TEMP TABLE IF NOT EXISTS desired_library_media_items (
+          file_id TEXT PRIMARY KEY
+        )
+      ''');
+      await txn.delete('desired_library_media_items');
+      for (final item in uniqueItems) {
+        await txn.insert('desired_library_media_items', {'file_id': item.id});
+        await _upsertItem(txn, item);
+      }
+      await txn.execute(
+        '''
+        DELETE FROM media_items
+        WHERE library_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM desired_library_media_items desired
+            WHERE desired.file_id = media_items.file_id
+          )
+        ''',
+        [libraryID],
+      );
+    });
+  }
+
   Future<int> deleteItems(Iterable<MediaLibraryItem> items) async {
     final values = <(String, String), MediaLibraryItem>{
       for (final item in items) (item.libraryID, item.id): item,
