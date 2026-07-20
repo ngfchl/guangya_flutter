@@ -3361,22 +3361,24 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           continue;
         }
 
+        final typedCandidates = <Map<String, dynamic>>[];
         final exactYearCandidates = <Map<String, dynamic>>[];
-        if (attemptYear != null) {
-          for (final value in values) {
-            if (value is! Map) continue;
-            final candidate = Map<String, dynamic>.from(value);
-            final type =
-                candidate['media_type']?.toString() ??
-                (mediaKind == 'movie' || mediaKind == 'tv' ? mediaKind : null);
-            if (type != 'movie' && type != 'tv') continue;
-            if (mediaKind != 'auto' && type != mediaKind) continue;
+        for (final value in values) {
+          if (value is! Map) continue;
+          final candidate = Map<String, dynamic>.from(value);
+          final type =
+              candidate['media_type']?.toString() ??
+              (mediaKind == 'movie' || mediaKind == 'tv' ? mediaKind : null);
+          if (type != 'movie' && type != 'tv') continue;
+          if (mediaKind != 'auto' && type != mediaKind) continue;
+          candidate['media_type'] = type;
+          typedCandidates.add(candidate);
+          if (attemptYear != null) {
             final releaseDate =
                 (candidate['release_date'] ?? candidate['first_air_date'])
                     ?.toString() ??
                 '';
             if (!releaseDate.startsWith('$attemptYear')) continue;
-            candidate['media_type'] = type;
             exactYearCandidates.add(candidate);
           }
         }
@@ -3413,7 +3415,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               exactYearCandidates.length == 1 &&
               exactYearCandidates.single['id']?.toString() ==
                   candidate['id']?.toString();
-          if ((titleMatch.score > 0 || uniqueExactYearFallback) &&
+          final uniqueSpecificQueryFallback =
+              titleMatch.score == 0 &&
+              year == null &&
+              attemptYear == null &&
+              typedCandidates.length == 1 &&
+              _allowsUniqueQueryFallback(variant.value) &&
+              typedCandidates.single['id']?.toString() ==
+                  candidate['id']?.toString();
+          if ((titleMatch.score > 0 ||
+                  uniqueExactYearFallback ||
+                  uniqueSpecificQueryFallback) &&
               expectedYearMatches) {
             relatedCount++;
             candidate['_recognitionTitle'] = variant.value;
@@ -3422,6 +3434,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             candidate['_recognitionTitleScore'] = titleMatch.score;
             if (uniqueExactYearFallback) {
               candidate['_recognitionUniqueExactYear'] = true;
+            }
+            if (uniqueSpecificQueryFallback) {
+              candidate['_recognitionUniqueSpecificQuery'] = true;
             }
             final id = candidate['id']?.toString();
             final key = id == null || id.isEmpty
@@ -3435,6 +3450,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               (candidate) => candidate['_recognitionUniqueExactYear'] == true,
             )
             ? '（含精确查询+年份唯一候选兜底）'
+            : related.values.any(
+                (candidate) =>
+                    candidate['_recognitionUniqueSpecificQuery'] == true,
+              )
+            ? '（含无年份具体查询唯一候选兜底）'
             : '';
         attempts.add(
           '${variant.source}="${variant.value}"，'
@@ -3455,6 +3475,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           final decisive = related.values
               .where((candidate) {
                 return candidate['_recognitionUniqueExactYear'] == true ||
+                    candidate['_recognitionUniqueSpecificQuery'] == true ||
                     (_toInt(candidate['_recognitionTitleScore']) ?? 0) >= 95;
               })
               .toList(growable: false);
@@ -3474,6 +3495,26 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       candidates: allRelated.values.toList(growable: false),
       attempts: attempts,
     );
+  }
+
+  bool _allowsUniqueQueryFallback(String value) {
+    final normalized = _normalizeMediaTitle(value);
+    if (normalized.length < 6) return false;
+    if (RegExp(
+      r'\b(?:web[- ]?dl|webrip|bluray|remux|hdtv|kktv|aac\d*|ddp\d*|hevc|avc|x26[45]|h[ .]?26[45]|2160p|1080p|720p)\b',
+      caseSensitive: false,
+    ).hasMatch(value)) {
+      return false;
+    }
+    if (RegExp(r'[\u4e00-\u9fff]').hasMatch(value)) {
+      return normalized.length >= 6;
+    }
+    final words = RegExp(r'[A-Za-z0-9]+')
+        .allMatches(value)
+        .map((match) => match.group(0)!)
+        .where((word) => word.length >= 2)
+        .toList(growable: false);
+    return normalized.length >= 15 && words.length >= 4;
   }
 
   Future<MediaLibraryItem> _recognizeMediaItem(
@@ -3552,8 +3593,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         var score = titleMatch.score;
         final uniqueExactYearFallback =
             map['_recognitionUniqueExactYear'] == true;
-        if (score == 0 && !uniqueExactYearFallback) continue;
-        if (uniqueExactYearFallback) score = 1;
+        final uniqueSpecificQueryFallback =
+            map['_recognitionUniqueSpecificQuery'] == true;
+        if (score == 0 &&
+            !uniqueExactYearFallback &&
+            !uniqueSpecificQueryFallback) {
+          continue;
+        }
+        if (uniqueExactYearFallback || uniqueSpecificQueryFallback) score = 1;
         if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
           score += 30;
         } else if (parsed.year != null && recognitionYear == null) {
@@ -3891,11 +3938,15 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       var score = titleMatch.score;
       final uniqueExactYearFallback =
           candidate['_recognitionUniqueExactYear'] == true;
-      if (score == 0 && !uniqueExactYearFallback) {
+      final uniqueSpecificQueryFallback =
+          candidate['_recognitionUniqueSpecificQuery'] == true;
+      if (score == 0 &&
+          !uniqueExactYearFallback &&
+          !uniqueSpecificQueryFallback) {
         diagnostics.add('${describe(candidate, type)} -> 跳过：标题不相关');
         continue;
       }
-      if (uniqueExactYearFallback) score = 1;
+      if (uniqueExactYearFallback || uniqueSpecificQueryFallback) score = 1;
       if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
         score += 30;
       } else if (parsed.year != null && recognitionYear == null) {
@@ -3905,7 +3956,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       scored.add((score: score, candidate: candidate));
       diagnostics.add(
         '${describe(candidate, type)} -> 命中：'
-        '${uniqueExactYearFallback ? '精确查询+年份唯一候选兜底' : titleMatch.basis}，'
+        '${uniqueExactYearFallback
+            ? '精确查询+年份唯一候选兜底'
+            : uniqueSpecificQueryFallback
+            ? '无年份具体查询唯一候选兜底'
+            : titleMatch.basis}，'
         '评分=$score',
       );
     }
@@ -4361,10 +4416,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (matches.isEmpty) return;
       final englishTitle = matches
           .map((match) => match.group(0)!.trim())
-          .reduce(
-            (first, second) => first.length >= second.length ? first : second,
-          );
-      add(englishTitle, '$source英文标题');
+          .where(
+            (candidate) => !RegExp(
+              r'\b(?:WEB[- ]?DL|WEBRip|BluRay|REMUX|HDTV|KKTV|AAC\d*|DDP\d*|HEVC|AVC|x26[45]|H[ .]?26[45])\b',
+              caseSensitive: false,
+            ).hasMatch(candidate),
+          )
+          .toList(growable: false);
+      if (englishTitle.isEmpty) return;
+      final preferredEnglishTitle = englishTitle.reduce(
+        (first, second) => first.length >= second.length ? first : second,
+      );
+      add(preferredEnglishTitle, '$source英文标题');
     }
 
     void addEnglishSpellingVariants(String? raw, String source) {

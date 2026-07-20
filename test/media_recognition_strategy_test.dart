@@ -240,6 +240,19 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == "Li'l Miss Vampire Can't Suck Right") {
+      return {
+        'results': [
+          {
+            'id': 200016,
+            'media_type': 'tv',
+            'name': '不擅长吸血的吸血鬼',
+            'original_name': 'でこぼこ魔女の親子事情',
+            'first_air_date': '2023-10-01',
+          },
+        ],
+      };
+    }
     if (query == '雷霆沙赞') {
       return {
         'results': [
@@ -396,6 +409,14 @@ class _RecognitionAPI extends GuangyaAPI {
         'title': '雷霆沙赞！',
         'original_title': 'Shazam!',
         'release_date': '2019-03-29',
+      };
+    }
+    if (id == 200016) {
+      return {
+        'id': id,
+        'name': '不擅长吸血的吸血鬼',
+        'original_name': 'でこぼこ魔女の親子事情',
+        'first_air_date': '2023-10-01',
       };
     }
     return {
@@ -919,5 +940,30 @@ void main() {
 
     expect(recognized.tmdbID, 200015);
     expect(api.calls.map((call) => call.query), contains('雷霆沙赞'));
+  });
+
+  test('recognition accepts a specific unique query without a year', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'vampire-2023-episode-1',
+        name: "Li'l.Miss.Vampire.Can't.Suck.Right.S01E01.1080p.KKTV.WEB-DL.mkv",
+        isDirectory: false,
+        cloudPath:
+            '/电视剧/国产剧/不擅长吸血的吸血鬼[全12集][中文字幕].1080p.KKTV.WEB-DL.AAC2.0.H.264/'
+            "Li'l.Miss.Vampire.Can't.Suck.Right.S01E01.1080p.KKTV.WEB-DL.mkv",
+      ),
+      directoryName: '不擅长吸血的吸血鬼[全12集][中文字幕].1080p.KKTV.WEB-DL.AAC2.0.H.264',
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200016);
   });
 }
