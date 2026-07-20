@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
@@ -15,6 +17,7 @@ import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../utils/fast_transfer_path_resolver.dart';
 import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
 import 'media_library_page.dart';
@@ -1564,8 +1567,12 @@ class _BatchRenameFolderSelection {
 
 class _BatchRenameFolderPicker extends ConsumerStatefulWidget {
   final String? initialID;
+  final String title;
 
-  const _BatchRenameFolderPicker({required this.initialID});
+  const _BatchRenameFolderPicker({
+    required this.initialID,
+    this.title = '选择重命名目录',
+  });
 
   @override
   ConsumerState<_BatchRenameFolderPicker> createState() =>
@@ -1638,7 +1645,7 @@ class _BatchRenameFolderPickerState
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     return ShadDialog(
-      title: const Text('选择重命名目录'),
+      title: Text(widget.title),
       description: Text('当前：$_label'),
       actions: [
         ShadButton.outline(
@@ -1653,87 +1660,93 @@ class _BatchRenameFolderPickerState
           child: const Text('使用此目录'),
         ),
       ],
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final narrow = constraints.maxWidth < 560;
-          return SizedBox(
-            width: narrow ? constraints.maxWidth : 540,
-            height: narrow ? 420 : 360,
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    ShadButton.ghost(
-                      size: ShadButtonSize.sm,
-                      onPressed: _path.isEmpty
-                          ? null
-                          : () {
-                              setState(() => _path.removeLast());
-                              _load();
-                            },
-                      leading: const Icon(Icons.arrow_back_rounded, size: 16),
-                      child: narrow
-                          ? const SizedBox.shrink()
-                          : const Text('返回上级'),
-                    ),
-                    const Spacer(),
-                    ShadTooltip(
-                      builder: (_) => const Text('刷新文件夹'),
-                      child: ShadButton.ghost(
+      child: Material(
+        type: MaterialType.transparency,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final narrow = constraints.maxWidth < 560;
+            return SizedBox(
+              width: narrow ? constraints.maxWidth : 540,
+              height: narrow ? 420 : 360,
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      ShadButton.ghost(
                         size: ShadButtonSize.sm,
-                        onPressed: _loading ? null : _load,
-                        child: const Icon(Icons.refresh_rounded, size: 16),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: _loading
-                      ? const Center(
-                          child: AppLoadingIndicator(
-                            size: AppLoadingSize.page,
-                            label: '正在读取目录',
-                          ),
-                        )
-                      : _error != null
-                      ? Center(
-                          child: Text(
-                            _error!,
-                            style: TextStyle(color: cs.destructive),
-                          ),
-                        )
-                      : _folders.isEmpty
-                      ? Center(
-                          child: Text(
-                            '没有子文件夹',
-                            style: TextStyle(color: cs.mutedForeground),
-                          ),
-                        )
-                      : ListView.separated(
-                          itemCount: _folders.length,
-                          separatorBuilder: (_, _) => const Divider(height: 1),
-                          itemBuilder: (context, index) {
-                            final folder = _folders[index];
-                            return ListTile(
-                              leading: Icon(
-                                Icons.folder_rounded,
-                                color: cs.primary,
-                              ),
-                              title: Text(folder.name),
-                              trailing: const Icon(Icons.chevron_right_rounded),
-                              onTap: () {
-                                setState(() => _path.add(folder));
+                        onPressed: _path.isEmpty
+                            ? null
+                            : () {
+                                setState(() => _path.removeLast());
                                 _load();
                               },
-                            );
-                          },
+                        leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                        child: narrow
+                            ? const SizedBox.shrink()
+                            : const Text('返回上级'),
+                      ),
+                      const Spacer(),
+                      ShadTooltip(
+                        builder: (_) => const Text('刷新文件夹'),
+                        child: ShadButton.ghost(
+                          size: ShadButtonSize.sm,
+                          onPressed: _loading ? null : _load,
+                          child: const Icon(Icons.refresh_rounded, size: 16),
                         ),
-                ),
-              ],
-            ),
-          );
-        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: _loading
+                        ? const Center(
+                            child: AppLoadingIndicator(
+                              size: AppLoadingSize.page,
+                              label: '正在读取目录',
+                            ),
+                          )
+                        : _error != null
+                        ? Center(
+                            child: Text(
+                              _error!,
+                              style: TextStyle(color: cs.destructive),
+                            ),
+                          )
+                        : _folders.isEmpty
+                        ? Center(
+                            child: Text(
+                              '没有子文件夹',
+                              style: TextStyle(color: cs.mutedForeground),
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: _folders.length,
+                            separatorBuilder: (_, _) =>
+                                const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final folder = _folders[index];
+                              return ListTile(
+                                leading: Icon(
+                                  Icons.folder_rounded,
+                                  color: cs.primary,
+                                ),
+                                title: Text(folder.name),
+                                trailing: const Icon(
+                                  Icons.chevron_right_rounded,
+                                ),
+                                onTap: () {
+                                  setState(() => _path.add(folder));
+                                  _load();
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -2060,8 +2073,6 @@ class _FastTransferTool extends ConsumerStatefulWidget {
   ConsumerState<_FastTransferTool> createState() => _FastTransferToolState();
 }
 
-enum _FastTransferTaskState { imported, skipped, failed, cancelled }
-
 class _DigestSink implements Sink<Digest> {
   Digest? value;
 
@@ -2072,38 +2083,6 @@ class _DigestSink implements Sink<Digest> {
   void close() {}
 }
 
-class _FastTransferTaskResult {
-  final FastTransferEntry entry;
-  final _FastTransferTaskState state;
-  final String message;
-
-  const _FastTransferTaskResult({
-    required this.entry,
-    required this.state,
-    required this.message,
-  });
-
-  Map<String, dynamic> toJson() => {
-    'entry': entry.toJson(),
-    'state': state.name,
-    'message': message,
-  };
-
-  factory _FastTransferTaskResult.fromJson(Map<String, dynamic> value) {
-    final state = _FastTransferTaskState.values.firstWhere(
-      (candidate) => candidate.name == value['state']?.toString(),
-      orElse: () => _FastTransferTaskState.failed,
-    );
-    return _FastTransferTaskResult(
-      entry: FastTransferEntry.fromJson(
-        Map<String, dynamic>.from(value['entry'] as Map),
-      ),
-      state: state,
-      message: value['message']?.toString() ?? '',
-    );
-  }
-}
-
 class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   final _json = TextEditingController();
   bool _running = false;
@@ -2111,43 +2090,69 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   bool _cancelRequested = false;
   bool _createDirectories = true;
   bool _skipExisting = true;
+  bool _generateMode = false;
   bool _generating = false;
   int _generated = 0;
   int _generationTotal = 0;
   String _generationName = '';
   String _result = '';
-  var _taskResults = <_FastTransferTaskResult>[];
+  String? _targetID;
+  String _targetName = '云盘根目录';
+  int _concurrency = 3;
+  var _entries = <FastTransferEntry>[];
+  var _taskResults = <FastTransferResult>[];
+  final _cancelledEntryIDs = <String>{};
+  final _activeEntryIDs = <String>{};
+  Future<void> _sessionPersistence = Future.value();
 
   @override
   void initState() {
     super.initState();
     final raw = StorageManager.get<dynamic>(StorageKeys.fastTransferSession);
-    if (raw is Map && raw['entries'] is List) {
-      final entries = (raw['entries'] as List)
-          .whereType<Map>()
-          .map(
-            (value) =>
-                FastTransferEntry.fromJson(Map<String, dynamic>.from(value)),
-          )
+    _concurrency =
+        (int.tryParse(
+                  StorageManager.get<String>(
+                        StorageKeys.fastTransferConcurrency,
+                      ) ??
+                      '3',
+                ) ??
+                3)
+            .clamp(1, 20);
+    if (raw is Map) {
+      final session = FastTransferSession.fromJson(
+        Map<String, dynamic>.from(raw),
+      );
+      _entries = session.entries
           .where((entry) => entry.path.isNotEmpty)
           .toList();
-      if (entries.isNotEmpty) {
+      _targetID = session.targetID;
+      _targetName = session.targetName;
+      if (_entries.isNotEmpty) {
         _json.text = jsonEncode({
-          'files': entries.map((entry) => entry.toJson()).toList(),
+          'files': _entries.map((entry) => entry.toJson()).toList(),
         });
       }
       _result = raw['result']?.toString() ?? '';
-      _taskResults =
-          (raw['results'] as List?)
-              ?.whereType<Map>()
-              .map(
-                (value) => _FastTransferTaskResult.fromJson(
-                  Map<String, dynamic>.from(value),
-                ),
-              )
-              .toList() ??
-          [];
+      _taskResults = session.results.toList();
     }
+  }
+
+  Future<void> _persistSession() {
+    final snapshot = {
+      ...FastTransferSession(
+        entries: _entries,
+        results: _taskResults,
+        targetID: _targetID,
+        targetName: _targetName,
+      ).toJson(),
+      'result': _result,
+    };
+    _sessionPersistence = _sessionPersistence
+        .catchError((_) {})
+        .then(
+          (_) => StorageManager.set(StorageKeys.fastTransferSession, snapshot),
+        );
+    return _sessionPersistence;
   }
 
   @override
@@ -2169,6 +2174,13 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       }
     }
     setState(() {
+      if (retryEntries == null) {
+        _entries = entries;
+        _cancelledEntryIDs.clear();
+      } else {
+        _cancelledEntryIDs.removeAll(entries.map((entry) => entry.id));
+      }
+      _activeEntryIDs.clear();
       _running = true;
       _paused = false;
       _cancelRequested = false;
@@ -2176,32 +2188,27 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       if (retryEntries == null) {
         _taskResults = [];
       } else {
-        final retryPaths = retryEntries.map((entry) => entry.path).toSet();
+        final retryIDs = retryEntries.map((entry) => entry.id).toSet();
         _taskResults.removeWhere(
-          (result) => retryPaths.contains(result.entry.path),
+          (result) => retryIDs.contains(result.entry.id),
         );
       }
     });
-    await StorageManager.set(StorageKeys.fastTransferSession, {
-      'entries': entries.map((entry) => entry.toJson()).toList(),
-      'result': '待执行 ${entries.length} 项',
-      'results': _taskResults.map((result) => result.toJson()).toList(),
-    });
+    _result = '待执行 ${entries.length} 项';
+    await _persistSession();
     var completed = 0;
     var failed = 0;
     var nextIndex = 0;
     final api = ref.read(authProvider.notifier).api;
-    final parentID = ref.read(fileProvider).folderPath.lastOrNull?.id;
-    final directoryCache = <String, String?>{};
-    final concurrency =
-        (int.tryParse(
-                  StorageManager.get<String>(
-                        StorageKeys.fastTransferConcurrency,
-                      ) ??
-                      '3',
-                ) ??
-                3)
-            .clamp(1, 20);
+    final parentID = _targetID;
+    final pathResolver = FastTransferPathResolver(
+      listDirectory: (parentID) async =>
+          _extractFiles(await api.fsFiles(parentID: parentID, pageSize: 1000)),
+      createDirectory: (parentID, name) =>
+          _createFastTransferDirectory(api, parentID, name),
+    );
+    final nameReservations = <String>{};
+    final concurrency = _concurrency;
     try {
       Future<void> worker() async {
         while (nextIndex < entries.length && !_cancelRequested) {
@@ -2210,32 +2217,46 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           }
           if (_cancelRequested) return;
           final entry = entries[nextIndex++];
-          try {
-            final targetID = await _resolveTargetDirectory(
+          if (_cancelledEntryIDs.remove(entry.id)) {
+            _recordTaskResult(
               entry,
-              parentID,
-              api,
-              directoryCache,
+              FastTransferResultState.cancelled,
+              '任务已取消',
             );
+            continue;
+          }
+          if (mounted) setState(() => _activeEntryIDs.add(entry.id));
+          try {
+            final targetID = await pathResolver.resolve(
+              entry,
+              rootID: parentID,
+              createDirectories: _createDirectories,
+            );
+            final reservationKey = '${targetID ?? '@root'}/${entry.name}';
+            if (!nameReservations.add(reservationKey)) {
+              throw FormatException('同一批任务包含重复目标：${entry.path}');
+            }
             if (_skipExisting &&
                 await _hasExistingFile(api, targetID, entry.name)) {
               completed += 1;
               _recordTaskResult(
                 entry,
-                _FastTransferTaskState.skipped,
+                FastTransferResultState.skipped,
                 '目标目录已有同名文件',
+                targetID: targetID,
               );
               continue;
             }
+            late final Map<String, dynamic> response;
             if (entry.md5 != null) {
-              await api.flashTransferToken(
+              response = await api.flashTransferToken(
                 name: entry.name,
                 fileSize: entry.size,
                 parentID: targetID,
                 md5: entry.md5!,
               );
             } else {
-              await api.flashTransferGCIDToken(
+              response = await api.flashTransferGCIDToken(
                 name: entry.name,
                 fileSize: entry.size,
                 parentID: targetID,
@@ -2243,14 +2264,24 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
               );
             }
             completed += 1;
-            _recordTaskResult(entry, _FastTransferTaskState.imported, '秒传成功');
+            _recordTaskResult(
+              entry,
+              FastTransferResultState.imported,
+              '秒传成功',
+              taskID: _findString(response, const ['taskId', 'task_id']),
+              targetID:
+                  _findString(response, const ['fileId', 'file_id', 'resId']) ??
+                  targetID,
+            );
           } catch (error) {
             failed += 1;
             _recordTaskResult(
               entry,
-              _FastTransferTaskState.failed,
+              FastTransferResultState.failed,
               error.toString(),
             );
+          } finally {
+            if (mounted) setState(() => _activeEntryIDs.remove(entry.id));
           }
           if (mounted) {
             setState(
@@ -2262,11 +2293,11 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
 
       await Future.wait(List.generate(concurrency, (_) => worker()));
       if (_cancelRequested) {
-        final handled = _taskResults.map((result) => result.entry.path).toSet();
+        final handled = _taskResults.map((result) => result.entry.id).toSet();
         for (final entry in entries.where(
-          (entry) => !handled.contains(entry.path),
+          (entry) => !handled.contains(entry.id),
         )) {
-          _recordTaskResult(entry, _FastTransferTaskState.cancelled, '任务已终止');
+          _recordTaskResult(entry, FastTransferResultState.cancelled, '任务已终止');
         }
       }
       await ref.read(fileProvider.notifier).loadFiles();
@@ -2277,13 +2308,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
               : '秒传完成：成功 $completed，失败 $failed',
         );
       }
-      await StorageManager.set(StorageKeys.fastTransferSession, {
-        'entries': entries.map((entry) => entry.toJson()).toList(),
-        'result': _cancelRequested
-            ? '秒传已终止：成功 $completed，失败 $failed'
-            : '秒传完成：成功 $completed，失败 $failed',
-        'results': _taskResults.map((result) => result.toJson()).toList(),
-      });
+      await _persistSession();
     } catch (error) {
       if (mounted) {
         setState(() => _result = '已提交 $completed / ${entries.length} 个：$error');
@@ -2297,31 +2322,59 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     if (_generating || _running) return;
     final picked = await FilePicker.pickFiles(type: FileType.any);
     if (picked == null) return;
-    final files = picked.paths
+    final candidates = picked.paths
         .whereType<String>()
         .map(File.new)
         .where((file) => file.existsSync())
-        .toList();
-    if (files.isEmpty) return;
+        .map((file) => (file: file, path: file.uri.pathSegments.last))
+        .toList(growable: false);
+    await _generateLocalEntries(candidates);
+  }
+
+  Future<void> _generateLocalFolderJson() async {
+    if (_generating || _running) return;
+    final directoryPath = await FilePicker.getDirectoryPath();
+    if (directoryPath == null) return;
+    final root = Directory(directoryPath);
+    final candidates = <({File file, String path})>[];
+    await for (final entity in root.list(recursive: true, followLinks: false)) {
+      if (entity is! File) continue;
+      final relative = entity.path
+          .substring(root.path.length)
+          .replaceFirst(RegExp(r'^[\\/]+'), '')
+          .replaceAll('\\', '/');
+      candidates.add((file: entity, path: relative));
+    }
+    await _generateLocalEntries(candidates);
+  }
+
+  Future<void> _generateLocalEntries(
+    List<({File file, String path})> candidates,
+  ) async {
+    if (candidates.isEmpty) {
+      if (mounted) setState(() => _result = '没有找到可读取的本地文件');
+      return;
+    }
     setState(() {
       _generating = true;
       _generated = 0;
-      _generationTotal = files.length;
+      _generationTotal = candidates.length;
       _generationName = '';
       _result = '';
     });
     final entries = <FastTransferEntry>[];
     var failures = 0;
     try {
-      for (final file in files) {
+      for (final candidate in candidates) {
         if (!mounted) return;
-        setState(() => _generationName = file.path.split('/').last);
+        final file = candidate.file;
+        setState(() => _generationName = candidate.path);
         try {
           final stat = await file.stat();
           final hashes = await _calculateLocalHashes(file, stat.size);
           entries.add(
             FastTransferEntry.create(
-              path: file.path.split('/').last,
+              path: candidate.path,
               size: stat.size,
               md5: hashes.$1,
               gcid: hashes.$2,
@@ -2334,6 +2387,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       }
       if (!mounted) return;
       setState(() {
+        _entries = entries;
         _json.text = const JsonEncoder.withIndent(
           '  ',
         ).convert({'files': entries.map((entry) => entry.toJson()).toList()});
@@ -2341,9 +2395,105 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
             ? '已生成 ${entries.length} 个本地文件的秒传 JSON'
             : '已生成 ${entries.length} 项，$failures 项无法读取';
       });
+      await _persistSession();
     } finally {
       if (mounted) setState(() => _generating = false);
     }
+  }
+
+  Future<void> _exportGeneratedJSON() async {
+    if (_json.text.trim().isEmpty || _generating) return;
+    await FilePicker.saveFile(
+      dialogTitle: '导出秒传 JSON',
+      fileName: 'fast-transfer.json',
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+      bytes: Uint8List.fromList(utf8.encode(_json.text)),
+    );
+  }
+
+  Future<void> _pasteJSON() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (!mounted) return;
+    if (text.isEmpty) {
+      setState(() => _result = '剪贴板中没有 JSON 文本');
+      return;
+    }
+    _replaceJSONSource(text);
+  }
+
+  Future<void> _chooseJSONFile() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+    );
+    final path = picked?.paths.whereType<String>().firstOrNull;
+    if (path == null) return;
+    try {
+      _replaceJSONSource(await File(path).readAsString());
+    } catch (error) {
+      if (mounted) setState(() => _result = '读取 JSON 失败：$error');
+    }
+  }
+
+  void _replaceJSONSource(String text) {
+    try {
+      final entries = parseFastTransferJSON(text);
+      setState(() {
+        _entries = entries;
+        _taskResults = [];
+        _cancelledEntryIDs.clear();
+        _activeEntryIDs.clear();
+        _json.text = const JsonEncoder.withIndent(
+          '  ',
+        ).convert({'files': entries.map((entry) => entry.toJson()).toList()});
+        _result = '已导入 ${entries.length} 个秒传任务';
+      });
+      unawaited(_persistSession());
+    } catch (error) {
+      setState(() => _result = error.toString());
+    }
+  }
+
+  Future<void> _chooseTargetDirectory() async {
+    final selected = await showShadDialog<_BatchRenameFolderSelection>(
+      context: context,
+      builder: (_) =>
+          _BatchRenameFolderPicker(initialID: _targetID, title: '选择秒传目标目录'),
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      _targetID = selected.id;
+      _targetName = selected.label;
+    });
+    await _persistSession();
+  }
+
+  Future<void> _setConcurrency(int value) async {
+    setState(() => _concurrency = value.clamp(1, 20));
+    await StorageManager.set(
+      StorageKeys.fastTransferConcurrency,
+      '$_concurrency',
+    );
+  }
+
+  void _cancelEntry(FastTransferEntry entry) {
+    if (_activeEntryIDs.contains(entry.id)) return;
+    setState(() => _cancelledEntryIDs.add(entry.id));
+  }
+
+  Future<void> _clearFastTransferSession() async {
+    if (_running) return;
+    setState(() {
+      _entries = [];
+      _taskResults = [];
+      _cancelledEntryIDs.clear();
+      _activeEntryIDs.clear();
+      _json.clear();
+      _result = '';
+    });
+    await StorageManager.delete(StorageKeys.fastTransferSession);
   }
 
   Future<(String, String)> _calculateLocalHashes(File file, int size) async {
@@ -2376,102 +2526,105 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
 
   void _recordTaskResult(
     FastTransferEntry entry,
-    _FastTransferTaskState state,
-    String message,
-  ) {
+    FastTransferResultState state,
+    String message, {
+    String? taskID,
+    String? targetID,
+    List<String> details = const [],
+    String? retryOf,
+  }) {
     if (!mounted) return;
     setState(() {
-      _taskResults.removeWhere((result) => result.entry.path == entry.path);
+      _taskResults.removeWhere((result) => result.entry.id == entry.id);
       _taskResults.add(
-        _FastTransferTaskResult(entry: entry, state: state, message: message),
+        FastTransferResult.create(
+          entry: entry,
+          state: state,
+          message: message,
+          taskID: taskID,
+          targetID: targetID,
+          details: details,
+          retryOf: retryOf,
+        ),
       );
       _result = '已处理 ${_taskResults.length} 项';
     });
+    unawaited(_persistSession());
   }
 
   Future<void> _retryFailed() async {
     final entries = _taskResults
-        .where((result) => result.state == _FastTransferTaskState.failed)
+        .where((result) => result.state == FastTransferResultState.failed)
         .map((result) => result.entry)
         .toList();
     if (entries.isNotEmpty) await _submit(retryEntries: entries);
   }
 
-  IconData _taskIcon(_FastTransferTaskState state) => switch (state) {
-    _FastTransferTaskState.imported => Icons.check_circle_outline_rounded,
-    _FastTransferTaskState.skipped => Icons.skip_next_rounded,
-    _FastTransferTaskState.failed => Icons.error_outline_rounded,
-    _FastTransferTaskState.cancelled => Icons.cancel_outlined,
+  List<FastTransferEntry> get _pendingEntries {
+    final completed = _taskResults.map((result) => result.entry.id).toSet();
+    return _entries
+        .where(
+          (entry) =>
+              !completed.contains(entry.id) &&
+              !_cancelledEntryIDs.contains(entry.id),
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> _startPending() async {
+    if (_entries.isEmpty) {
+      await _submit();
+      return;
+    }
+    final pending = _pendingEntries;
+    if (pending.isNotEmpty) await _submit(retryEntries: pending);
+  }
+
+  IconData _taskIcon(FastTransferResultState state) => switch (state) {
+    FastTransferResultState.imported => Icons.check_circle_outline_rounded,
+    FastTransferResultState.skipped => Icons.skip_next_rounded,
+    FastTransferResultState.failed => Icons.error_outline_rounded,
+    FastTransferResultState.cancelled => Icons.cancel_outlined,
   };
 
-  Color _taskColor(ShadColorScheme cs, _FastTransferTaskState state) =>
+  Color _taskColor(ShadColorScheme cs, FastTransferResultState state) =>
       switch (state) {
-        _FastTransferTaskState.imported => cs.primary,
-        _FastTransferTaskState.skipped => cs.mutedForeground,
-        _FastTransferTaskState.failed => cs.destructive,
-        _FastTransferTaskState.cancelled => cs.mutedForeground,
+        FastTransferResultState.imported => cs.primary,
+        FastTransferResultState.skipped => cs.mutedForeground,
+        FastTransferResultState.failed => cs.destructive,
+        FastTransferResultState.cancelled => cs.mutedForeground,
       };
 
-  String _taskTitle(_FastTransferTaskState state) => switch (state) {
-    _FastTransferTaskState.imported => '已秒传',
-    _FastTransferTaskState.skipped => '已跳过',
-    _FastTransferTaskState.failed => '失败',
-    _FastTransferTaskState.cancelled => '已取消',
+  String _taskTitle(FastTransferResultState state) => switch (state) {
+    FastTransferResultState.imported => '已秒传',
+    FastTransferResultState.skipped => '已跳过',
+    FastTransferResultState.failed => '失败',
+    FastTransferResultState.cancelled => '已取消',
   };
 
-  Future<String?> _resolveTargetDirectory(
-    FastTransferEntry entry,
-    String? rootID,
+  Future<String> _createFastTransferDirectory(
     dynamic api,
-    Map<String, String?> cache,
+    String? parentID,
+    String name,
   ) async {
-    var currentID = rootID;
-    for (final name
-        in entry.directoryPath.split('/').where((part) => part.isNotEmpty)) {
-      if (name == '..') throw const FormatException('目录不能包含 ..');
-      final key = '${currentID ?? 'root'}/$name';
-      if (cache.containsKey(key)) {
-        currentID = cache[key];
-        continue;
-      }
-      final children = _extractFiles(
-        await api.fsFiles(parentID: currentID, pageSize: 1000),
+    final response = await api.fsCreateDir(name, parentID: parentID);
+    var createdID = _findString(response, const [
+      'fileId',
+      'file_id',
+      'id',
+      'resId',
+    ]);
+    if (createdID == null) {
+      final refreshed = _extractFiles(
+        await api.fsFiles(parentID: parentID, pageSize: 1000),
       );
-      final existing = children.where((file) => file.name == name).firstOrNull;
-      if (existing != null) {
-        if (!existing.isDirectory) {
-          throw FormatException('$name 已被同名文件占用');
-        }
-        currentID = existing.id;
-      } else {
-        if (!_createDirectories) {
-          throw FormatException('${entry.path} 包含目录，请开启自动创建目录');
-        }
-        final parentBeforeCreate = currentID;
-        final response = await api.fsCreateDir(
-          name,
-          parentID: parentBeforeCreate,
-        );
-        currentID = _findString(response, const [
-          'fileId',
-          'file_id',
-          'id',
-          'resId',
-        ]);
-        if (currentID == null) {
-          final refreshed = _extractFiles(
-            await api.fsFiles(parentID: parentBeforeCreate, pageSize: 1000),
-          );
-          currentID = refreshed
-              .where((file) => file.name == name && file.isDirectory)
-              .firstOrNull
-              ?.id;
-        }
-        if (currentID == null) throw FormatException('无法创建目录 $name');
-      }
-      cache[key] = currentID;
+      createdID = refreshed
+          .where((file) => file.name == name && file.isDirectory)
+          .firstOrNull
+          ?.id;
     }
-    return currentID;
+    if (createdID == null) throw FormatException('无法创建目录 $name');
+    return createdID;
   }
 
   Future<bool> _hasExistingFile(
@@ -2521,14 +2674,42 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final pendingEntries = _pendingEntries;
+    final latestResults = <String, FastTransferResult>{
+      for (final result in _taskResults) result.entry.id: result,
+    };
     return Padding(
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                  value: false,
+                  icon: Icon(Icons.data_object_rounded, size: 16),
+                  label: Text('JSON 秒传'),
+                ),
+                ButtonSegment(
+                  value: true,
+                  icon: Icon(Icons.fingerprint_rounded, size: 16),
+                  label: Text('本地生成 JSON'),
+                ),
+              ],
+              selected: {_generateMode},
+              onSelectionChanged: _running
+                  ? null
+                  : (value) => setState(() => _generateMode = value.first),
+            ),
+          ),
+          const SizedBox(height: 12),
           _ToolSection(
-            title: '导入秒传 JSON',
-            description: '支持递归解析包含 name、size、gcid（或 gcId）的 JSON。任务将写入当前目录。',
+            title: _generateMode ? '本地文件生成秒传 JSON' : '导入秒传任务',
+            description: _generateMode
+                ? '计算本地文件的 MD5 与 GCID，生成可导入的秒传 JSON。'
+                : '支持 MD5/GCID 秒传，任务写入明确选择的云盘目标目录。',
             trailing: _running
                 ? Row(
                     mainAxisSize: MainAxisSize.min,
@@ -2553,46 +2734,126 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                     ],
                   )
                 : ShadButton(
-                    onPressed: _submit,
+                    onPressed:
+                        _generateMode ||
+                            (_entries.isNotEmpty && pendingEntries.isEmpty)
+                        ? null
+                        : _startPending,
                     leading: const Icon(Icons.bolt_rounded, size: 16),
-                    child: const Text('开始秒传'),
+                    child: Text('开始秒传 ${pendingEntries.length} 项'),
                   ),
             child: Padding(
               padding: const EdgeInsets.only(top: 12),
               child: Column(
                 children: [
-                  Row(
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
+                      ShadButton.outline(
+                        onPressed: _running ? null : _chooseTargetDirectory,
+                        leading: const Icon(
+                          Icons.folder_open_rounded,
+                          size: 16,
+                        ),
+                        child: Text(_targetName),
+                      ),
                       ShadCheckbox(
                         value: _createDirectories,
                         label: const Text('自动创建目录'),
                         onChanged: (value) =>
                             setState(() => _createDirectories = value),
                       ),
-                      const SizedBox(width: 16),
                       ShadCheckbox(
                         value: _skipExisting,
                         label: const Text('跳过同名文件'),
                         onChanged: (value) =>
                             setState(() => _skipExisting = value),
                       ),
+                      ShadSelect<int>(
+                        initialValue: _concurrency,
+                        enabled: !_running,
+                        minWidth: 92,
+                        selectedOptionBuilder: (_, value) => Text('并发 $value'),
+                        options: [
+                          for (var value = 1; value <= 20; value++)
+                            ShadOption(value: value, child: Text('并发 $value')),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) unawaited(_setConcurrency(value));
+                        },
+                      ),
                     ],
                   ),
                   const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: ShadButton.outline(
-                      onPressed: _generating || _running
-                          ? null
-                          : _generateLocalJson,
-                      leading: Icon(
-                        _generating
-                            ? Icons.hourglass_top_rounded
-                            : Icons.file_open_rounded,
-                        size: 16,
-                      ),
-                      child: Text(_generating ? '正在生成 JSON' : '从本地文件生成 JSON'),
-                    ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _generateMode
+                        ? [
+                            ShadButton.outline(
+                              onPressed: _generating || _running
+                                  ? null
+                                  : _generateLocalJson,
+                              leading: Icon(
+                                _generating
+                                    ? Icons.hourglass_top_rounded
+                                    : Icons.folder_open_rounded,
+                                size: 16,
+                              ),
+                              child: Text(_generating ? '正在生成 JSON' : '选择文件'),
+                            ),
+                            ShadButton.outline(
+                              onPressed: _generating || _running
+                                  ? null
+                                  : _generateLocalFolderJson,
+                              leading: const Icon(
+                                Icons.create_new_folder_outlined,
+                                size: 16,
+                              ),
+                              child: const Text('选择文件夹'),
+                            ),
+                            ShadButton(
+                              onPressed:
+                                  _generating || _json.text.trim().isEmpty
+                                  ? null
+                                  : _exportGeneratedJSON,
+                              leading: const Icon(
+                                Icons.download_rounded,
+                                size: 16,
+                              ),
+                              child: const Text('导出 JSON'),
+                            ),
+                          ]
+                        : [
+                            ShadButton.outline(
+                              onPressed: _running ? null : _pasteJSON,
+                              leading: const Icon(
+                                Icons.content_paste_rounded,
+                                size: 16,
+                              ),
+                              child: const Text('粘贴 JSON'),
+                            ),
+                            ShadButton.outline(
+                              onPressed: _running ? null : _chooseJSONFile,
+                              leading: const Icon(
+                                Icons.file_open_rounded,
+                                size: 16,
+                              ),
+                              child: const Text('选择 JSON'),
+                            ),
+                            ShadButton.ghost(
+                              onPressed: _running || _entries.isEmpty
+                                  ? null
+                                  : _clearFastTransferSession,
+                              leading: const Icon(
+                                Icons.delete_sweep_outlined,
+                                size: 16,
+                              ),
+                              child: const Text('清空任务'),
+                            ),
+                          ],
                   ),
                   if (_generating) ...[
                     const SizedBox(height: 8),
@@ -2644,18 +2905,18 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
             const SizedBox(height: 12),
             Text(_result, style: TextStyle(color: cs.mutedForeground)),
           ],
-          if (_taskResults.isNotEmpty) ...[
+          if (_entries.isNotEmpty) ...[
             const SizedBox(height: 12),
             _ToolSection(
-              title: '任务结果',
+              title: '秒传任务',
               description:
-                  '成功 ${_taskResults.where((result) => result.state == _FastTransferTaskState.imported).length} 项，失败 ${_taskResults.where((result) => result.state == _FastTransferTaskState.failed).length} 项。',
+                  '待处理 ${pendingEntries.length} 项，成功 ${_taskResults.where((result) => result.state == FastTransferResultState.imported).length} 项，跳过 ${_taskResults.where((result) => result.state == FastTransferResultState.skipped).length} 项，失败 ${_taskResults.where((result) => result.state == FastTransferResultState.failed).length} 项。',
               trailing: ShadButton.outline(
                 onPressed:
                     _running ||
                         !_taskResults.any(
                           (result) =>
-                              result.state == _FastTransferTaskState.failed,
+                              result.state == FastTransferResultState.failed,
                         )
                     ? null
                     : _retryFailed,
@@ -2667,29 +2928,49 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                 child: SizedBox(
                   height: 210,
                   child: ListView.separated(
-                    itemCount: _taskResults.length,
+                    itemCount: _entries.length,
                     separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) {
-                      final task = _taskResults[index];
-                      final color = _taskColor(cs, task.state);
+                      final entry = _entries[index];
+                      final task = latestResults[entry.id];
+                      final active = _activeEntryIDs.contains(entry.id);
+                      final cancelled = _cancelledEntryIDs.contains(entry.id);
+                      final color = task == null
+                          ? cs.mutedForeground
+                          : _taskColor(cs, task.state);
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 6),
                         child: Row(
                           children: [
-                            Icon(_taskIcon(task.state), size: 17, color: color),
+                            if (active)
+                              const AppLoadingIndicator(
+                                size: AppLoadingSize.inline,
+                                semanticsLabel: '正在秒传',
+                              )
+                            else
+                              Icon(
+                                cancelled
+                                    ? Icons.cancel_outlined
+                                    : task == null
+                                    ? Icons.schedule_rounded
+                                    : _taskIcon(task.state),
+                                size: 17,
+                                color: color,
+                              ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    task.entry.path,
+                                    entry.path,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(fontSize: 12),
                                   ),
                                   Text(
-                                    task.message,
+                                    task?.message ??
+                                        (cancelled ? '等待取消' : '等待处理'),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
@@ -2702,9 +2983,36 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              _taskTitle(task.state),
+                              active
+                                  ? (_paused ? '已暂停' : '处理中')
+                                  : cancelled
+                                  ? '待取消'
+                                  : task == null
+                                  ? '待处理'
+                                  : _taskTitle(task.state),
                               style: TextStyle(fontSize: 12, color: color),
                             ),
+                            if (!_running &&
+                                task?.state == FastTransferResultState.failed)
+                              ShadButton.ghost(
+                                size: ShadButtonSize.sm,
+                                onPressed: () => _submit(retryEntries: [entry]),
+                                child: const Icon(
+                                  Icons.refresh_rounded,
+                                  size: 16,
+                                ),
+                              )
+                            else if (_running && task == null && !active)
+                              ShadButton.ghost(
+                                size: ShadButtonSize.sm,
+                                onPressed: cancelled
+                                    ? null
+                                    : () => _cancelEntry(entry),
+                                child: const Icon(
+                                  Icons.close_rounded,
+                                  size: 16,
+                                ),
+                              ),
                           ],
                         ),
                       );
