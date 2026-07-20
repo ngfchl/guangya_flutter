@@ -1,7 +1,39 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 
 const String noToastHeader = 'NoToast';
 const String suppressErrorToastExtra = 'suppressErrorToast';
+const String tmdbRetryAttemptExtra = 'guangya.tmdb.retry_attempt';
+const String tmdbRetryMaxAttemptsExtra = 'guangya.tmdb.retry_max_attempts';
+
+bool isRetryableNetworkError(Object error) {
+  if (error is SocketException ||
+      error is HandshakeException ||
+      error is HttpException) {
+    return true;
+  }
+  if (error is! DioException) return false;
+  if (error.type == DioExceptionType.connectionTimeout ||
+      error.type == DioExceptionType.sendTimeout ||
+      error.type == DioExceptionType.receiveTimeout ||
+      error.type == DioExceptionType.connectionError) {
+    return true;
+  }
+  return error.type == DioExceptionType.unknown &&
+      (error.error is SocketException ||
+          error.error is HandshakeException ||
+          error.error is HttpException);
+}
+
+bool suppressIntermediateTMDBRetryLog(DioException error) {
+  final attempt = error.requestOptions.extra[tmdbRetryAttemptExtra];
+  final maxAttempts = error.requestOptions.extra[tmdbRetryMaxAttemptsExtra];
+  return attempt is int &&
+      maxAttempts is int &&
+      attempt < maxAttempts &&
+      isRetryableNetworkError(error);
+}
 
 bool suppressErrorToast(RequestOptions options) {
   return options.extra[suppressErrorToastExtra] == true;

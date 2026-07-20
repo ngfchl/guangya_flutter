@@ -18,9 +18,18 @@ class GuangyaAPI {
   String? refreshTokenValue;
   DateTime? tokenExpiresAt;
   final String deviceID;
+  final Dio? _tmdbDio;
+  final Duration _tmdbRetryBaseDelay;
 
-  GuangyaAPI({this.accessToken = '', String? refreshToken, String? deviceID})
-    : deviceID = deviceID ?? _generateDeviceID();
+  GuangyaAPI({
+    this.accessToken = '',
+    String? refreshToken,
+    String? deviceID,
+    Dio? tmdbDio,
+    Duration tmdbRetryBaseDelay = const Duration(milliseconds: 300),
+  }) : deviceID = deviceID ?? _generateDeviceID(),
+       _tmdbDio = tmdbDio,
+       _tmdbRetryBaseDelay = tmdbRetryBaseDelay;
 
   static String _generateDeviceID() {
     return 'flutter-${DateTime.now().millisecondsSinceEpoch}';
@@ -935,15 +944,33 @@ class GuangyaAPI {
     String proxyHost = '',
     String proxyPort = '',
   }) async {
-    final dio = DioClient.dio;
-    final response = await dio.getUri(
-      url,
-      options: Options(headers: {'Accept': 'application/json'}),
-    );
-    if (response.statusCode! < 200 || response.statusCode! >= 300) {
-      throw Exception('TMDB 请求失败');
+    const maxAttempts = 3;
+    final dio = _tmdbDio ?? DioClient.dio;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final response = await dio.getUri(
+          url,
+          options: Options(
+            headers: {'Accept': 'application/json'},
+            extra: {
+              tmdbRetryAttemptExtra: attempt,
+              tmdbRetryMaxAttemptsExtra: maxAttempts,
+            },
+          ),
+        );
+        final statusCode = response.statusCode ?? 0;
+        if (statusCode < 200 || statusCode >= 300) {
+          throw Exception('TMDB 请求失败');
+        }
+        return Map<String, dynamic>.from(response.data as Map);
+      } catch (error) {
+        if (attempt >= maxAttempts || !isRetryableNetworkError(error)) {
+          rethrow;
+        }
+        await Future<void>.delayed(_tmdbRetryBaseDelay * attempt);
+      }
     }
-    return response.data as Map<String, dynamic>;
+    throw StateError('TMDB 请求重试流程异常');
   }
 
   // ── Helpers ───────────────────────────────────────────────────────

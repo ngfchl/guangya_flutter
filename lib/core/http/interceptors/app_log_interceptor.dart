@@ -23,6 +23,10 @@ class AppLogInterceptor extends Interceptor {
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
+    if (suppressIntermediateTMDBRetryLog(err)) {
+      handler.next(err);
+      return;
+    }
     final status = err.response?.statusCode;
     final serverMessage = err.response?.data is Map
         ? extractHttpMessage(err.response?.data)
