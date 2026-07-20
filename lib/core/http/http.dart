@@ -61,9 +61,6 @@ class Http {
     CancelToken? cancelToken,
     List<int> allowedCodes = const [],
   }) async {
-    // 过期自动刷新
-    _checkTokenExpiry();
-
     final mergedHeaders = <String, dynamic>{
       'traceparent': _generateTraceparent(),
       ...?headers,
@@ -78,7 +75,7 @@ class Http {
       options: Options(extra: {ResponseInterceptor.skipCodeCheckKey: true}),
     );
 
-    final code = _businessCode(data['code']);
+    final code = parseBusinessCode(data['code']);
     if (code == null ||
         code == 0 ||
         code == 200 ||
@@ -139,14 +136,6 @@ class Http {
     );
   }
 
-  // ── Token 过期检测 ─────────────────────────────────────────────
-
-  static void _checkTokenExpiry() {
-    final expiresAt = StorageManager.get<int>(StorageKeys.tokenExpiresAt);
-    if (expiresAt == null) return;
-    if (DateTime.now().millisecondsSinceEpoch > expiresAt) {}
-  }
-
   static String _getDeviceID() {
     return StorageManager.get<String>(StorageKeys.deviceID) ??
         'flutter-${DateTime.now().millisecondsSinceEpoch}';
@@ -193,11 +182,5 @@ class Http {
   static String _generateTraceparent() {
     final now = DateTime.now().microsecondsSinceEpoch;
     return '00-${now.toRadixString(16).padLeft(32, '0')}-${now.toRadixString(16).padLeft(16, '0')}-01';
-  }
-
-  static int? _businessCode(dynamic value) {
-    if (value == null) return null;
-    if (value is int) return value;
-    return int.tryParse(value.toString());
   }
 }

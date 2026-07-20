@@ -119,9 +119,12 @@ class AuthTokens {
   final String? refreshToken;
   final double? expiresIn;
 
-  AuthTokens({
-    required this.accessToken,
-    this.refreshToken,
-    this.expiresIn,
-  });
+  AuthTokens({required this.accessToken, this.refreshToken, this.expiresIn});
+}
+
+/// Parse a business-level code from an API response.
+int? parseBusinessCode(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  return int.tryParse(value.toString());
 }

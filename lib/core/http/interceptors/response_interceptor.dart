@@ -41,7 +41,7 @@ class ResponseInterceptor extends Interceptor {
     }
 
     // 业务 API：检查 code 字段
-    final code = _businessCode(body['code']);
+    final code = parseBusinessCode(body['code']);
     final message = extractHttpMessage(body);
 
     // code == 0/200 视为成功。不同网关返回的业务成功码不完全一致。
@@ -80,11 +80,5 @@ class ResponseInterceptor extends Interceptor {
     if (code == 404) return '接口不存在';
     if (code == 500) return '服务器内部错误';
     return '请求失败 ($code)';
-  }
-
-  static int? _businessCode(dynamic value) {
-    if (value == null) return null;
-    if (value is int) return value;
-    return int.tryParse(value.toString());
   }
 }
