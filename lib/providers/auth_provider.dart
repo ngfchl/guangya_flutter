@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import '../core/logging/app_logger.dart';
 import '../core/http/http_error.dart';
 import '../core/storage/storage_manager.dart';
+import '../core/utils/format_bytes.dart';
 import '../api/guangya_api.dart';
 
 class AuthState {
@@ -94,7 +95,7 @@ class AuthState {
 
   String get capacityText {
     if (capacity == null) return '空间信息暂不可用';
-    return '${_formatBytes(usedCapacity ?? 0)} / ${_formatBytes(capacity!)}';
+    return '${FormatBytes.format(usedCapacity ?? 0)} / ${FormatBytes.format(capacity!)}';
   }
 
   // ── Static helpers ─────────────────────────────────────────────
@@ -127,21 +128,6 @@ class AuthState {
       if (v != null) return v is int ? v : int.tryParse(v.toString());
     }
     return null;
-  }
-
-  static String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    if (bytes < 1024 * 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
-    }
-    if (bytes < 1024 * 1024 * 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024 * 1024 * 1024)).toStringAsFixed(1)} TB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024 * 1024 * 1024)).toStringAsFixed(1)} PB';
   }
 }
 

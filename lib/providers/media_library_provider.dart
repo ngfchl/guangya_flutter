@@ -14,6 +14,7 @@ import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/media_library_store.dart';
 import '../core/storage/storage_manager.dart';
 import '../core/utils/concurrent_map.dart';
+import '../core/utils/format_bytes.dart';
 import '../core/utils/json_deep.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
@@ -783,7 +784,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       _appendBackupLog('正在导出本地刮削数据库');
       await _store.exportBackupTo(backup.path);
       final size = await backup.length();
-      _appendBackupLog('本地数据库导出完成，大小 ${_formatBytes(size)}');
+      _appendBackupLog('本地数据库导出完成，大小 ${FormatBytes.format(size)}');
       state = state.copyWith(
         cloudBackupSync: CloudBackupSyncProgress(
           phase: '正在上传备份',
@@ -1053,7 +1054,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       clearSelectedLibrary: selectedID == null,
       items: selectedID == null ? const [] : await _loadItems(selectedID),
       allItems: allItems,
-      statusMessage: '刮削数据已导入，已回收 ${_formatBytes(stats.reclaimedBytes)}',
+      statusMessage: '刮削数据已导入，已回收 ${FormatBytes.format(stats.reclaimedBytes)}',
     );
     if (selectedID != null) {
       unawaited(_hydrateMissingArtwork(selectedID, state.items));
@@ -1072,7 +1073,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       state = state.copyWith(
         statusMessage: stats.removedArtworkCount == 0
             ? '本地刮削数据库已是最优状态'
-            : '已清理 ${stats.removedArtworkCount} 条本地图片缓存，回收 ${_formatBytes(stats.reclaimedBytes)}',
+            : '已清理 ${stats.removedArtworkCount} 条本地图片缓存，回收 ${FormatBytes.format(stats.reclaimedBytes)}',
       );
     } catch (error) {
       state = state.copyWith(errorMessage: '数据库优化失败：$error');
@@ -4947,15 +4948,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   int? _toInt(dynamic value) {
     if (value is int) return value;
     return int.tryParse(value?.toString() ?? '');
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
   Future<List<CloudFile>> _scanLibrarySourcesConcurrently(

@@ -1,5 +1,7 @@
 import 'package:intl/intl.dart';
 
+import '../core/utils/format_bytes.dart';
+
 /// Cloud file model representing a file or folder in the cloud drive.
 class CloudFile {
   static const supportedVideoExtensions = {
@@ -97,7 +99,7 @@ class CloudFile {
 
   String get formattedSize {
     if (size == null) return '--';
-    return _formatBytes(size!);
+    return FormatBytes.format(size!);
   }
 
   /// Finder 列表中目录名称下方显示的子项统计。
@@ -146,21 +148,6 @@ class CloudFile {
       fullParentIDs: fullParentIDs ?? this.fullParentIDs,
       fileType: fileType ?? this.fileType,
     );
-  }
-
-  static String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    if (bytes < 1024 * 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
-    }
-    if (bytes < 1024 * 1024 * 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024 * 1024 * 1024)).toStringAsFixed(2)} TB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024 * 1024 * 1024)).toStringAsFixed(2)} PB';
   }
 
   factory CloudFile.fromJson(Map<String, dynamic> json) {

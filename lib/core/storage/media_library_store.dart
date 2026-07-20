@@ -5,6 +5,7 @@ import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 
 import '../logging/app_logger.dart';
+import '../utils/format_bytes.dart';
 import '../../models/cloud_file.dart';
 import '../../models/media_library.dart';
 
@@ -50,7 +51,7 @@ class MediaLibraryStore {
       } else {
         AppLogger.info(
           'Storage',
-          '已迁移 ${migration.rows} 条刮削记录，移除 ${_formatBytes(migration.artworkBytes)} 图片二进制缓存',
+          '已迁移 ${migration.rows} 条刮削记录，移除 ${FormatBytes.format(migration.artworkBytes)} 图片二进制缓存',
         );
       }
       await _vacuumIfFragmented(_database!);
@@ -928,7 +929,7 @@ class MediaLibraryStore {
         : 'NULL';
     AppLogger.info(
       'Storage',
-      '发现旧图片二进制缓存：$rows 条记录，${_formatBytes(artworkBytes)}，正在重建精简表',
+      '发现旧图片二进制缓存：$rows 条记录，${FormatBytes.format(artworkBytes)}，正在重建精简表',
     );
     await db.transaction((txn) async {
       await txn.execute('''
@@ -996,7 +997,7 @@ class MediaLibraryStore {
     final before = await _databaseBytes(db.path);
     AppLogger.info(
       'Storage',
-      '开始压缩刮削数据库：共 $pages 页，空闲 $free 页，当前 ${_formatBytes(before)}',
+      '开始压缩刮削数据库：共 $pages 页，空闲 $free 页，当前 ${FormatBytes.format(before)}',
     );
     try {
       try {
@@ -1015,7 +1016,7 @@ class MediaLibraryStore {
       final after = await _databaseBytes(db.path);
       AppLogger.info(
         'Storage',
-        '刮削数据库压缩完成：${_formatBytes(before)} -> ${_formatBytes(after)}，回收 ${_formatBytes((before - after).clamp(0, before))}',
+        '刮削数据库压缩完成：${FormatBytes.format(before)} -> ${FormatBytes.format(after)}，回收 ${FormatBytes.format((before - after).clamp(0, before))}',
       );
     } on DatabaseException catch (error) {
       AppLogger.warning('Storage', '刮削数据库压缩未完成：$error');
@@ -1152,18 +1153,6 @@ class MediaLibraryStore {
       if (await file.exists()) bytes += await file.length();
     }
     return bytes;
-  }
-
-  static String _formatBytes(int bytes) {
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    var value = bytes.toDouble();
-    var unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-      value /= 1024;
-      unit += 1;
-    }
-    final precision = unit == 0 || value >= 100 ? 0 : 1;
-    return '${value.toStringAsFixed(precision)} ${units[unit]}';
   }
 
   Future<Set<String>> _tableColumns(
