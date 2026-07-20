@@ -908,7 +908,8 @@ class GuangyaAPI {
     final params = {
       'api_key': apiKey,
       'language': 'zh-CN',
-      'append_to_response': 'credits,images,external_ids,translations',
+      'append_to_response':
+          'credits,images,external_ids,translations,alternative_titles',
       'include_image_language': 'zh-CN,zh,null,en',
     };
     final uri = Uri.https('api.themoviedb.org', '/3/$endpoint/$id', params);

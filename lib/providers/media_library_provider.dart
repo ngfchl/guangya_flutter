@@ -16,6 +16,9 @@ import '../core/storage/storage_manager.dart';
 import '../core/utils/concurrent_map.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
+import '../utils/media_known_match_index.dart';
+import '../utils/media_title_matcher.dart';
+import '../utils/media_tmdb_candidate_resolver.dart';
 import 'watch_history_provider.dart';
 
 const _mediaScanTaskZoneKey = #mediaScanTaskID;
@@ -1279,6 +1282,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       var completed = 0;
       Future<void> pendingPersistence = Future.value();
       final seriesMatches = <String, MediaLibraryItem>{};
+      final knownMatches = MediaKnownMatchIndex(previousLibraryItems);
       if (!forceAll) {
         for (final item in previousLibraryItems) {
           final key = _seriesRecognitionKey(item);
@@ -1364,8 +1368,24 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             final cachedSeriesMatch = seriesKey == null
                 ? null
                 : seriesMatches[seriesKey];
-            if (cachedSeriesMatch != null) {
-              item = applySeriesMetadata(cachedSeriesMatch, item);
+            final parsedFallback = ParsedMediaName.parse(
+              fallback.file.name,
+              directoryName: _parentDirectoryName(fallback.file.cloudPath),
+              directoryPath: fallback.file.cloudPath,
+            );
+            final knownSeriesMatch = seriesKey == null
+                ? null
+                : knownMatches.resolve(
+                    title: parsedFallback.title,
+                    mediaKind: TMDBMediaKind.tv,
+                    year: parsedFallback.year,
+                  );
+            final reusableSeriesMatch = cachedSeriesMatch ?? knownSeriesMatch;
+            if (reusableSeriesMatch != null) {
+              item = applySeriesMetadata(reusableSeriesMatch, item);
+              if (cachedSeriesMatch == null) {
+                seriesMatches[seriesKey!] = reusableSeriesMatch;
+              }
             } else if (shouldRecognize) {
               if (seriesKey == null) {
                 item = await _recognizeMediaItem(
@@ -1427,6 +1447,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 item.tmdbID != null &&
                 item.mediaKind == TMDBMediaKind.tv) {
               seriesMatches[seriesKey] = item;
+              knownMatches.add(item);
             }
             item = await _renameMatchedMediaFile(item);
             if (_scanShouldAbort(library.id)) return;
@@ -3148,8 +3169,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
         );
         updated = _itemFromTMDBDetails(updated, details);
-      } catch (_) {
+      } catch (error) {
         // A selected candidate is still valid if its detail request fails.
+        AppLogger.warning(
+          'Media',
+          '手动选择的 TMDB 候选详情补全失败：id=${updated.tmdbID}，$error',
+        );
       }
     }
     updated = await _renameMatchedMediaFile(
@@ -3290,7 +3315,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               return entry.value
                   .map((item) => _itemFromTMDBDetails(item, details))
                   .toList();
-            } catch (_) {
+            } catch (error) {
+              AppLogger.warning(
+                'Media',
+                '影视详情补图失败：tmdbId=${prototype.tmdbID}，$error',
+              );
               return const <MediaLibraryItem>[];
             }
           }),
@@ -3397,6 +3426,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               candidate['media_type']?.toString() ??
               (mediaKind == 'movie' || mediaKind == 'tv' ? mediaKind : null);
           if (type != 'movie' && type != 'tv') continue;
+          if (mediaKind != 'auto' && type != mediaKind) continue;
           candidate['media_type'] = type;
           final releaseDate =
               (candidate['release_date'] ?? candidate['first_air_date'])
@@ -3468,6 +3498,27 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           '${attemptYear == null ? '不带年份' : '年份=$attemptYear'} -> '
           '${values.length} 条，相关 $relatedCount 条$fallbackLabel',
         );
+        if (relatedCount == 0 &&
+            attemptYear != null &&
+            yearCompatibleCandidates.isNotEmpty &&
+            yearCompatibleCandidates.length <= 6 &&
+            _allowsUniqueQueryFallback(variant.value)) {
+          for (final candidate in yearCompatibleCandidates) {
+            candidate['_recognitionTitle'] = variant.value;
+            candidate['_recognitionSource'] = variant.source;
+            candidate['_recognitionYear'] = attemptYear;
+            candidate['_recognitionTitleScore'] = 0;
+            candidate['_recognitionNeedsDetails'] = true;
+            final type = candidate['media_type']?.toString() ?? mediaKind;
+            final id = candidate['id']?.toString();
+            final key = id == null || id.isEmpty
+                ? '$type:${candidate['title'] ?? candidate['name']}'
+                : '$type:$id';
+            allRelated.putIfAbsent(key, () => candidate);
+          }
+          attempts[attempts.length - 1] =
+              '${attempts.last}（保留 ${yearCompatibleCandidates.length} 条待详情翻译核验）';
+        }
         if (relatedCount > 0) {
           for (final entry in related.entries) {
             final previous = allRelated[entry.key];
@@ -3515,6 +3566,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
     if (RegExp(r'[\u4e00-\u9fff]').hasMatch(value)) {
       return normalized.length >= 6;
+    }
+    if (RegExp(r'[\u0400-\u052f]').hasMatch(value)) {
+      return normalized.length >= 10;
+    }
+    if (RegExp(r'[\u3040-\u30ff\uac00-\ud7af]').hasMatch(value)) {
+      return normalized.length >= 4;
     }
     final words = RegExp(r'[A-Za-z0-9]+')
         .allMatches(value)
@@ -3566,7 +3623,24 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final values = searchResult.candidates;
       if (values.isEmpty) return fallback;
       if (titleVariants.isEmpty) return fallback;
-      final refinedValues = _refineTMDBCandidates(fallback, parsed, values);
+      var refinedValues = _refineTMDBCandidates(fallback, parsed, values);
+      if (refinedValues.length > 1) {
+        final resolution = await _resolveAmbiguousTMDBCandidates(
+          refinedValues,
+          parsed,
+          titleVariants,
+          apiKey: apiKey,
+          proxyHost: proxyHost,
+          proxyPort: proxyPort,
+        );
+        refinedValues = resolution.candidates;
+        if (resolution.diagnostics.isNotEmpty) {
+          _appendScanLog(
+            '[同步识别][调试] 多候选详情评估：'
+            '${resolution.diagnostics.join('；')}',
+          );
+        }
+      }
       if (refinedValues.length != 1) {
         _appendScanLog(
           '[同步识别][调试] 自动识别未完成：候选收敛后仍有 '
@@ -3603,12 +3677,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             map['_recognitionUniqueExactYear'] == true;
         final uniqueSpecificQueryFallback =
             map['_recognitionUniqueSpecificQuery'] == true;
+        final resolvedByDetails = map['_recognitionResolvedByDetails'] == true;
         if (score == 0 &&
             !uniqueExactYearFallback &&
-            !uniqueSpecificQueryFallback) {
+            !uniqueSpecificQueryFallback &&
+            !resolvedByDetails) {
           continue;
         }
-        if (uniqueExactYearFallback || uniqueSpecificQueryFallback) score = 1;
+        if (uniqueExactYearFallback ||
+            uniqueSpecificQueryFallback ||
+            resolvedByDetails) {
+          score = 1;
+        }
         if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
           score += 30;
         } else if (parsed.year != null && recognitionYear == null) {
@@ -3635,8 +3715,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           proxyPort: proxyPort,
         );
         item = _itemFromTMDBDetails(item, details);
-      } catch (_) {
+      } catch (error) {
         // The search result already has enough information for an initial row.
+        AppLogger.warning(
+          'Media',
+          'TMDB 候选已命中，但详情补全失败：id=${item.tmdbID}，$error',
+        );
       }
       return item;
     } catch (error, stackTrace) {
@@ -3974,11 +4058,23 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
     }
     scored.sort((a, b) => b.score.compareTo(a.score));
-    final refined = _refineTMDBCandidates(
+    var refined = _refineTMDBCandidates(
       fallback,
       parsed,
       scored.map((entry) => entry.candidate),
     );
+    if (refined.length > 1) {
+      final resolution = await _resolveAmbiguousTMDBCandidates(
+        refined,
+        parsed,
+        titleVariants,
+        apiKey: apiKey,
+        proxyHost: proxyHost,
+        proxyPort: proxyPort,
+      );
+      refined = resolution.candidates;
+      diagnostics.addAll(resolution.diagnostics);
+    }
     _appendScanLog(
       '[同步识别][调试] TMDB 候选评估：查询="$searchTitle"，'
       '类型=$requestedKind，年份参数=${parsed.year?.toString() ?? '未提供'}，原始 ${values.length} 条，'
@@ -4007,47 +4103,38 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     Iterable<Map<String, dynamic>> candidates,
   ) {
     final expectedType = _requestedTMDBMediaKind(fallback, parsed);
-    var pool = candidates
-        .where((candidate) {
-          if (expectedType == 'auto') return true;
-          return candidate['media_type']?.toString() == expectedType;
-        })
-        .toList(growable: false);
-    if (pool.isEmpty) return const [];
-
     final variants = _recognitionTitleVariants(
       fallback,
       primaryTitle: parsed.title,
     );
-    final exact = pool
-        .where((candidate) {
-          final match = _bestMediaTitleMatchForVariants(
-            variants,
-            title: (candidate['title'] ?? candidate['name'] ?? '').toString(),
-            originalTitle:
-                (candidate['original_title'] ??
-                        candidate['original_name'] ??
-                        '')
-                    .toString(),
-          );
-          return match.score >= 95;
-        })
-        .toList(growable: false);
-    if (exact.isNotEmpty) pool = exact;
+    return MediaTMDBCandidateResolver.refine(
+      candidates: candidates,
+      expectedType: expectedType,
+      year: parsed.year,
+      titleEvidence: variants.map((variant) => variant.value),
+    );
+  }
 
-    if (parsed.year != null) {
-      final sameYear = pool
-          .where((candidate) {
-            final date =
-                (candidate['release_date'] ?? candidate['first_air_date'])
-                    ?.toString() ??
-                '';
-            return date.startsWith('${parsed.year}');
-          })
-          .toList(growable: false);
-      if (sameYear.isNotEmpty) pool = sameYear;
-    }
-    return pool;
+  Future<TMDBCandidateResolution> _resolveAmbiguousTMDBCandidates(
+    List<Map<String, dynamic>> candidates,
+    ParsedMediaName parsed,
+    List<_MediaTitleVariant> variants, {
+    required String apiKey,
+    required String proxyHost,
+    required String proxyPort,
+  }) {
+    return MediaTMDBCandidateResolver.resolveAmbiguous(
+      candidates: candidates,
+      year: parsed.year,
+      titleEvidence: variants.map((variant) => variant.value),
+      loadDetails: (id, mediaType) => _tmdbDetails(
+        id,
+        mediaType == 'tv' ? TMDBMediaKind.tv : TMDBMediaKind.movie,
+        apiKey: apiKey,
+        proxyHost: proxyHost,
+        proxyPort: proxyPort,
+      ),
+    );
   }
 
   Future<Map<String, dynamic>?> _tmdbCandidateFromPathTag(
@@ -4241,7 +4328,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final updated = item.copyWith(file: renamedFile);
       await _writeNfoForRenamedMedia(updated, parsed);
       return updated;
-    } catch (_) {
+    } catch (error) {
+      AppLogger.warning('Media', '识别成功但云盘重命名失败：fileId=${item.file.id}，$error');
       return item;
     }
   }
@@ -4302,8 +4390,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       } finally {
         if (await temp.exists()) await temp.delete();
       }
-    } catch (_) {
+    } catch (error) {
       // File renaming remains successful if sidecar upload is unavailable.
+      AppLogger.warning(
+        'Media',
+        'NFO 旁车文件写入失败：tmdbId=${item.tmdbID}，fileId=${item.file.id}，$error',
+      );
     }
   }
 
@@ -4710,123 +4802,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     required String title,
     required String originalTitle,
   }) {
-    final displayMatch = _mediaTitleMatch(expected, title);
-    final originalMatch = _mediaTitleMatch(expected, originalTitle);
-    if (originalMatch.score > displayMatch.score) {
-      return (score: originalMatch.score, basis: '原名${originalMatch.basis}');
-    }
-    return (score: displayMatch.score, basis: '标题${displayMatch.basis}');
-  }
-
-  ({int score, String basis}) _mediaTitleMatch(
-    String expected,
-    String candidate,
-  ) {
-    final literalExpected = _literalMediaTitle(expected);
-    final literalCandidate = _literalMediaTitle(candidate);
-    if (literalExpected.isEmpty || literalCandidate.isEmpty) {
-      return (score: 0, basis: '');
-    }
-    if (literalExpected == literalCandidate) {
-      return (score: 120, basis: '原样一致');
-    }
-
-    final compactExpected = _normalizeMediaTitle(expected);
-    final compactCandidate = _normalizeMediaTitle(candidate);
-    if (compactExpected == compactCandidate) {
-      return (score: 100, basis: '标点归一一致');
-    }
-
-    final semanticExpected = _semanticMediaTitle(expected);
-    final semanticCandidate = _semanticMediaTitle(candidate);
-    if (semanticExpected == semanticCandidate) {
-      return (score: 95, basis: '连接符归一一致');
-    }
-
-    if (_containsRelatedTitle(literalExpected, literalCandidate)) {
-      return (score: 55, basis: '原样包含');
-    }
-    if (_containsRelatedTitle(compactExpected, compactCandidate)) {
-      return (score: 48, basis: '标点归一包含');
-    }
-    if (_containsRelatedTitle(semanticExpected, semanticCandidate)) {
-      return (score: 45, basis: '连接符归一包含');
-    }
-    return (score: 0, basis: '');
-  }
-
-  bool _containsRelatedTitle(String first, String second) {
-    if (first.length < 4 || second.length < 4) return false;
-    if (!first.contains(second) && !second.contains(first)) return false;
-    final containsCJK =
-        RegExp(r'[\u4e00-\u9fff]').hasMatch(first) ||
-        RegExp(r'[\u4e00-\u9fff]').hasMatch(second);
-    if (containsCJK) return true;
-
-    final longer = first.length >= second.length ? first : second;
-    final shorter = first.length >= second.length ? second : first;
-    final index = longer.indexOf(shorter);
-    if (index < 0) return false;
-    final word = RegExp(r'[a-z0-9]');
-    final startsAtBoundary = index == 0 || !word.hasMatch(longer[index - 1]);
-    final end = index + shorter.length;
-    final endsAtBoundary = end == longer.length || !word.hasMatch(longer[end]);
-    return startsAtBoundary && endsAtBoundary;
-  }
-
-  String _literalMediaTitle(String value) {
-    return _foldLatinDiacritics(value)
-        .toLowerCase()
-        .replaceAll(RegExp(r"[‘’`´]"), "'")
-        .replaceAll(RegExp(r'[‐‑‒–—―]'), '-')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-  }
-
-  String _foldLatinDiacritics(String value) {
-    const replacements = <String, String>{
-      'àáâãäåāăą': 'a',
-      'çćĉċč': 'c',
-      'ďđ': 'd',
-      'èéêëēĕėęě': 'e',
-      'ĝğġģ': 'g',
-      'ĥħ': 'h',
-      'ìíîïĩīĭįı': 'i',
-      'ĵ': 'j',
-      'ķ': 'k',
-      'ĺļľŀł': 'l',
-      'ñńņňŉŋ': 'n',
-      'òóôõöøōŏő': 'o',
-      'ŕŗř': 'r',
-      'śŝşš': 's',
-      'ţťŧ': 't',
-      'ùúûüũūŭůűų': 'u',
-      'ŵ': 'w',
-      'ýÿŷ': 'y',
-      'źżž': 'z',
-      'æ': 'ae',
-      'œ': 'oe',
-      'ß': 'ss',
-    };
-    var folded = value.toLowerCase();
-    for (final entry in replacements.entries) {
-      for (final character in entry.key.split('')) {
-        folded = folded.replaceAll(character, entry.value);
-      }
-    }
-    return folded;
+    final match = MediaTitleMatcher.bestTMDBMatch(
+      expected,
+      title: title,
+      originalTitle: originalTitle,
+    );
+    return (score: match.score, basis: match.basis);
   }
 
   String _normalizeMediaTitle(String value) {
-    return _literalMediaTitle(
-      value,
-    ).replaceAll(RegExp(r'[^a-z0-9\u4e00-\u9fff]+'), '');
-  }
-
-  String _semanticMediaTitle(String value) {
-    return _normalizeMediaTitle(
-      value.replaceAll('&', ' and ').replaceAll('＆', ' and '),
-    );
+    return MediaTitleMatcher.normalize(value);
   }
 
   String _safeCloudName(String value) {

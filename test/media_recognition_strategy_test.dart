@@ -101,6 +101,26 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'Гарри Поттер и Кубок огня') {
+      return {
+        'results': [
+          {
+            'id': 200020,
+            'media_type': 'movie',
+            'title': '哈利·波特与火焰杯',
+            'original_title': 'Harry Potter and the Goblet of Fire',
+            'release_date': '2005-11-16',
+          },
+          {
+            'id': 200021,
+            'media_type': 'movie',
+            'title': '哈利·波特：魔法史',
+            'original_title': 'Harry Potter: A History of Magic',
+            'release_date': '2005-01-01',
+          },
+        ],
+      };
+    }
     if (query == '春日来信') {
       return {
         'results': [
@@ -383,6 +403,29 @@ class _RecognitionAPI extends GuangyaAPI {
         'title': '新世纪福音战士新剧场版：终',
         'original_title': 'シン・エヴァンゲリオン劇場版:||',
         'release_date': '2021-03-08',
+      };
+    }
+    if (id == 200020) {
+      return {
+        'id': id,
+        'title': '哈利·波特与火焰杯',
+        'original_title': 'Harry Potter and the Goblet of Fire',
+        'release_date': '2005-11-16',
+        'translations': {
+          'translations': [
+            {
+              'data': {'title': 'Гарри Поттер и Кубок огня'},
+            },
+          ],
+        },
+      };
+    }
+    if (id == 200021) {
+      return {
+        'id': id,
+        'title': '哈利·波特：魔法史',
+        'original_title': 'Harry Potter: A History of Magic',
+        'release_date': '2005-01-01',
       };
     }
     if (id == 200003) {
@@ -848,6 +891,33 @@ void main() {
       isTrue,
     );
   });
+
+  test(
+    'recognition resolves localized Cyrillic candidates through translations',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'harry-potter-goblet-ru',
+          name: 'Гарри Поттер и Кубок огня (2005).mkv',
+          isDirectory: false,
+          cloudPath:
+              '/电影/DTS-X/Гарри Поттер/Гарри Поттер и Кубок огня (2005).mkv',
+        ),
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200020);
+      expect(recognized.title, '哈利·波特与火焰杯');
+    },
+  );
 
   test(
     'recognition removes two-digit edition years from old TV titles',
