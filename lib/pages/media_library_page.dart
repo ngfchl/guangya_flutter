@@ -420,9 +420,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   List<Map<String, dynamic>> _tmdbResults = [];
   bool _backupBusy = false;
   bool _detailSyncing = false;
-  String? _manualMatchPreparingResourceKey;
-  String? _manualMatchApplyingResourceKey;
-  Object? _manualMatchOperation;
+  final Map<String, Object> _manualMatchOperations = {};
+  final Set<String> _manualMatchPreparingResourceKeys = {};
+  final Set<String> _manualMatchApplyingResourceKeys = {};
   _MediaWork? _detailWork;
   var _detailSession = 0;
   late MediaLibraryBrowseFilter _wallFilter;
@@ -431,10 +431,17 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   String? _activeCollectionKey;
   final _searchController = TextEditingController();
 
-  bool get _manualMatchBusy => _manualMatchOperation != null;
+  Set<String> get _manualMatchBusyResourceKeys =>
+      _manualMatchOperations.keys.toSet();
 
-  String? get _manualMatchLoadingResourceKey =>
-      _manualMatchPreparingResourceKey ?? _manualMatchApplyingResourceKey;
+  Set<String> get _manualMatchLoadingResourceKeys => {
+    ..._manualMatchPreparingResourceKeys,
+    ..._manualMatchApplyingResourceKeys,
+  };
+
+  bool _workHasManualMatchOperation(_MediaWork work) => work.resources.any(
+    (resource) => _manualMatchOperations.containsKey(_mediaRecordKey(resource)),
+  );
 
   @override
   void initState() {
@@ -988,6 +995,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       return Stack(
         children: [
           _MediaDetailPanel(
+            key: ValueKey('media-detail:${selectedWork.key}'),
             work: selectedWork,
             onDownload: (item) =>
                 ref.read(fileProvider.notifier).downloadFile(item.file),
@@ -1008,11 +1016,13 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 unawaited(_refreshAndRecognizeDetail(selectedWork)),
             onManualMatch: (resource) =>
                 unawaited(_showManualTMDBMatch(selectedWork, resource)),
-            manualMatchBusy: _manualMatchBusy,
-            manualMatchLoadingResourceKey: _manualMatchLoadingResourceKey,
+            manualMatchBusyResourceKeys: _manualMatchBusyResourceKeys,
+            manualMatchLoadingResourceKeys: _manualMatchLoadingResourceKeys,
             onRemoveRecords: _removeMediaRecords,
             removalDisabled:
-                state.isScanning || _detailSyncing || _manualMatchBusy,
+                state.isScanning ||
+                _detailSyncing ||
+                _workHasManualMatchOperation(selectedWork),
           ),
           if (_detailSyncing)
             _detailLoadingOverlay(
@@ -1927,14 +1937,14 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     _MediaWork work,
     MediaLibraryItem target,
   ) async {
-    if (_manualMatchBusy) return;
     final targetKey = _mediaRecordKey(target);
+    if (_manualMatchOperations.containsKey(targetKey)) return;
     final operation = Object();
     final detailSession = _detailSession;
     final notifier = ref.read(mediaLibraryProvider.notifier);
     setState(() {
-      _manualMatchOperation = operation;
-      _manualMatchPreparingResourceKey = targetKey;
+      _manualMatchOperations[targetKey] = operation;
+      _manualMatchPreparingResourceKeys.add(targetKey);
     });
     try {
       // Manual matching only needs the selected resource's current filename
@@ -1947,7 +1957,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           resources.isEmpty) {
         return;
       }
-      setState(() => _manualMatchPreparingResourceKey = null);
+      setState(() => _manualMatchPreparingResourceKeys.remove(targetKey));
       final queryResource =
           resources
               .where(
@@ -1982,7 +1992,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           _detailWork == null) {
         return;
       }
-      setState(() => _manualMatchApplyingResourceKey = targetKey);
+      setState(() => _manualMatchApplyingResourceKeys.add(targetKey));
       if (candidate['media_type'] == 'tv') {
         await notifier.applyTMDBMatch(queryResource, candidate);
       } else {
@@ -2015,11 +2025,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               .firstOrNull;
       if (refreshed != null) setState(() => _detailWork = refreshed);
     } finally {
-      if (mounted && identical(_manualMatchOperation, operation)) {
+      if (mounted && identical(_manualMatchOperations[targetKey], operation)) {
         setState(() {
-          _manualMatchOperation = null;
-          _manualMatchPreparingResourceKey = null;
-          _manualMatchApplyingResourceKey = null;
+          _manualMatchOperations.remove(targetKey);
+          _manualMatchPreparingResourceKeys.remove(targetKey);
+          _manualMatchApplyingResourceKeys.remove(targetKey);
         });
       }
     }
@@ -4096,11 +4106,12 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final VoidCallback onRecognize;
   final ValueChanged<MediaLibraryItem> onManualMatch;
   final Future<void> Function(List<MediaLibraryItem>) onRemoveRecords;
-  final bool manualMatchBusy;
-  final String? manualMatchLoadingResourceKey;
+  final Set<String> manualMatchBusyResourceKeys;
+  final Set<String> manualMatchLoadingResourceKeys;
   final bool removalDisabled;
 
   const _MediaDetailPanel({
+    super.key,
     required this.work,
     required this.onDownload,
     required this.onPlay,
@@ -4108,8 +4119,8 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onRecognize,
     required this.onManualMatch,
     required this.onRemoveRecords,
-    this.manualMatchBusy = false,
-    this.manualMatchLoadingResourceKey,
+    this.manualMatchBusyResourceKeys = const {},
+    this.manualMatchLoadingResourceKeys = const {},
     this.removalDisabled = false,
   });
 
@@ -4570,8 +4581,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
 
   bool get _removalBlocked => widget.removalDisabled || _removingRecords;
 
-  bool get _manualMatchLoading =>
-      widget.manualMatchLoadingResourceKey == _mediaRecordKey(_resource);
+  bool get _manualMatchBusy =>
+      widget.manualMatchBusyResourceKeys.contains(_mediaRecordKey(_resource));
+
+  bool get _manualMatchLoading => widget.manualMatchLoadingResourceKeys
+      .contains(_mediaRecordKey(_resource));
 
   ParsedMediaName _parsedResource(MediaLibraryItem resource) =>
       ParsedMediaName.parse(
@@ -4760,7 +4774,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         ),
         ShadButton.outline(
           size: ShadButtonSize.sm,
-          onPressed: widget.manualMatchBusy
+          onPressed: _manualMatchBusy
               ? null
               : () => widget.onManualMatch(_resource),
           leading: manualMatchLoading
