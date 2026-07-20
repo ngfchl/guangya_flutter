@@ -12,18 +12,20 @@ class AppLogEntry {
   final DateTime timestamp;
   final AppLogLevel level;
   final String scope;
+  final String origin;
   final String message;
 
   const AppLogEntry({
     required this.timestamp,
     required this.level,
     required this.scope,
+    this.origin = '',
     required this.message,
   });
 
   String get text =>
       '${timestamp.toIso8601String()} [${_levelLabel(level)}] '
-      '[${_scopeLabel(scope)}] $message';
+      '[${_scopeLabel(scope)}]${origin.isEmpty ? '' : '[$origin]'} $message';
 
   static String _levelLabel(AppLogLevel level) => switch (level) {
     AppLogLevel.debug => '调试',
@@ -99,10 +101,12 @@ class AppLogger {
     StackTrace? stackTrace,
   }) {
     if (kReleaseMode && level == AppLogLevel.debug) return;
+    final origin = _callerOrigin(StackTrace.current);
     final entry = AppLogEntry(
       timestamp: DateTime.now(),
       level: level,
       scope: scope,
+      origin: origin,
       message: message,
     );
     final next = [...entries.value, entry];
@@ -131,5 +135,23 @@ class AppLogger {
           );
         })
         .catchError((_) {});
+  }
+
+  static String _callerOrigin(StackTrace stackTrace) {
+    for (final line in stackTrace.toString().split('\n')) {
+      if (line.contains('/app_logger.dart:')) continue;
+      final packageLocation = RegExp(
+        r'package:guangya_flutter/([^:]+):(\d+):\d+',
+      ).firstMatch(line);
+      final fileLocation = RegExp(
+        r'/(lib|test)/([^:]+):(\d+):\d+',
+      ).firstMatch(line);
+      final relativePath = packageLocation?.group(1) ?? fileLocation?.group(2);
+      final lineNumber = packageLocation?.group(2) ?? fileLocation?.group(3);
+      if (relativePath == null || lineNumber == null) continue;
+      final function = RegExp(r'^#\d+\s+(.+?)\s+\(').firstMatch(line)?.group(1);
+      return '$relativePath:$lineNumber${function == null ? '' : ' $function'}';
+    }
+    return '';
   }
 }
