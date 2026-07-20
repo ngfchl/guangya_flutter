@@ -63,6 +63,32 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'April Story') {
+      return {
+        'results': [
+          {
+            'id': 200001,
+            'media_type': 'movie',
+            'title': '四月物语',
+            'original_title': '四月物語',
+            'release_date': '1998-03-14',
+          },
+        ],
+      };
+    }
+    if (query == '春日来信') {
+      return {
+        'results': [
+          {
+            'id': 200002,
+            'media_type': 'movie',
+            'title': '春天的信',
+            'original_title': 'Spring Letter',
+            'release_date': '2008-04-11',
+          },
+        ],
+      };
+    }
     if (query == 'Chronicles of Grace and Grudges in the Primordial Age' ||
         query == '荒古恩仇录') {
       return {
@@ -110,6 +136,22 @@ class _RecognitionAPI extends GuangyaAPI {
         'title': 'Inception',
         'original_title': 'Inception',
         'release_date': '2010-07-16',
+      };
+    }
+    if (id == 200001) {
+      return {
+        'id': id,
+        'title': '四月物语',
+        'original_title': '四月物語',
+        'release_date': '1998-03-14',
+      };
+    }
+    if (id == 200002) {
+      return {
+        'id': id,
+        'title': '春天的信',
+        'original_title': 'Spring Letter',
+        'release_date': '2008-04-11',
       };
     }
     return {
@@ -306,4 +348,52 @@ void main() {
       ));
     },
   );
+
+  test('recognition accepts a localized unique exact-year result', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'april-story',
+        name: 'April.Story.1998.1080p.BluRay.mkv',
+        isDirectory: false,
+        cloudPath: '/电影/April Story/April.Story.1998.1080p.BluRay.mkv',
+      ),
+      directoryName: 'April Story',
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200001);
+    expect(recognized.title, '四月物语');
+  });
+
+  test('unique exact-year fallback also supports Chinese queries', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'spring-letter',
+        name: '春日来信.2008.1080p.BluRay.mkv',
+        isDirectory: false,
+        cloudPath: '/电影/春日来信/春日来信.2008.1080p.BluRay.mkv',
+      ),
+      directoryName: '春日来信',
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200002);
+    expect(recognized.title, '春天的信');
+  });
 }

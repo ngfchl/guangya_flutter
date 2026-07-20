@@ -3304,6 +3304,26 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           continue;
         }
 
+        final exactYearCandidates = <Map<String, dynamic>>[];
+        if (attemptYear != null) {
+          for (final value in values) {
+            if (value is! Map) continue;
+            final candidate = Map<String, dynamic>.from(value);
+            final type =
+                candidate['media_type']?.toString() ??
+                (mediaKind == 'movie' || mediaKind == 'tv' ? mediaKind : null);
+            if (type != 'movie' && type != 'tv') continue;
+            if (mediaKind != 'auto' && type != mediaKind) continue;
+            final releaseDate =
+                (candidate['release_date'] ?? candidate['first_air_date'])
+                    ?.toString() ??
+                '';
+            if (!releaseDate.startsWith('$attemptYear')) continue;
+            candidate['media_type'] = type;
+            exactYearCandidates.add(candidate);
+          }
+        }
+
         var relatedCount = 0;
         final related = <String, Map<String, dynamic>>{};
         for (final value in values) {
@@ -3329,12 +3349,23 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                         '')
                     .toString(),
           );
-          if (titleMatch.score > 0 && expectedYearMatches) {
+          final uniqueExactYearFallback =
+              titleMatch.score == 0 &&
+              attemptYear != null &&
+              expectedYearMatches &&
+              exactYearCandidates.length == 1 &&
+              exactYearCandidates.single['id']?.toString() ==
+                  candidate['id']?.toString();
+          if ((titleMatch.score > 0 || uniqueExactYearFallback) &&
+              expectedYearMatches) {
             relatedCount++;
             candidate['_recognitionTitle'] = variant.value;
             candidate['_recognitionSource'] = variant.source;
             candidate['_recognitionYear'] = attemptYear;
             candidate['_recognitionTitleScore'] = titleMatch.score;
+            if (uniqueExactYearFallback) {
+              candidate['_recognitionUniqueExactYear'] = true;
+            }
             final id = candidate['id']?.toString();
             final key = id == null || id.isEmpty
                 ? '$type:${candidate['title'] ?? candidate['name']}'
@@ -3342,10 +3373,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             related[key] = candidate;
           }
         }
+        final fallbackLabel =
+            related.values.any(
+              (candidate) => candidate['_recognitionUniqueExactYear'] == true,
+            )
+            ? '（含精确查询+年份唯一候选兜底）'
+            : '';
         attempts.add(
           '${variant.source}="${variant.value}"，'
           '${attemptYear == null ? '不带年份' : '年份=$attemptYear'} -> '
-          '${values.length} 条，相关 $relatedCount 条',
+          '${values.length} 条，相关 $relatedCount 条$fallbackLabel',
         );
         if (relatedCount > 0) {
           return _TMDBRecognitionSearchResult(
@@ -3428,7 +3465,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               .toString(),
         );
         var score = titleMatch.score;
-        if (score == 0) continue;
+        final uniqueExactYearFallback =
+            map['_recognitionUniqueExactYear'] == true;
+        if (score == 0 && !uniqueExactYearFallback) continue;
+        if (uniqueExactYearFallback) score = 1;
         if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
           score += 30;
         } else if (parsed.year != null && recognitionYear == null) {
@@ -3754,10 +3794,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 .toString(),
       );
       var score = titleMatch.score;
-      if (score == 0) {
+      final uniqueExactYearFallback =
+          candidate['_recognitionUniqueExactYear'] == true;
+      if (score == 0 && !uniqueExactYearFallback) {
         diagnostics.add('${describe(candidate, type)} -> 跳过：标题不相关');
         continue;
       }
+      if (uniqueExactYearFallback) score = 1;
       if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
         score += 30;
       } else if (parsed.year != null && recognitionYear == null) {
@@ -3766,7 +3809,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       candidate['media_type'] = type;
       scored.add((score: score, candidate: candidate));
       diagnostics.add(
-        '${describe(candidate, type)} -> 命中：${titleMatch.basis}，评分=$score',
+        '${describe(candidate, type)} -> 命中：'
+        '${uniqueExactYearFallback ? '精确查询+年份唯一候选兜底' : titleMatch.basis}，'
+        '评分=$score',
       );
     }
     scored.sort((a, b) => b.score.compareTo(a.score));
