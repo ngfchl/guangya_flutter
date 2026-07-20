@@ -8,6 +8,7 @@ import '../api/guangya_api.dart';
 import '../core/logging/app_logger.dart';
 import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/storage_manager.dart';
+import '../core/utils/json_deep.dart';
 import '../models/cloud_file.dart';
 import '../models/fast_transfer.dart';
 
@@ -360,7 +361,7 @@ class FileNotifier extends StateNotifier<FileState> {
                   orElse: () => null,
                 );
             final size =
-                _findIntDeep(detail, const [
+                JsonDeep.findInt(detail, const [
                   'size',
                   'fileSize',
                   'resSize',
@@ -396,30 +397,6 @@ class FileNotifier extends StateNotifier<FileState> {
         value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{},
       ),
     );
-  }
-
-  int? _findIntDeep(Map<String, dynamic> value, List<String> keys) {
-    for (final entry in value.entries) {
-      if (keys.contains(entry.key)) {
-        final parsed = int.tryParse(entry.value?.toString() ?? '');
-        if (parsed != null) return parsed;
-      }
-      if (entry.value is Map) {
-        final found = _findIntDeep(
-          Map<String, dynamic>.from(entry.value),
-          keys,
-        );
-        if (found != null) return found;
-      } else if (entry.value is List) {
-        for (final child in entry.value as List) {
-          if (child is Map) {
-            final found = _findIntDeep(Map<String, dynamic>.from(child), keys);
-            if (found != null) return found;
-          }
-        }
-      }
-    }
-    return null;
   }
 
   Future<Map<String, dynamic>> _fetchFiles(String? parentID) async {
@@ -992,10 +969,15 @@ class FileNotifier extends StateNotifier<FileState> {
     resolved = resolved.copyWith(
       gcid:
           detailFile?.gcid ??
-          _findStringDeep(detail, const ['gcid', 'gcId', 'gcidValue', 'hash']),
+          JsonDeep.findString(detail, const [
+            'gcid',
+            'gcId',
+            'gcidValue',
+            'hash',
+          ]),
       size:
           detailFile?.size ??
-          _findIntDeep(detail, const [
+          JsonDeep.findInt(detail, const [
             'size',
             'fileSize',
             'resSize',
@@ -1120,7 +1102,7 @@ class FileNotifier extends StateNotifier<FileState> {
     try {
       state = state.copyWith(statusMessage: '正在创建分享…');
       final result = await _api!.shareCreate([file.id], title: file.name);
-      final link = _findStringDeep(result, const [
+      final link = JsonDeep.findString(result, const [
         'url',
         'shareUrl',
         'share_url',
@@ -1155,10 +1137,11 @@ class FileNotifier extends StateNotifier<FileState> {
     String? url;
     if (file.isVideo) {
       final detail = await _api!.fsDetail(file.id);
-      final gcid = file.gcid ?? _findStringDeep(detail, const ['gcid', 'gcId']);
+      final gcid =
+          file.gcid ?? JsonDeep.findString(detail, const ['gcid', 'gcId']);
       if (gcid != null && gcid.isNotEmpty) {
         final videoResult = await _api!.vodDownloadURL(file.id, gcid);
-        url = _findStringDeep(videoResult, const [
+        url = JsonDeep.findString(videoResult, const [
           'signedURL',
           'signedUrl',
           'url',
@@ -1170,7 +1153,7 @@ class FileNotifier extends StateNotifier<FileState> {
     }
     if (url == null) {
       final result = await _api!.downloadURL(file.id);
-      url = _findStringDeep(result, const [
+      url = JsonDeep.findString(result, const [
         'url',
         'downloadUrl',
         'download_url',
@@ -1434,23 +1417,6 @@ class FileNotifier extends StateNotifier<FileState> {
     for (final entry in json.entries) {
       if (entry.value is Map<String, dynamic>) {
         final found = _extractInt(entry.value as Map<String, dynamic>, keys);
-        if (found != null) return found;
-      }
-    }
-    return null;
-  }
-
-  static String? _findStringDeep(Map<String, dynamic> json, List<String> keys) {
-    for (final key in keys) {
-      final v = json[key];
-      if (v != null && v.toString().isNotEmpty) return v.toString();
-    }
-    for (final entry in json.entries) {
-      if (entry.value is Map<String, dynamic>) {
-        final found = _findStringDeep(
-          entry.value as Map<String, dynamic>,
-          keys,
-        );
         if (found != null) return found;
       }
     }

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import '../../logging/app_logger.dart';
 import '../../config/app_config.dart';
 import '../../storage/storage_manager.dart';
+import '../../utils/json_deep.dart';
 import '../http_error.dart';
 import '../dio_client.dart';
 
@@ -156,8 +157,11 @@ class AuthInterceptor extends Interceptor {
       AppLogger.info('Auth', '登录凭据刷新完成');
 
       final data = res.data;
-      final newAccess = _findStringDeep(data, ['access_token', 'accessToken']);
-      final newRefresh = _findStringDeep(data, [
+      final newAccess = JsonDeep.findString(data, [
+        'access_token',
+        'accessToken',
+      ]);
+      final newRefresh = JsonDeep.findString(data, [
         'refresh_token',
         'refreshToken',
       ]);
@@ -238,21 +242,5 @@ class AuthInterceptor extends Interceptor {
   bool get _isAlreadyLoggedOut {
     return StorageManager.get<String>(StorageKeys.accessToken) == null &&
         StorageManager.get<String>(StorageKeys.refreshToken) == null;
-  }
-
-  static String? _findStringDeep(dynamic value, List<String> keys) {
-    if (value is Map) {
-      for (final key in keys) {
-        final v = value[key];
-        if (v != null && v.toString().isNotEmpty) return v.toString();
-      }
-      for (final entry in value.entries) {
-        if (entry.value is Map) {
-          final found = _findStringDeep(entry.value, keys);
-          if (found != null) return found;
-        }
-      }
-    }
-    return null;
   }
 }

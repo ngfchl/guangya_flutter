@@ -10,6 +10,7 @@ import '../core/http/http.dart';
 import '../core/logging/app_logger.dart';
 import '../core/http/http_error.dart';
 import '../core/config/app_config.dart';
+import '../core/utils/json_deep.dart';
 
 /// API client for Guangya Cloud Drive (光鸭云盘).
 /// 基于 Dio 封装，参考 harvest_flutter 的 HTTP 架构。
@@ -37,13 +38,13 @@ class GuangyaAPI {
 
   /// Update tokens from a JSON response.
   AuthTokens? updateTokens(Map<String, dynamic> value) {
-    final access = _findStringDeep(value, ['access_token', 'accessToken']);
+    final access = JsonDeep.findString(value, ['access_token', 'accessToken']);
     if (access == null) return null;
     accessToken = access;
     refreshTokenValue =
-        _findStringDeep(value, ['refresh_token', 'refreshToken']) ??
+        JsonDeep.findString(value, ['refresh_token', 'refreshToken']) ??
         refreshTokenValue;
-    final expires = _findIntDeep(value, ['expires_in', 'expiresIn']);
+    final expires = JsonDeep.findInt(value, ['expires_in', 'expiresIn']);
     if (expires != null) {
       tokenExpiresAt = DateTime.now().add(Duration(seconds: expires));
     }
@@ -686,7 +687,7 @@ class GuangyaAPI {
         parentID: parentID,
         md5: md5Base64,
       );
-      final taskID = _findStringDeep(token, ['taskId', 'task_id']);
+      final taskID = JsonDeep.findString(token, ['taskId', 'task_id']);
       if (taskID == null) {
         onProgress?.call(size, size);
         return token;
@@ -697,19 +698,19 @@ class GuangyaAPI {
     }
 
     token = await uploadToken(name: name, fileSize: size, parentID: parentID);
-    final taskID = _findStringDeep(token, ['taskId', 'task_id']);
+    final taskID = JsonDeep.findString(token, ['taskId', 'task_id']);
     if (taskID == null) throw Exception('响应缺少字段：taskId');
 
     final gcid = _calculateGCID(bytes);
     final canFlash = await checkCanFlashUpload(taskID, gcid);
-    if (_findBoolDeep(canFlash, ['canFlashUpload', 'can_flash_upload']) ==
+    if (JsonDeep.findBool(canFlash, ['canFlashUpload', 'can_flash_upload']) ==
         true) {
       final result = await uploadInfo(taskID);
       onProgress?.call(size, size);
       return result;
     }
 
-    final tokenData = _findMapDeep(token, ['data']) ?? token;
+    final tokenData = JsonDeep.findMap(token, ['data']) ?? token;
     await _cdnUpload(
       bytes,
       tokenData: tokenData,
@@ -730,16 +731,19 @@ class GuangyaAPI {
     void Function(int sent, int total)? onProgress,
   }) async {
     final creds =
-        _findMapDeep(tokenData, ['creds']) ?? const <String, dynamic>{};
-    final accessKeyID = _findStringDeep(creds, ['accessKeyID', 'accessKeyId']);
-    final secret = _findStringDeep(creds, ['secretAccessKey']);
-    final sessionToken = _findStringDeep(creds, ['sessionToken']);
-    final endpoint = _findStringDeep(tokenData, [
+        JsonDeep.findMap(tokenData, ['creds']) ?? const <String, dynamic>{};
+    final accessKeyID = JsonDeep.findString(creds, [
+      'accessKeyID',
+      'accessKeyId',
+    ]);
+    final secret = JsonDeep.findString(creds, ['secretAccessKey']);
+    final sessionToken = JsonDeep.findString(creds, ['sessionToken']);
+    final endpoint = JsonDeep.findString(tokenData, [
       'fullEndPoint',
       'fullEndpoint',
     ]);
-    final bucket = _findStringDeep(tokenData, ['bucketName']);
-    final objectPath = _findStringDeep(tokenData, ['objectPath']);
+    final bucket = JsonDeep.findString(tokenData, ['bucketName']);
+    final objectPath = JsonDeep.findString(tokenData, ['objectPath']);
     if (accessKeyID == null ||
         secret == null ||
         sessionToken == null ||
@@ -975,80 +979,6 @@ class GuangyaAPI {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────
-
-  static String? _findStringDeep(
-    Map<String, dynamic>? json,
-    List<String> keys,
-  ) {
-    if (json == null) return null;
-    for (final key in keys) {
-      final v = json[key];
-      if (v != null && v.toString().isNotEmpty) return v.toString();
-    }
-    for (final entry in json.entries) {
-      if (entry.value is Map<String, dynamic>) {
-        final found = _findStringDeep(
-          entry.value as Map<String, dynamic>,
-          keys,
-        );
-        if (found != null) return found;
-      }
-    }
-    return null;
-  }
-
-  static int? _findIntDeep(Map<String, dynamic>? json, List<String> keys) {
-    if (json == null) return null;
-    for (final key in keys) {
-      final v = json[key];
-      if (v != null) return v is int ? v : int.tryParse(v.toString());
-    }
-    return null;
-  }
-
-  static bool? _findBoolDeep(Map<String, dynamic>? json, List<String> keys) {
-    if (json == null) return null;
-    for (final key in keys) {
-      final value = json[key];
-      if (value is bool) return value;
-      if (value != null) {
-        final text = value.toString().toLowerCase();
-        if (text == 'true' || text == '1') return true;
-        if (text == 'false' || text == '0') return false;
-      }
-    }
-    for (final entry in json.entries) {
-      if (entry.value is Map) {
-        final found = _findBoolDeep(
-          Map<String, dynamic>.from(entry.value as Map),
-          keys,
-        );
-        if (found != null) return found;
-      }
-    }
-    return null;
-  }
-
-  static Map<String, dynamic>? _findMapDeep(
-    Map<String, dynamic>? json,
-    List<String> keys,
-  ) {
-    if (json == null) return null;
-    for (final key in keys) {
-      final value = json[key];
-      if (value is Map) return Map<String, dynamic>.from(value);
-    }
-    for (final entry in json.entries) {
-      if (entry.value is Map) {
-        final found = _findMapDeep(
-          Map<String, dynamic>.from(entry.value as Map),
-          keys,
-        );
-        if (found != null) return found;
-      }
-    }
-    return null;
-  }
 
   static String _subResourceQuery(Map<String, String> values) {
     if (values.isEmpty) return '';

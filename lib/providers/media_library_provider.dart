@@ -14,6 +14,7 @@ import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/media_library_store.dart';
 import '../core/storage/storage_manager.dart';
 import '../core/utils/concurrent_map.dart';
+import '../core/utils/json_deep.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import '../utils/media_known_match_index.dart';
@@ -849,7 +850,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     const folderName = '小黄鸭备份';
     final existing = await _findCloudBackupDestination();
     if (existing != null) return existing;
-    final folderID = _findStringDeep(
+    final folderID = JsonDeep.findString(
       await _api!.fsCreateDir(folderName, parentID: null),
       const ['fileId', 'file_id', 'resId', 'res_id', 'id'],
     );
@@ -3769,9 +3770,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         if (value != null) return value;
         return CloudFile.fromJson({
           'id': id,
-          'name': _findStringDeep(detail, const ['name', 'fileName']) ?? '',
+          'name': JsonDeep.findString(detail, const ['name', 'fileName']) ?? '',
           'isDir': true,
-          'parentId': _findStringDeep(detail, const [
+          'parentId': JsonDeep.findString(detail, const [
             'parentId',
             'parent_id',
             'parentID',
@@ -4340,7 +4341,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   ) async {
     try {
       final detail = await _api!.fsDetail(item.file.id);
-      final parentID = _findStringDeep(detail, const [
+      final parentID = JsonDeep.findString(detail, const [
         'parentId',
         'parent_id',
         'parentFileId',
@@ -5246,7 +5247,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           ).where((candidate) => candidate.id == file.id).firstOrNull;
           final gcid =
               detailFile?.gcid ??
-              _findStringDeep(detail, const [
+              JsonDeep.findString(detail, const [
                 'gcid',
                 'gcId',
                 'gcidValue',
@@ -5254,7 +5255,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               ]);
           final size =
               detailFile?.size ??
-              _findIntDeep(detail, const [
+              JsonDeep.findInt(detail, const [
                 'size',
                 'fileSize',
                 'resSize',
@@ -5284,33 +5285,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final values = [for (final file in files) enriched[file.id] ?? file];
     await FileMetadataCache.cacheFiles(values);
     return values;
-  }
-
-  String? _findStringDeep(Map<String, dynamic> value, List<String> keys) {
-    for (final entry in value.entries) {
-      if (keys.contains(entry.key) && entry.value != null) {
-        final text = entry.value.toString().trim();
-        if (text.isNotEmpty) return text;
-      }
-      if (entry.value is Map) {
-        final found = _findStringDeep(
-          Map<String, dynamic>.from(entry.value),
-          keys,
-        );
-        if (found != null) return found;
-      } else if (entry.value is List) {
-        for (final child in entry.value as List) {
-          if (child is Map) {
-            final found = _findStringDeep(
-              Map<String, dynamic>.from(child),
-              keys,
-            );
-            if (found != null) return found;
-          }
-        }
-      }
-    }
-    return null;
   }
 
   /// 下载接口有时会将签名链接包在对象或 JSON 字符串中，不能直接把
@@ -5397,30 +5371,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
     collect(value);
     return entries.isEmpty ? '无可用字段' : entries.join('、');
-  }
-
-  int? _findIntDeep(Map<String, dynamic> value, List<String> keys) {
-    for (final entry in value.entries) {
-      if (keys.contains(entry.key)) {
-        final parsed = int.tryParse(entry.value?.toString() ?? '');
-        if (parsed != null) return parsed;
-      }
-      if (entry.value is Map) {
-        final found = _findIntDeep(
-          Map<String, dynamic>.from(entry.value),
-          keys,
-        );
-        if (found != null) return found;
-      } else if (entry.value is List) {
-        for (final child in entry.value as List) {
-          if (child is Map) {
-            final found = _findIntDeep(Map<String, dynamic>.from(child), keys);
-            if (found != null) return found;
-          }
-        }
-      }
-    }
-    return null;
   }
 
   CloudFile _withPath(CloudFile file, String path) {
@@ -5874,16 +5824,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
     return fallback.copyWith(
       name:
-          _findStringDeep(exact, const ['fileName', 'name', 'resName']) ??
+          JsonDeep.findString(exact, const ['fileName', 'name', 'resName']) ??
           fallback.name,
-      gcid: _findStringDeep(exact, const ['gcid', 'gcId', 'gcidValue', 'hash']),
-      size: _findIntDeep(exact, const [
+      gcid: JsonDeep.findString(exact, const [
+        'gcid',
+        'gcId',
+        'gcidValue',
+        'hash',
+      ]),
+      size: JsonDeep.findInt(exact, const [
         'size',
         'fileSize',
         'resSize',
         'totalSize',
       ]),
-      parentID: _findStringDeep(exact, const [
+      parentID: JsonDeep.findString(exact, const [
         'parentId',
         'parent_id',
         'parentFileId',
