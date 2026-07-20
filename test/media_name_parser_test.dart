@@ -220,5 +220,60 @@ void main() {
         '1080p',
       );
     });
+
+    test('repairs spaced zero digits in parent folder years', () {
+      final value = ParsedMediaName.parse(
+        '第67集 七擒孟获.mp4',
+        directoryName: '16(2  3){TMDB-1 63 2}-未知分辨率',
+        directoryPath: '/电视剧/国产剧/其他剧/16(2  3){TMDB-1 63 2}-未知分辨率/第67集 七擒孟获.mp4',
+      );
+
+      expect(value.title, '其他剧');
+      expect(value.year, 2003);
+      expect(value.season, 1);
+      expect(value.episode, 67);
+      expect(value.isEpisode, isTrue);
+    });
+
+    test('extracts title and episode from a multi-bracket release name', () {
+      final value = ParsedMediaName.parse(
+        '[GM-Team][国漫][完美世界][Perfect World][2021][192][AVC][GB][1080P].mp4',
+        directoryName:
+            '[GM-Team][国漫][完美世界][Perfect World][2021][192-195][AVC][GB][1080P]',
+        directoryPath:
+            '/电视剧/国产剧/[GM-Team][国漫][完美世界][Perfect World][2021][192-195][AVC][GB][1080P]/'
+            '[GM-Team][国漫][完美世界][Perfect World][2021][192][AVC][GB][1080P].mp4',
+      );
+
+      expect(value.title, '完美世界');
+      expect(value.year, 2021);
+      expect(value.season, 1);
+      expect(value.episode, 192);
+      expect(value.resolution, '1080P');
+      expect(value.videoCodec, 'AVC');
+      expect(value.isEpisode, isTrue);
+    });
+
+    test('removes a single-letter Chinese folder sort prefix', () {
+      final value = ParsedMediaName.parse(
+        'S01E01.2026.2160p.60fps.WEB-DL.H265.10bit.AAC.mp4',
+        directoryName: 'Q-翘楚',
+        directoryPath:
+            '/电视剧/国产剧/Q-翘楚/S01E01.2026.2160p.60fps.WEB-DL.H265.10bit.AAC.mp4',
+      );
+
+      expect(value.title, '翘楚');
+      expect(value.year, 2026);
+      expect(value.season, 1);
+      expect(value.episode, 1);
+    });
+
+    test('extracts a season marker attached directly to a Chinese title', () {
+      final value = ParsedMediaName.parse('骄阳伴我S01');
+
+      expect(value.title, '骄阳伴我');
+      expect(value.season, 1);
+      expect(value.episode, isNull);
+    });
   });
 }

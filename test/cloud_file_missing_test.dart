@@ -110,11 +110,12 @@ void main() {
       expect(safeMediaCloudName('标题:2020\u0000.mkv'), '标题 2020.mkv');
     });
 
-    test('does not guess an ambiguous TMDB id with missing zero digits', () {
+    test('repairs spaces inside TMDB ids as zero digits', () {
       expect(
         mediaTMDBIDFromPath('/再见爱人(2 21){TMDB-13 99}-1 8 p/file.mp4'),
-        isNull,
+        13099,
       );
+      expect(mediaTMDBIDFromPath('/剧集/16(2  3){TMDB-1 63 2}/file.mp4'), 106302);
       expect(mediaTMDBIDFromPath('/再见爱人{TMDB-130099}/file.mp4'), 130099);
     });
 

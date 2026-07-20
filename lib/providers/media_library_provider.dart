@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 import '../api/guangya_api.dart';
@@ -121,10 +122,12 @@ String safeMediaCloudName(String value) {
 
 int? mediaTMDBIDFromPath(String cloudPath) {
   final match = RegExp(
-    r'[\[{(（【]\s*tmdb\s*[-_:]?\s*(\d+)\s*[\]})）】]',
+    r'[\[{(（【]\s*tmdb\s*[-_:]?\s*([\d\s]+)\s*[\]})）】]',
     caseSensitive: false,
   ).firstMatch(cloudPath);
-  return match == null ? null : int.tryParse(match.group(1)!);
+  if (match == null) return null;
+  final repaired = match.group(1)!.replaceAll(RegExp(r'\s'), '0');
+  return int.tryParse(repaired);
 }
 
 String recoverCloudFilePath({
@@ -180,6 +183,16 @@ class _MediaTitleVariant {
   final String source;
 
   const _MediaTitleVariant(this.value, this.source);
+}
+
+class _TMDBRecognitionSearchResult {
+  final List<Map<String, dynamic>> candidates;
+  final List<String> attempts;
+
+  const _TMDBRecognitionSearchResult({
+    required this.candidates,
+    required this.attempts,
+  });
 }
 
 class MediaDetailHeader {
@@ -2044,15 +2057,97 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
   }
 
+  @visibleForTesting
+  Future<MediaLibraryItem> recognizeMediaItemForTesting(
+    MediaLibraryItem item, {
+    required String apiKey,
+  }) {
+    return _recognizeMediaItem(item, apiKey, proxyHost: '', proxyPort: '');
+  }
+
+  @visibleForTesting
+  bool validatePersistedTMDBDetailsForTesting(
+    MediaLibraryItem item,
+    Map<String, dynamic> details,
+    TMDBMediaKind kind,
+  ) {
+    return _validatePersistedTMDBDetails(item, details, kind).isValid;
+  }
+
   /// Pulls current file metadata from the cloud before parsing and matching it.
   /// This is required after a file was renamed outside the media scanner.
   Future<List<MediaTMDBMatchRequest>> refreshAndRecognizeItems(
     Iterable<MediaLibraryItem> values,
   ) async {
+    final originals = values.toList(growable: false);
+    if (originals.isEmpty) return const [];
+    _cancelDetailSync = false;
+
+    final seriesGroups = <String, List<MediaLibraryItem>>{};
+    final ordinaryItems = <MediaLibraryItem>[];
+    for (final item in originals) {
+      final seriesKey = _seriesRecognitionKey(item);
+      if (seriesKey == null) {
+        ordinaryItems.add(item);
+      } else {
+        seriesGroups.putIfAbsent(seriesKey, () => []).add(item);
+      }
+    }
+    final stagedGroups = seriesGroups.entries
+        .where((entry) => entry.value.length > 1)
+        .toList(growable: false);
+    if (stagedGroups.isEmpty) {
+      return _refreshAndRecognizeItemsBatch(originals);
+    }
+
+    final representatives = stagedGroups
+        .map((entry) => entry.value.first)
+        .toList(growable: false);
+    _appendScanLog(
+      '[同步识别][调试] 检测到 ${stagedGroups.length} 个剧集目录，'
+      '先各识别 1 条代表资源，再处理同目录其余文件',
+    );
+    final pending = await _refreshAndRecognizeItemsBatch(representatives);
+    if (_cancelDetailSync) return pending;
+
+    final pendingSeriesKeys = <String>{};
+    for (final request in pending) {
+      for (final item in request.items) {
+        final key = _seriesRecognitionKey(item);
+        if (key != null) pendingSeriesKeys.add(key);
+      }
+    }
+    final remainingKeys = <(String, String)>{
+      for (final item in ordinaryItems) (item.libraryID, item.id),
+      for (final entry in stagedGroups)
+        if (!pendingSeriesKeys.contains(entry.key))
+          for (final item in entry.value.skip(1)) (item.libraryID, item.id),
+      for (final entry in seriesGroups.entries)
+        if (entry.value.length == 1)
+          (entry.value.first.libraryID, entry.value.first.id),
+    };
+    if (remainingKeys.isEmpty) return pending;
+
+    final refreshedItems = await _loadAllItems();
+    final refreshedByKey = {
+      for (final item in refreshedItems) (item.libraryID, item.id): item,
+    };
+    final remaining = <MediaLibraryItem>[
+      for (final original in originals)
+        if (remainingKeys.contains((original.libraryID, original.id)))
+          refreshedByKey[(original.libraryID, original.id)] ?? original,
+    ];
+    if (remaining.isEmpty) return pending;
+    final followUp = await _refreshAndRecognizeItemsBatch(remaining);
+    return [...pending, ...followUp];
+  }
+
+  Future<List<MediaTMDBMatchRequest>> _refreshAndRecognizeItemsBatch(
+    Iterable<MediaLibraryItem> values,
+  ) async {
     if (_api == null) return const [];
     final originals = values.toList();
     if (originals.isEmpty) return const [];
-    _cancelDetailSync = false;
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
     state = state.copyWith(statusMessage: '正在同步云盘文件信息…', clearError: true);
     final synced = <_SyncedMediaItem>[];
@@ -2288,6 +2383,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           '类型=${fallback.mediaKind?.name ?? 'automatic'}',
         );
         final persistedKind = original.mediaKind ?? fallback.mediaKind;
+        var rejectedPersistedMatch = false;
         var updated = original.tmdbID != null
             ? original.copyWith(
                 file: fallback.file,
@@ -2301,30 +2397,58 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                     updatedAt: DateTime.now(),
                   ) ??
                   fallback;
-        if (original.tmdbID != null &&
-            persistedKind != null &&
-            apiKey.trim().isNotEmpty) {
-          try {
-            final details = await _tmdbDetails(
-              original.tmdbID!,
-              persistedKind,
-              apiKey: apiKey,
-              proxyHost:
-                  StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
-              proxyPort:
-                  StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+        if (original.tmdbID != null && apiKey.trim().isNotEmpty) {
+          if (persistedKind == null) {
+            rejectedPersistedMatch = true;
+            updated = fallback.copyWith(
+              hasChineseAudio: original.hasChineseAudio,
+              hasChineseSubtitle: original.hasChineseSubtitle,
             );
-            updated = _itemFromTMDBDetails(updated, details);
             _appendScanLog(
-              '[同步识别][调试] 使用已保存的 TMDB ID 刷新详情：'
-              '${original.tmdbID}',
+              '[同步识别][调试] 已保存的 TMDB ID 缺少媒体类型，'
+              '废弃旧匹配并重新识别：${original.tmdbID}',
             );
-          } catch (error) {
-            _appendScanLog(
-              '[同步识别][调试] 已保存的 TMDB ID 详情刷新失败，'
-              '保留现有匹配：${original.tmdbID}，$error',
-              isError: true,
-            );
+          } else {
+            try {
+              final details = await _tmdbDetails(
+                original.tmdbID!,
+                persistedKind,
+                apiKey: apiKey,
+                proxyHost:
+                    StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+                proxyPort:
+                    StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+              );
+              final validation = _validatePersistedTMDBDetails(
+                fallback,
+                details,
+                persistedKind,
+              );
+              if (validation.isValid) {
+                updated = _itemFromTMDBDetails(updated, details);
+                _appendScanLog(
+                  '[同步识别][调试] 使用已保存的 TMDB ID 刷新详情：'
+                  '${original.tmdbID}（${validation.reason}）',
+                );
+              } else {
+                rejectedPersistedMatch = true;
+                updated = fallback.copyWith(
+                  hasChineseAudio: original.hasChineseAudio,
+                  hasChineseSubtitle: original.hasChineseSubtitle,
+                );
+                _appendScanLog(
+                  '[同步识别][调试] 已保存的 TMDB ID 与当前资源不一致，'
+                  '废弃旧匹配并重新识别：${original.tmdbID}，'
+                  '${validation.reason}',
+                );
+              }
+            } catch (error) {
+              _appendScanLog(
+                '[同步识别][调试] 已保存的 TMDB ID 详情刷新失败，'
+                '保留现有匹配：${original.tmdbID}，$error',
+                isError: true,
+              );
+            }
           }
         }
         if (updated.tmdbID == null && apiKey.trim().isNotEmpty) {
@@ -2359,7 +2483,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             if (seriesKey == null || updated.mediaKind == TMDBMediaKind.tv) {
               automaticMatches[recognitionKey] = updated;
             }
-          } else if (candidates.length > 1 && original.tmdbID == null) {
+          } else if (candidates.length > 1 &&
+              (original.tmdbID == null || rejectedPersistedMatch)) {
             pendingMatches.add(
               MediaTMDBMatchRequest(items: [fallback], candidates: candidates),
             );
@@ -2391,7 +2516,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         }
         // A temporary TMDB or network failure must not erase a previously
         // scraped item just because its refreshed file metadata was available.
-        if (updated.tmdbID == null && original.tmdbID != null) {
+        if (updated.tmdbID == null &&
+            original.tmdbID != null &&
+            !rejectedPersistedMatch) {
           updated = original.copyWith(
             file: fallback.file,
             updatedAt: DateTime.now(),
@@ -2716,12 +2843,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     state = state.copyWith(clearError: true);
   }
 
-  /// Searches the filename title first and only falls back to a few parsed
-  /// parent-directory titles when that query yields no related candidate.  A
-  /// release folder frequently carries the localized title, but querying all
-  /// ancestors for every item would needlessly increase TMDB traffic.
-  Future<List<Map<String, dynamic>>> _tmdbSearchForRecognition(
-    String primaryTitle,
+  /// Exhausts the ordered title evidence for one resource. Each title is
+  /// searched with the parsed year first, then without a year constraint.
+  /// Recognition only fails after every title/year strategy has been tried.
+  Future<_TMDBRecognitionSearchResult> _tmdbSearchForRecognition(
     List<_MediaTitleVariant> variants, {
     required String mediaKind,
     required int? year,
@@ -2729,74 +2854,95 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     required String proxyHost,
     required String proxyPort,
   }) async {
-    if (_api == null) return const [];
-    final queries = <String>[];
-    final seenQueries = <String>{};
-    void addQuery(String value) {
-      final normalized = _normalizeMediaTitle(value);
-      if (normalized.length < 2 || !seenQueries.add(normalized)) return;
-      queries.add(value.trim());
+    if (_api == null || variants.isEmpty) {
+      return const _TMDBRecognitionSearchResult(candidates: [], attempts: []);
     }
 
-    addQuery(primaryTitle);
+    final attempts = <String>[];
     for (final variant in variants) {
-      addQuery(variant.value);
-      if (queries.length >= 4) break;
-    }
-    if (queries.isEmpty) return const [];
+      final years = year == null ? <int?>[null] : <int?>[year, null];
+      for (final attemptYear in years) {
+        Map<String, dynamic> result;
+        try {
+          result = await _api!.tmdbSearch(
+            variant.value,
+            apiKey: apiKey,
+            mediaKind: mediaKind,
+            proxyHost: proxyHost,
+            proxyPort: proxyPort,
+            year: attemptYear,
+          );
+        } catch (error) {
+          attempts.add(
+            '${variant.source}="${variant.value}"，'
+            '${attemptYear == null ? '不带年份' : '年份=$attemptYear'} -> 请求失败：$error',
+          );
+          continue;
+        }
+        final values = result['results'];
+        if (values is! List) {
+          attempts.add(
+            '${variant.source}="${variant.value}"，'
+            '${attemptYear == null ? '不带年份' : '年份=$attemptYear'} -> 返回格式无效',
+          );
+          continue;
+        }
 
-    final merged = <String, Map<String, dynamic>>{};
-    for (final query in queries) {
-      Map<String, dynamic> result;
-      try {
-        result = await _api!.tmdbSearch(
-          query,
-          apiKey: apiKey,
-          mediaKind: mediaKind,
-          proxyHost: proxyHost,
-          proxyPort: proxyPort,
-          year: year,
+        var relatedCount = 0;
+        final related = <String, Map<String, dynamic>>{};
+        for (final value in values) {
+          if (value is! Map) continue;
+          final candidate = Map<String, dynamic>.from(value);
+          final type =
+              candidate['media_type']?.toString() ??
+              (mediaKind == 'movie' || mediaKind == 'tv' ? mediaKind : null);
+          if (type != 'movie' && type != 'tv') continue;
+          candidate['media_type'] = type;
+          final releaseDate =
+              (candidate['release_date'] ?? candidate['first_air_date'])
+                  ?.toString() ??
+              '';
+          final expectedYearMatches =
+              attemptYear == null || releaseDate.startsWith('$attemptYear');
+          final titleMatch = _bestMediaTitleMatch(
+            variant.value,
+            title: (candidate['title'] ?? candidate['name'] ?? '').toString(),
+            originalTitle:
+                (candidate['original_title'] ??
+                        candidate['original_name'] ??
+                        '')
+                    .toString(),
+          );
+          if (titleMatch.score > 0 && expectedYearMatches) {
+            relatedCount++;
+            candidate['_recognitionTitle'] = variant.value;
+            candidate['_recognitionSource'] = variant.source;
+            candidate['_recognitionYear'] = attemptYear;
+            candidate['_recognitionTitleScore'] = titleMatch.score;
+            final id = candidate['id']?.toString();
+            final key = id == null || id.isEmpty
+                ? '$type:${candidate['title'] ?? candidate['name']}'
+                : '$type:$id';
+            related[key] = candidate;
+          }
+        }
+        attempts.add(
+          '${variant.source}="${variant.value}"，'
+          '${attemptYear == null ? '不带年份' : '年份=$attemptYear'} -> '
+          '${values.length} 条，相关 $relatedCount 条',
         );
-      } catch (_) {
-        // Keep already collected results if a fallback query is unavailable.
-        if (merged.isNotEmpty) break;
-        rethrow;
+        if (relatedCount > 0) {
+          return _TMDBRecognitionSearchResult(
+            candidates: related.values.toList(growable: false),
+            attempts: attempts,
+          );
+        }
       }
-      final values = result['results'];
-      if (values is! List) continue;
-
-      var hasRelatedCandidate = false;
-      for (final value in values) {
-        if (value is! Map) continue;
-        final candidate = Map<String, dynamic>.from(value);
-        final type =
-            candidate['media_type']?.toString() ??
-            (mediaKind == 'movie' || mediaKind == 'tv' ? mediaKind : null);
-        if (type != 'movie' && type != 'tv') continue;
-        final releaseDate =
-            (candidate['release_date'] ?? candidate['first_air_date'])
-                ?.toString() ??
-            '';
-        if (year != null && !releaseDate.startsWith('$year')) continue;
-        final match = _bestMediaTitleMatchForVariants(
-          variants,
-          title: (candidate['title'] ?? candidate['name'] ?? '').toString(),
-          originalTitle:
-              (candidate['original_title'] ?? candidate['original_name'] ?? '')
-                  .toString(),
-        );
-        if (match.score > 0) hasRelatedCandidate = true;
-        final id = candidate['id']?.toString();
-        final key = id == null || id.isEmpty
-            ? '$type:${candidate['title'] ?? candidate['name']}'
-            : '$type:$id';
-        merged[key] = candidate;
-      }
-      // The first query already found a year-compatible related result.  Its
-      // candidates are enough; parent queries are only a recovery path.
-      if (hasRelatedCandidate) break;
     }
-    return merged.values.toList(growable: false);
+    return _TMDBRecognitionSearchResult(
+      candidates: const [],
+      attempts: attempts,
+    );
   }
 
   Future<MediaLibraryItem> _recognizeMediaItem(
@@ -2812,9 +2958,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         directoryName: _parentDirectoryName(fallback.file.cloudPath),
         directoryPath: fallback.file.cloudPath,
       );
-      // Automatic recognition deliberately uses TMDB multi-search. The
-      // filename-derived kind is only a hint and may be wrong for legacy rows.
-      final requestedKind = 'auto';
+      final requestedKind = parsed.isEpisode || parsed.season != null
+          ? 'tv'
+          : 'auto';
       final searchTitle = parsed.title.trim().isEmpty
           ? fallback.title
           : parsed.title;
@@ -2832,8 +2978,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         final item = _itemFromTMDBCandidate(fallback, taggedCandidate);
         return _itemFromTMDBDetails(item, taggedCandidate);
       }
-      final values = await _tmdbSearchForRecognition(
-        searchTitle,
+      final searchResult = await _tmdbSearchForRecognition(
         titleVariants,
         mediaKind: requestedKind,
         apiKey: apiKey,
@@ -2841,6 +2986,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         proxyPort: proxyPort,
         year: parsed.year,
       );
+      final values = searchResult.candidates;
       if (values.isEmpty) return fallback;
       final expectedType = requestedKind == 'auto' ? null : requestedKind;
       if (titleVariants.isEmpty) return fallback;
@@ -2852,13 +2998,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         if (type != 'movie' && type != 'tv') continue;
         final releaseDate =
             (map['release_date'] ?? map['first_air_date'])?.toString() ?? '';
-        // An explicit year in the file name is authoritative. Do not silently
-        // attach a remake or same-title work from a different year.
-        if (parsed.year != null && !releaseDate.startsWith('${parsed.year}')) {
+        final recognitionYear = _toInt(map['_recognitionYear']);
+        if (recognitionYear != null &&
+            !releaseDate.startsWith('$recognitionYear')) {
           continue;
         }
-        final titleMatch = _bestMediaTitleMatchForVariants(
-          titleVariants,
+        final recognitionTitle = map['_recognitionTitle']?.toString();
+        final titleMatch = _bestMediaTitleMatch(
+          recognitionTitle?.trim().isNotEmpty == true
+              ? recognitionTitle!
+              : searchTitle,
           title: (map['title'] ?? map['name'] ?? '').toString(),
           originalTitle: (map['original_title'] ?? map['original_name'] ?? '')
               .toString(),
@@ -2867,6 +3016,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         if (score == 0) continue;
         if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
           score += 30;
+        } else if (parsed.year != null && recognitionYear == null) {
+          // A no-year fallback is deliberately less trusted, but an exact
+          // title can still recover metadata whose release year is absent or
+          // differs from a release/package year embedded in the file name.
+          score -= 15;
         }
         if (score > bestScore) {
           bestScore = score;
@@ -3103,9 +3257,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       directoryName: _parentDirectoryName(fallback.file.cloudPath),
       directoryPath: fallback.file.cloudPath,
     );
-    // Automatic recognition deliberately uses TMDB multi-search. The
-    // filename-derived kind is only a hint and may be wrong for legacy rows.
-    final requestedKind = 'auto';
+    final requestedKind = parsed.isEpisode || parsed.season != null
+        ? 'tv'
+        : 'auto';
     final searchTitle = parsed.title.trim().isEmpty
         ? fallback.title
         : parsed.title;
@@ -3126,8 +3280,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       return [taggedCandidate];
     }
-    final values = await _tmdbSearchForRecognition(
-      searchTitle,
+    final searchResult = await _tmdbSearchForRecognition(
       titleVariants,
       mediaKind: requestedKind,
       apiKey: apiKey,
@@ -3135,11 +3288,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       proxyPort: proxyPort,
       year: parsed.year,
     );
+    final values = searchResult.candidates;
     if (values.isEmpty) {
       _appendScanLog(
         '[同步识别][调试] TMDB 未返回可解析候选：查询="$searchTitle"，'
         '类型=$requestedKind，年份参数=${parsed.year?.toString() ?? '未提供'}，'
-        '路径标题已尝试 ${titleVariants.length} 个',
+        '已执行 ${searchResult.attempts.length} 种策略。'
+        '${searchResult.attempts.join('；')}',
       );
       return const [];
     }
@@ -3169,12 +3324,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           (candidate['release_date'] ?? candidate['first_air_date'])
               ?.toString() ??
           '';
-      if (parsed.year != null && !releaseDate.startsWith('${parsed.year}')) {
+      final recognitionYear = _toInt(candidate['_recognitionYear']);
+      if (recognitionYear != null &&
+          !releaseDate.startsWith('$recognitionYear')) {
         diagnostics.add('${describe(candidate, type)} -> 跳过：年份不匹配');
         continue;
       }
-      final titleMatch = _bestMediaTitleMatchForVariants(
-        titleVariants,
+      final recognitionTitle = candidate['_recognitionTitle']?.toString();
+      final titleMatch = _bestMediaTitleMatch(
+        recognitionTitle?.trim().isNotEmpty == true
+            ? recognitionTitle!
+            : searchTitle,
         title: (candidate['title'] ?? candidate['name'] ?? '').toString(),
         originalTitle:
             (candidate['original_title'] ?? candidate['original_name'] ?? '')
@@ -3185,7 +3345,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         diagnostics.add('${describe(candidate, type)} -> 跳过：标题不相关');
         continue;
       }
-      if (parsed.year != null) score += 30;
+      if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
+        score += 30;
+      } else if (parsed.year != null && recognitionYear == null) {
+        score -= 15;
+      }
       candidate['media_type'] = type;
       scored.add((score: score, candidate: candidate));
       diagnostics.add(
@@ -3196,7 +3360,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     _appendScanLog(
       '[同步识别][调试] TMDB 候选评估：查询="$searchTitle"，'
       '类型=$requestedKind，年份参数=${parsed.year?.toString() ?? '未提供'}，原始 ${values.length} 条，'
-      '有效 ${scored.length} 条。${diagnostics.isEmpty ? '无可解析候选' : diagnostics.join('；')}',
+      '有效 ${scored.length} 条。策略：${searchResult.attempts.join('；')}。'
+      '${diagnostics.isEmpty ? '无可解析候选' : diagnostics.join('；')}',
     );
     return scored.map((entry) => entry.candidate).toList();
   }
@@ -3243,6 +3408,57 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   int? _tmdbIDFromPath(String cloudPath) {
     return mediaTMDBIDFromPath(cloudPath);
+  }
+
+  ({bool isValid, String reason}) _validatePersistedTMDBDetails(
+    MediaLibraryItem fallback,
+    Map<String, dynamic> details,
+    TMDBMediaKind kind,
+  ) {
+    final parsed = ParsedMediaName.parse(
+      fallback.file.name,
+      directoryName: _parentDirectoryName(fallback.file.cloudPath),
+      directoryPath: fallback.file.cloudPath,
+    );
+    if ((parsed.isEpisode || parsed.season != null) &&
+        kind != TMDBMediaKind.tv) {
+      return (isValid: false, reason: '剧集资源却保存为电影类型');
+    }
+
+    final releaseDate =
+        (details['release_date'] ?? details['first_air_date'])?.toString() ??
+        '';
+    if (parsed.year != null &&
+        releaseDate.isNotEmpty &&
+        !releaseDate.startsWith('${parsed.year}')) {
+      return (
+        isValid: false,
+        reason: '年份不一致：文件=${parsed.year}，TMDB=$releaseDate',
+      );
+    }
+
+    final expected = parsed.title.trim().isEmpty
+        ? fallback.title
+        : parsed.title;
+    final titleMatch = _bestMediaTitleMatchForVariants(
+      _recognitionTitleVariants(fallback, primaryTitle: expected),
+      title: (details['title'] ?? details['name'] ?? '').toString(),
+      originalTitle:
+          (details['original_title'] ?? details['original_name'] ?? '')
+              .toString(),
+    );
+    if (titleMatch.score < 95) {
+      return (
+        isValid: false,
+        reason: titleMatch.score == 0
+            ? '标题与文件名、目录名均不相关'
+            : '标题相似度不足：${titleMatch.basis}，评分=${titleMatch.score}',
+      );
+    }
+    return (
+      isValid: true,
+      reason: '${titleMatch.basis}，评分=${titleMatch.score}',
+    );
   }
 
   bool _isHighConfidenceTMDBCandidate(
@@ -3351,7 +3567,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     // TMDB match must also repair bare or otherwise irregular names such as
     // `1989.mp4`: `福星闯江湖.1989.mp4` is still a useful canonical name even
     // when the source provides no resolution or release information.
-    final baseName = '${item.title}$year$episode';
+    final baseName = item.mediaKind == TMDBMediaKind.tv && parsed.isEpisode
+        ? '${item.title}$episode$year'
+        : '${item.title}$year';
     final targetName =
         '${_safeCloudName(technical.isEmpty ? baseName : '$baseName.$technical')}'
         '${extension.isEmpty ? '' : '.$extension'}';
@@ -3521,6 +3739,22 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       variants.add(_MediaTitleVariant(value, source));
     }
 
+    final fileStem = fallback.file.name.replaceFirst(RegExp(r'\.[^.]+$'), '');
+    final episodeMarker = RegExp(
+      r'\bS\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,3}\b',
+      caseSensitive: false,
+    ).firstMatch(fileStem);
+    if (episodeMarker != null && episodeMarker.start > 0) {
+      final rawFileTitle = fileStem
+          .substring(0, episodeMarker.start)
+          .replaceAll(RegExp(r'[._]+'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      // Keep this before the parsed title. A real work title may itself end
+      // in `S01` or `S02`, while the following marker still identifies the
+      // resource episode, for example `Project.S01.S01E01`.
+      add(rawFileTitle, '文件名原始标题');
+    }
     add(primaryTitle, '文件名');
 
     final pathSegments = fallback.file.cloudPath
@@ -3540,7 +3774,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final segment = pathSegments[index];
       final parsed = ParsedMediaName.parse(segment);
       final source = index == lastDirectoryIndex ? '父目录' : '上级目录';
-      add(parsed.title, source);
+      // Keep the raw segment before the parsed title. A number that looks like
+      // a year can be part of the actual show name, for example `你好1983`.
+      add(segment, '$source原名');
+      add(parsed.title, '$source解析');
     }
 
     // Legacy rows may have a better parsed title than the current filename.
@@ -3627,7 +3864,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   bool _containsRelatedTitle(String first, String second) {
     if (first.length < 4 || second.length < 4) return false;
-    return first.contains(second) || second.contains(first);
+    if (!first.contains(second) && !second.contains(first)) return false;
+    final containsCJK =
+        RegExp(r'[\u4e00-\u9fff]').hasMatch(first) ||
+        RegExp(r'[\u4e00-\u9fff]').hasMatch(second);
+    if (containsCJK) return true;
+
+    final longer = first.length >= second.length ? first : second;
+    final shorter = first.length >= second.length ? second : first;
+    final index = longer.indexOf(shorter);
+    if (index < 0) return false;
+    final word = RegExp(r'[a-z0-9]');
+    final startsAtBoundary = index == 0 || !word.hasMatch(longer[index - 1]);
+    final end = index + shorter.length;
+    final endsAtBoundary = end == longer.length || !word.hasMatch(longer[end]);
+    return startsAtBoundary && endsAtBoundary;
   }
 
   String _literalMediaTitle(String value) {

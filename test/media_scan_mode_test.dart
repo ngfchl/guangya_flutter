@@ -52,4 +52,50 @@ void main() {
       isTrue,
     );
   });
+
+  test('media statistics count works instead of resource files', () {
+    final movieA = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'movie-a',
+        name: 'Movie.2024.1080p.mkv',
+        isDirectory: false,
+      ),
+    ).copyWith(tmdbID: 100, mediaKind: TMDBMediaKind.movie);
+    final movieB = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'movie-b',
+        name: 'Movie.2024.2160p.mkv',
+        isDirectory: false,
+      ),
+    ).copyWith(tmdbID: 100, mediaKind: TMDBMediaKind.movie);
+    final episodeA = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'episode-a',
+        name: 'Show.S01E01.mkv',
+        isDirectory: false,
+      ),
+    ).copyWith(tmdbID: 200, mediaKind: TMDBMediaKind.tv);
+    final episodeB = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'episode-b',
+        name: 'Show.S01E02.mkv',
+        isDirectory: false,
+      ),
+    ).copyWith(tmdbID: 200, mediaKind: TMDBMediaKind.tv);
+
+    final statistics = MediaLibraryStatistics.fromItems([
+      movieA,
+      movieB,
+      episodeA,
+      episodeB,
+    ]);
+
+    expect(statistics.total, 2);
+    expect(statistics.movies, 1);
+    expect(statistics.series, 1);
+  });
 }
