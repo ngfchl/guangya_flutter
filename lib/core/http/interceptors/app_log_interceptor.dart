@@ -13,21 +13,11 @@ class AppLogInterceptor extends Interceptor {
     final requestID = (++_requestSequence).toString().padLeft(6, '0');
     options.extra[_requestIDKey] = requestID;
     options.extra[_requestStartedAtKey] = DateTime.now().microsecondsSinceEpoch;
-    AppLogger.debug('HTTP', '${_requestLabel(options)} 开始');
     handler.next(options);
   }
 
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) {
-    final options = response.requestOptions;
-    final elapsed = _elapsed(options);
-    final message =
-        '${_requestLabel(options)} 完成（状态码 ${response.statusCode ?? '-'}，耗时 ${elapsed}ms）';
-    if (elapsed >= 5000) {
-      AppLogger.warning('HTTP', '慢请求：$message');
-    } else {
-      AppLogger.debug('HTTP', message);
-    }
     handler.next(response);
   }
 
