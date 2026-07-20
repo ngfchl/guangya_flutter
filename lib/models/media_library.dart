@@ -856,6 +856,17 @@ class ParsedMediaName {
     var title = boundaryMatch != null
         ? normalized.substring(0, boundaryMatch.start)
         : normalized;
+    // Movie archives may prefix the title with a studio/catalog label, for
+    // example `中国香港邵氏出品.1968.拜倒石榴裙`.
+    final catalogTitle = RegExp(
+      r'^(.+?)[ ._-]+((?:19|20)\d{2})[ ._-]+(.+)$',
+    ).firstMatch(normalized);
+    if (catalogTitle != null &&
+        RegExp(
+          r'(?:出品|片库|电影库|合集|收藏|目录)$',
+        ).hasMatch(catalogTitle.group(1)!.trim())) {
+      title = catalogTitle.group(3)!;
+    }
     if (yearMatches.length > 1 && yearMatches.first.start == 0) {
       title = title.replaceFirst(RegExp(r'^\s*\d{4}[ ._-]+'), '');
     }
@@ -875,11 +886,15 @@ class ParsedMediaName {
     ParsedMediaName? parent;
     if (episode == null && directoryName?.trim().isNotEmpty == true) {
       final trailingNumber = RegExp(
-        r'^(.+?)[\s._-]+(\d{1,3})$',
+        r'^(?:(.+?[\u4e00-\u9fff])(\d{1,3})|(.+?)[\s._-]+(\d{1,3}))$',
       ).firstMatch(title);
       if (trailingNumber != null) {
-        final candidateTitle = _cleanTitle(trailingNumber.group(1)!);
-        final candidateEpisode = int.tryParse(trailingNumber.group(2)!);
+        final candidateTitle = _cleanTitle(
+          trailingNumber.group(1) ?? trailingNumber.group(3)!,
+        );
+        final candidateEpisode = int.tryParse(
+          trailingNumber.group(2) ?? trailingNumber.group(4)!,
+        );
         final directory = ParsedMediaName.parse(directoryName!.trim());
         if (candidateEpisode != null &&
             candidateEpisode > 0 &&
@@ -1091,6 +1106,12 @@ class ParsedMediaName {
 
   static String _cleanTitle(String value) {
     var title = value.trim();
+
+    // A leading ASCII-only bracket is a scene release group, not a title.
+    title = title.replaceFirst(
+      RegExp(r'^\s*[\[【][A-Za-z0-9][A-Za-z0-9 ._-]{1,31}[\]】]\s*[-_. ]*'),
+      '',
+    );
 
     // Some library folders use a single Latin letter only as a manual sort
     // prefix, for example `Q-翘楚`. Strip it only when a Chinese title follows

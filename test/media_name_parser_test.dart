@@ -46,6 +46,35 @@ void main() {
       },
     );
 
+    test('removes a release group and parses an attached episode number', () {
+      final value = ParsedMediaName.parse(
+        '[TxTPS]-笑傲江湖37.国语字幕.风中使者.d-vb.rmvb',
+        directoryName: '笑傲江湖',
+        directoryPath: '/电视剧/国产剧/笑傲江湖/[TxTPS]-笑傲江湖37.国语字幕.风中使者.d-vb.rmvb',
+      );
+
+      expect(value.title, '笑傲江湖');
+      expect(value.season, 1);
+      expect(value.episode, 37);
+      expect(value.isEpisode, isTrue);
+    });
+
+    test('keeps an attached number when it belongs to the directory title', () {
+      final value = ParsedMediaName.parse('西游记2.mp4', directoryName: '西游记2');
+
+      expect(value.title, '西游记2');
+      expect(value.episode, isNull);
+      expect(value.isEpisode, isFalse);
+    });
+
+    test('extracts a movie title after studio metadata and year', () {
+      final value = ParsedMediaName.parse('中国香港邵氏出品.1968.拜倒石榴裙.mkv');
+
+      expect(value.title, '拜倒石榴裙');
+      expect(value.year, 1968);
+      expect(value.isEpisode, isFalse);
+    });
+
     test('keeps film year and ignores unresolvable disc stream names', () {
       final movie = ParsedMediaName.parse('加勒比海盗5：死无对证(2017).1080p.mp4');
       final stream = ParsedMediaName.parse(
