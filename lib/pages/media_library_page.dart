@@ -4640,6 +4640,11 @@ class _ManualTMDBMatchDialogState
     final viewport = MediaQuery.sizeOf(context);
     final detail = _detailCandidate;
     final content = ShadDialog(
+      // This dialog is embedded in an OverlayEntry rather than pushed as a
+      // route.  ShadDialog's default X calls Navigator.pop, which would pop
+      // the workspace route and leave the page blank.  Closing is handled by
+      // the explicit 取消/返回 actions and the popover's outside-tap logic.
+      closeIcon: const SizedBox.shrink(),
       title: Text(detail == null ? '手动匹配 TMDB' : 'TMDB 详情'),
       description: Text(
         detail == null ? '查看或选中匹配结果后，会应用到该作品的全部资源版本。' : '确认信息无误后使用此匹配项。',
