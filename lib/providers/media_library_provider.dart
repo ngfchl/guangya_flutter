@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/legacy.dart';
+import 'package:lpinyin/lpinyin.dart';
 
 import '../api/guangya_api.dart';
 import '../core/http/http_error.dart';
@@ -4571,6 +4572,28 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       add('$seriesTitle 第$season季', '$source季标题');
     }
 
+    void addSimplifiedChineseVariants(String? raw, String source) {
+      final value = raw?.trim() ?? '';
+      if (!RegExp(r'[\u4e00-\u9fff]').hasMatch(value)) return;
+      final simplified = ChineseHelper.convertToSimplifiedChinese(value);
+      if (simplified == value) return;
+      add(simplified, '$source简体标题');
+      final cleaned = ParsedMediaName.parse(simplified).title.trim();
+      if (cleaned.isNotEmpty && cleaned != simplified) {
+        add(cleaned, '$source简体标题清理后');
+      }
+      addTVSeasonTitleVariants(simplified, '$source简体标题');
+      addDescriptiveTitleVariants(simplified, '$source简体标题');
+      addChineseSubtitleVariants(simplified, '$source简体标题');
+
+      final firstInstallment = RegExp(
+        r'^(.+?[\u4e00-\u9fff])\s+1$',
+      ).firstMatch(cleaned.isEmpty ? simplified : cleaned);
+      if (firstInstallment != null) {
+        add(firstInstallment.group(1), '$source简体首部标题');
+      }
+    }
+
     void addWithVariants(String? raw, String source) {
       add(raw, source);
       addReleaseCleanVariant(raw, source);
@@ -4583,6 +4606,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       addBilingualTitleVariant(raw, source);
       addEnglishSpellingVariants(raw, source);
       addChineseSubtitleVariants(raw, source);
+      addSimplifiedChineseVariants(raw, source);
     }
 
     final fileStem = fallback.file.name.replaceFirst(RegExp(r'\.[^.]+$'), '');

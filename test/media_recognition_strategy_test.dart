@@ -253,6 +253,19 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == '奇异博士') {
+      return {
+        'results': [
+          {
+            'id': 200017,
+            'media_type': 'movie',
+            'title': '奇异博士',
+            'original_title': 'Doctor Strange',
+            'release_date': '2016-10-25',
+          },
+        ],
+      };
+    }
     if (query == '雷霆沙赞') {
       return {
         'results': [
@@ -417,6 +430,14 @@ class _RecognitionAPI extends GuangyaAPI {
         'name': '不擅长吸血的吸血鬼',
         'original_name': 'でこぼこ魔女の親子事情',
         'first_air_date': '2023-10-01',
+      };
+    }
+    if (id == 200017) {
+      return {
+        'id': id,
+        'title': '奇异博士',
+        'original_title': 'Doctor Strange',
+        'release_date': '2016-10-25',
       };
     }
     return {
@@ -965,5 +986,28 @@ void main() {
     );
 
     expect(recognized.tmdbID, 200016);
+  });
+
+  test('recognition adds simplified Chinese title variants', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'doctor-strange-traditional',
+        name: '奇異博士 1.mkv',
+        isDirectory: false,
+        cloudPath: '/电影/漫威系列/奇異博士/奇異博士 1/奇異博士 1.mkv',
+      ),
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200017);
+    expect(api.calls.map((call) => call.query), contains('奇异博士'));
   });
 }
