@@ -110,6 +110,15 @@ void main() {
       expect(safeMediaCloudName('标题:2020\u0000.mkv'), '标题 2020.mkv');
     });
 
+    test(
+      'recognized traditional Chinese titles are renamed in simplified Chinese',
+      () {
+        expect(simplifiedMediaTitle('奇異博士'), '奇异博士');
+        expect(simplifiedMediaTitle('復仇者聯盟4：終局之戰'), '复仇者联盟4：终局之战');
+        expect(simplifiedMediaTitle('钢铁人'), '钢铁人');
+      },
+    );
+
     test('repairs spaces inside TMDB ids as zero digits', () {
       expect(
         mediaTMDBIDFromPath('/再见爱人(2 21){TMDB-13 99}-1 8 p/file.mp4'),

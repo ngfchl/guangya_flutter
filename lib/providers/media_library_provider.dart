@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/legacy.dart';
-import 'package:lpinyin/lpinyin.dart';
+import 'package:pinyin/pinyin.dart';
 
 import '../api/guangya_api.dart';
 import '../core/http/http_error.dart';
@@ -122,6 +122,9 @@ String safeMediaCloudName(String value) {
   final fallback = cleaned.isEmpty ? 'Untitled' : cleaned;
   return fallback.length > 180 ? fallback.substring(0, 180).trim() : fallback;
 }
+
+String simplifiedMediaTitle(String value) =>
+    ChineseHelper.convertToSimplifiedChinese(value);
 
 int? mediaTMDBIDFromPath(String cloudPath) {
   final match = RegExp(
@@ -4214,9 +4217,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     // TMDB match must also repair bare or otherwise irregular names such as
     // `1989.mp4`: `福星闯江湖.1989.mp4` is still a useful canonical name even
     // when the source provides no resolution or release information.
+    final renameTitle = simplifiedMediaTitle(item.title);
     final baseName = item.mediaKind == TMDBMediaKind.tv && parsed.isEpisode
-        ? '${item.title}$episode$year'
-        : '${item.title}$year';
+        ? '$renameTitle$episode$year'
+        : '$renameTitle$year';
     final targetName =
         '${_safeCloudName(technical.isEmpty ? baseName : '$baseName.$technical')}'
         '${extension.isEmpty ? '' : '.$extension'}';
