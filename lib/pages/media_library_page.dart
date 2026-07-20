@@ -539,6 +539,24 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     );
   }
 
+  Future<bool> _deleteMediaFiles(List<MediaLibraryItem> records) async {
+    final files = <String, CloudFile>{
+      for (final record in records) record.file.id: record.file,
+    }.values.toList(growable: false);
+    if (files.isEmpty) return false;
+    final deleted = await ref.read(fileProvider.notifier).deleteFiles(files);
+    if (!deleted) return false;
+
+    final fileIDs = files.map((file) => file.id).toSet();
+    final allReferences = ref
+        .read(mediaLibraryProvider)
+        .allItems
+        .where((item) => fileIDs.contains(item.file.id))
+        .toList(growable: false);
+    await _removeMediaRecords(allReferences.isEmpty ? records : allReferences);
+    return true;
+  }
+
   @override
   void dispose() {
     // Provider writes are forbidden while Flutter is unmounting this State.
@@ -1019,6 +1037,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             manualMatchBusyResourceKeys: _manualMatchBusyResourceKeys,
             manualMatchLoadingResourceKeys: _manualMatchLoadingResourceKeys,
             onRemoveRecords: _removeMediaRecords,
+            onDeleteFiles: _deleteMediaFiles,
             removalDisabled:
                 state.isScanning ||
                 _detailSyncing ||
@@ -4106,6 +4125,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final VoidCallback onRecognize;
   final ValueChanged<MediaLibraryItem> onManualMatch;
   final Future<void> Function(List<MediaLibraryItem>) onRemoveRecords;
+  final Future<bool> Function(List<MediaLibraryItem>) onDeleteFiles;
   final Set<String> manualMatchBusyResourceKeys;
   final Set<String> manualMatchLoadingResourceKeys;
   final bool removalDisabled;
@@ -4119,6 +4139,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onRecognize,
     required this.onManualMatch,
     required this.onRemoveRecords,
+    required this.onDeleteFiles,
     this.manualMatchBusyResourceKeys = const {},
     this.manualMatchLoadingResourceKeys = const {},
     this.removalDisabled = false,
@@ -4705,9 +4726,53 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   Future<void> _removeResource(MediaLibraryItem resource) =>
       _confirmAndRemoveRecords(
         records: [resource],
-        title: '移除当前资源？',
+        title: '仅删除当前条目？',
         description: resource.file.name,
       );
+
+  Future<void> _deleteResourceFile(MediaLibraryItem resource) async {
+    if (_removalBlocked) return;
+    _removeMenuController.hide();
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('删除云盘文件？'),
+        description: Text(resource.file.name),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton.destructive(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            leading: const Icon(LucideIcons.trash2, size: 16),
+            child: const Text('删除文件'),
+          ),
+        ],
+        child: const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text('将删除云盘中的实际文件，并清理引用该文件的媒体库条目。此操作无法通过重新扫描恢复。'),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted || _removalBlocked) return;
+
+    final removedKey = _mediaRecordKey(resource);
+    final nextResource = _nextResourceAfterRemoving({removedKey});
+    setState(() => _removingRecords = true);
+    try {
+      final deleted = await widget.onDeleteFiles([resource]);
+      if (!deleted || !mounted) return;
+      if (nextResource == null) return;
+      if (widget.work.primary.mediaKind == TMDBMediaKind.tv) {
+        await _selectEpisode(nextResource);
+      } else {
+        setState(() => _resource = nextResource);
+      }
+    } finally {
+      if (mounted) setState(() => _removingRecords = false);
+    }
+  }
 
   Future<void> _removeEpisode(MediaLibraryItem resource) {
     final parsed = _parsedResource(resource);
@@ -4809,7 +4874,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 4, 8, 7),
                 child: Text(
-                  '管理媒体库记录',
+                  '删除',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -4819,9 +4884,16 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               ),
               _removalMenuItem(
                 icon: LucideIcons.fileX,
-                title: '移除当前资源',
-                description: _resource.file.name,
+                title: '仅删除条目（默认）',
+                description: '保留云盘文件，强制扫描后可重新加入',
                 onPressed: () => _removeResource(_resource),
+              ),
+              const SizedBox(height: 3),
+              _removalMenuItem(
+                icon: LucideIcons.trash2,
+                title: '删除文件',
+                description: '同时清理媒体库条目',
+                onPressed: () => _deleteResourceFile(_resource),
               ),
               if (isSeries && parsed.episode != null) ...[
                 const SizedBox(height: 3),
@@ -4837,6 +4909,13 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 5),
                 child: ShadSeparator.horizontal(),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
+                child: Text(
+                  '批量删除条目',
+                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                ),
               ),
               _removalMenuItem(
                 icon: LucideIcons.trash2,
