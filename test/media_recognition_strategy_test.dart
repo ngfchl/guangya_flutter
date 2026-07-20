@@ -102,6 +102,78 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'The Heaven Sword and Dragon Sabre') {
+      return {
+        'results': [
+          {
+            'id': 200004,
+            'media_type': 'tv',
+            'name': '倚天剑屠龙刀',
+            'original_name': 'The Heaven Sword and Dragon Sabre',
+            'first_air_date': '2001-04-09',
+          },
+        ],
+      };
+    }
+    if (query == '笑傲江湖') {
+      return {
+        'results': [
+          {
+            'id': 200005,
+            'media_type': 'tv',
+            'name': '笑傲江湖',
+            'original_name': 'State of Divinity',
+            'first_air_date': '1996-06-24',
+          },
+        ],
+      };
+    }
+    if (query == 'One Piece') {
+      return {
+        'results': [
+          {
+            'id': 200006,
+            'media_type': 'tv',
+            'name': '海贼王',
+            'original_name': 'ONE PIECE',
+            'first_air_date': '1999-10-20',
+          },
+        ],
+      };
+    }
+    if (query == '守护解放西') {
+      return {
+        'results': [
+          {
+            'id': 200007,
+            'media_type': 'tv',
+            'name': '守护解放西',
+            'original_name': '守护解放西',
+            'first_air_date': '2019-09-14',
+          },
+        ],
+      };
+    }
+    if (query == 'Leon The Professional') {
+      return {
+        'results': [
+          {
+            'id': 200008,
+            'media_type': 'movie',
+            'title': '这个杀手不太冷',
+            'original_title': 'Léon: The Professional',
+            'release_date': '1994-09-14',
+          },
+          {
+            'id': 200009,
+            'media_type': 'movie',
+            'title': '另一部电影',
+            'original_title': 'Another Film',
+            'release_date': '1994-01-01',
+          },
+        ],
+      };
+    }
     if (query == 'Chronicles of Grace and Grudges in the Primordial Age' ||
         query == '荒古恩仇录') {
       return {
@@ -173,6 +245,46 @@ class _RecognitionAPI extends GuangyaAPI {
         'title': '拳精',
         'original_title': '拳精',
         'release_date': '1978-12-01',
+      };
+    }
+    if (id == 200004) {
+      return {
+        'id': id,
+        'name': '倚天剑屠龙刀',
+        'original_name': 'The Heaven Sword and Dragon Sabre',
+        'first_air_date': '2001-04-09',
+      };
+    }
+    if (id == 200005) {
+      return {
+        'id': id,
+        'name': '笑傲江湖',
+        'original_name': 'State of Divinity',
+        'first_air_date': '1996-06-24',
+      };
+    }
+    if (id == 200006) {
+      return {
+        'id': id,
+        'name': '海贼王',
+        'original_name': 'ONE PIECE',
+        'first_air_date': '1999-10-20',
+      };
+    }
+    if (id == 200007) {
+      return {
+        'id': id,
+        'name': '守护解放西',
+        'original_name': '守护解放西',
+        'first_air_date': '2019-09-14',
+      };
+    }
+    if (id == 200008) {
+      return {
+        'id': id,
+        'title': '这个杀手不太冷',
+        'original_title': 'Léon: The Professional',
+        'release_date': '1994-09-14',
       };
     }
     return {
@@ -452,4 +564,141 @@ void main() {
       );
     },
   );
+
+  test('recognition tries controlled English spelling variants', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'heaven-sword-episode-1',
+        name: 'The.Heaven.Sword.and.Dragon.Saber.S01E01.2001.2160p.WEB-DL.mkv',
+        isDirectory: false,
+        cloudPath:
+            '/电视剧/倚天剑屠龙刀[全42集].The.Heaven.Sword.and.Dragon.Saber.S01.2001/'
+            'The.Heaven.Sword.and.Dragon.Saber.S01E01.2001.2160p.WEB-DL.mkv',
+      ),
+      directoryName: '倚天剑屠龙刀[全42集].The.Heaven.Sword.and.Dragon.Saber.S01.2001',
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200004);
+    expect(
+      api.calls.any(
+        (call) => call.query == 'The Heaven Sword and Dragon Sabre',
+      ),
+      isTrue,
+    );
+  });
+
+  test(
+    'recognition removes two-digit edition years from old TV titles',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'state-of-divinity-episode-1',
+          name: '01.rmvb',
+          isDirectory: false,
+          cloudPath: '/电视剧/[Tvb][笑傲江湖96][国语字幕43集][DVD-RMVB]/01.rmvb',
+        ),
+        directoryName: '[Tvb][笑傲江湖96][国语字幕43集][DVD-RMVB]',
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200005);
+      expect(api.calls.any((call) => call.query == '笑傲江湖'), isTrue);
+    },
+  );
+
+  test('episode markers override a stale movie classification', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'one-piece-1097',
+        name: '海贼王.One.Piece.S22E1097.1999.2160p.WEB-DL.mkv',
+        isDirectory: false,
+        cloudPath: '/电视剧/动漫/海贼王/海贼王.One.Piece.S22E1097.1999.2160p.WEB-DL.mkv',
+      ),
+      directoryName: '海贼王',
+    ).copyWith(mediaKind: TMDBMediaKind.movie);
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200006);
+    expect(recognized.mediaKind, TMDBMediaKind.tv);
+    expect(
+      api.calls.any(
+        (call) => call.query == 'One Piece' && call.mediaKind == 'tv',
+      ),
+      isTrue,
+    );
+  });
+
+  test('recognition tries a base title for numbered TV seasons', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'guard-jiefangxi-s02e01',
+        name: '守护解放西2.Guard.Jie.Fang.Xi.S02E01.2020.2160p.WEB-DL.mkv',
+        isDirectory: false,
+        cloudPath:
+            '/电视剧/纪录片/守护解放西2/守护解放西2.Guard.Jie.Fang.Xi.S02E01.2020.2160p.WEB-DL.mkv',
+      ),
+      directoryName: '守护解放西2',
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200007);
+    expect(api.calls.any((call) => call.query == '守护解放西'), isTrue);
+  });
+
+  test('recognition folds Latin diacritics during title matching', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'leon-1994',
+        name: 'Leon.The.Professional.1994.2160p.BluRay.mkv',
+        isDirectory: false,
+        cloudPath:
+            '/电影/Leon The Professional/Leon.The.Professional.1994.2160p.BluRay.mkv',
+      ),
+      directoryName: 'Leon The Professional',
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200008);
+  });
 }

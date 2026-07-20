@@ -4254,6 +4254,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }) {
     final variants = <_MediaTitleVariant>[];
     final seen = <String>{};
+    final parsedContext = ParsedMediaName.parse(
+      fallback.file.name,
+      directoryName: _parentDirectoryName(fallback.file.cloudPath),
+      directoryPath: fallback.file.cloudPath,
+    );
 
     bool isNoise(String value) {
       final normalized = value.trim();
@@ -4316,11 +4321,79 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       add(englishTitle, '$source英文标题');
     }
 
+    void addEnglishSpellingVariants(String? raw, String source) {
+      final value = raw?.trim() ?? '';
+      if (!RegExp(r'[A-Za-z]').hasMatch(value)) return;
+      const replacements = {
+        'saber': 'sabre',
+        'sabre': 'saber',
+        'color': 'colour',
+        'colour': 'color',
+        'center': 'centre',
+        'centre': 'center',
+        'honor': 'honour',
+        'honour': 'honor',
+        'gray': 'grey',
+        'grey': 'gray',
+      };
+      for (final entry in replacements.entries) {
+        final variant = value.replaceAllMapped(
+          RegExp('\\b${entry.key}\\b', caseSensitive: false),
+          (match) {
+            final matched = match.group(0)!;
+            if (matched == matched.toUpperCase()) {
+              return entry.value.toUpperCase();
+            }
+            if (matched[0] == matched[0].toUpperCase()) {
+              return '${entry.value[0].toUpperCase()}${entry.value.substring(1)}';
+            }
+            return entry.value;
+          },
+        );
+        if (variant != value) add(variant, '$source拼写变体');
+      }
+    }
+
+    void addReleaseCleanVariant(String? raw, String source) {
+      final value = raw?.trim() ?? '';
+      if (value.isEmpty) return;
+      final cleaned = ParsedMediaName.parse(value).title.trim();
+      if (cleaned.isNotEmpty && cleaned != value) {
+        add(cleaned, '$source清理后');
+      }
+      // Old TV folders frequently use a two-digit broadcast year as a suffix
+      // (笑傲江湖96). Keep the original evidence, then try the title without
+      // that edition suffix. This does not affect ordinary Title 1 names.
+      final withoutEdition = RegExp(
+        r'^(.+?[\u4e00-\u9fff][\u4e00-\u9fff\s]*)\s*(?:19|20)?\d{2}$',
+      ).firstMatch(value);
+      if (withoutEdition != null) {
+        add(withoutEdition.group(1), '$source去版本年份');
+      }
+    }
+
+    void addTVSeasonTitleVariants(String? raw, String source) {
+      if (!parsedContext.isEpisode || parsedContext.season == null) return;
+      final value = raw?.trim() ?? '';
+      final match = RegExp(
+        r'^(.+?[\u4e00-\u9fff])\s*(\d{1,2})$',
+      ).firstMatch(value);
+      if (match == null) return;
+      final season = int.tryParse(match.group(2)!);
+      if (season == null || season != parsedContext.season) return;
+      final seriesTitle = match.group(1)!.trim();
+      add(seriesTitle, '$source去季号');
+      add('$seriesTitle 第$season季', '$source季标题');
+    }
+
     void addWithVariants(String? raw, String source) {
       add(raw, source);
+      addReleaseCleanVariant(raw, source);
+      addTVSeasonTitleVariants(raw, source);
       // Prefer a complete alternate-language title before falling back to a
       // broader franchise name.
       addBilingualTitleVariant(raw, source);
+      addEnglishSpellingVariants(raw, source);
       addChineseSubtitleVariants(raw, source);
     }
 
@@ -4337,7 +4410,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       addWithVariants(suffixTitle, '括号后作品名');
     }
     final episodeMarker = RegExp(
-      r'\bS\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,3}\b',
+      r'\bS\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,4}\b',
       caseSensitive: false,
     ).firstMatch(fileStem);
     if (episodeMarker != null && episodeMarker.start > 0) {
@@ -4478,12 +4551,46 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   String _literalMediaTitle(String value) {
-    return value
+    return _foldLatinDiacritics(value)
         .toLowerCase()
         .replaceAll(RegExp(r"[‘’`´]"), "'")
         .replaceAll(RegExp(r'[‐‑‒–—―]'), '-')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+  }
+
+  String _foldLatinDiacritics(String value) {
+    const replacements = <String, String>{
+      'àáâãäåāăą': 'a',
+      'çćĉċč': 'c',
+      'ďđ': 'd',
+      'èéêëēĕėęě': 'e',
+      'ĝğġģ': 'g',
+      'ĥħ': 'h',
+      'ìíîïĩīĭįı': 'i',
+      'ĵ': 'j',
+      'ķ': 'k',
+      'ĺļľŀł': 'l',
+      'ñńņňŉŋ': 'n',
+      'òóôõöøōŏő': 'o',
+      'ŕŗř': 'r',
+      'śŝşš': 's',
+      'ţťŧ': 't',
+      'ùúûüũūŭůűų': 'u',
+      'ŵ': 'w',
+      'ýÿŷ': 'y',
+      'źżž': 'z',
+      'æ': 'ae',
+      'œ': 'oe',
+      'ß': 'ss',
+    };
+    var folded = value.toLowerCase();
+    for (final entry in replacements.entries) {
+      for (final character in entry.key.split('')) {
+        folded = folded.replaceAll(character, entry.value);
+      }
+    }
+    return folded;
   }
 
   String _normalizeMediaTitle(String value) {

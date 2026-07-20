@@ -59,6 +59,39 @@ void main() {
       expect(value.isEpisode, isTrue);
     });
 
+    test('keeps apostrophes in English titles', () {
+      final value = ParsedMediaName.parse(
+        "Li'l.Miss.Vampire.Can't.Suck.Right.S01E01.1080p.WEB-DL.mkv",
+      );
+
+      expect(value.title, "Li'l Miss Vampire Can't Suck Right");
+      expect(value.season, 1);
+      expect(value.episode, 1);
+    });
+
+    test('supports four-digit episode numbers for long-running series', () {
+      final value = ParsedMediaName.parse(
+        '海贼王.One.Piece.S22E1097.1999.2160p.WEB-DL.mkv',
+      );
+
+      expect(value.title, '海贼王');
+      expect(value.season, 22);
+      expect(value.episode, 1097);
+      expect(value.isEpisode, isTrue);
+    });
+
+    test('removes uploader suffixes from legacy TV folder titles', () {
+      final value = ParsedMediaName.parse(
+        '01.rmvb',
+        directoryName: '倚天屠龙记@猪猪乐园@zerocool9527',
+        directoryPath: '/电视剧/倚天屠龙记@猪猪乐园@zerocool9527/01.rmvb',
+      );
+
+      expect(value.title, '倚天屠龙记');
+      expect(value.season, 1);
+      expect(value.episode, 1);
+    });
+
     test('keeps an attached number when it belongs to the directory title', () {
       final value = ParsedMediaName.parse('西游记2.mp4', directoryName: '西游记2');
 

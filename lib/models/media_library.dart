@@ -780,9 +780,11 @@ class ParsedMediaName {
     final normalized = stem
         .replaceAll('&', ' and ')
         .replaceAll('＆', ' and ')
-        .replaceAll(RegExp(r'''[._!@#\$%^*+=|~`｜，、；？！…<>?"':;]+'''), ' ');
+        // Keep apostrophes in English contractions such as Li'l and Can't;
+        // they are part of the searchable title, not release separators.
+        .replaceAll(RegExp(r'''[._!@#\$%^*+=|~`｜，、；？！…<>?"\:;]+'''), ' ');
     final episodeMatch = RegExp(
-      r'\bS\s*0?(\d{1,2})[ ._-]*E\s*0?(\d{1,3})\b|\b(\d{1,2})x(\d{1,3})\b|第\s*(\d{1,2})\s*季\s*第?\s*(\d{1,3})\s*[集话期]',
+      r'\bS\s*0?(\d{1,2})[ ._-]*E\s*0?(\d{1,4})\b|\b(\d{1,2})x(\d{1,4})\b|第\s*(\d{1,2})\s*季\s*第?\s*(\d{1,4})\s*[集话期]',
       caseSensitive: false,
     ).firstMatch(normalized);
     int? season;
@@ -805,7 +807,7 @@ class ParsedMediaName {
     }
     final episodeOnly = season == null
         ? RegExp(
-            r'\b(?:E|EP|Episode)[ ._-]*(\d{1,3})\b|第\s*(\d{1,3})\s*[集话期]',
+            r'\b(?:E|EP|Episode)[ ._-]*(\d{1,4})\b|第\s*(\d{1,4})\s*[集话期]',
             caseSensitive: false,
           ).firstMatch(normalized)
         : null;
@@ -816,10 +818,10 @@ class ParsedMediaName {
     }
     episode ??= bracketedRelease.episode;
     final damagedSeasonEpisodeMarker = RegExp(
-      r'\bS\s+\d{1,2}|\bE\s+\d{1,3}',
+      r'\bS\s+\d{1,2}|\bE\s+\d{1,4}',
       caseSensitive: false,
     ).hasMatch(normalized);
-    final varietyPhase = RegExp(r'第\s*(\d{1,3})\s*期').firstMatch(normalized);
+    final varietyPhase = RegExp(r'第\s*(\d{1,4})\s*期').firstMatch(normalized);
     final varietyPart = RegExp(r'[（(]\s*([上下])\s*[）)]').firstMatch(normalized);
     if (damagedSeasonEpisodeMarker &&
         varietyPhase != null &&
@@ -841,7 +843,7 @@ class ParsedMediaName {
         ? yearMatches.last
         : yearMatches.firstOrNull;
     final boundary = RegExp(
-      r'(?:\b(?:19\d{2}|20\d{2}|S\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,3}|\d{1,2}x\d{1,3}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b|[\[(（]\s*\d[\d\s]{2,4}\s*[\])）]|第\s*\d{1,3}\s*[集话期])',
+      r'(?:\b(?:19\d{2}|20\d{2}|S\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,4}|\d{1,2}x\d{1,4}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b|[\[(（]\s*\d[\d\s]{2,4}\s*[\])）]|第\s*\d{1,4}\s*[集话期])',
       caseSensitive: false,
     );
     final boundaryMatches = boundary.allMatches(normalized).toList();
@@ -908,7 +910,7 @@ class ParsedMediaName {
     ParsedMediaName? parent;
     if (episode == null && directoryName?.trim().isNotEmpty == true) {
       final trailingNumber = RegExp(
-        r'^(?:(.+?[\u4e00-\u9fff])(\d{1,3})|(.+?)[\s._-]+(\d{1,3}))$',
+        r'^(?:(.+?[\u4e00-\u9fff])(\d{1,4})|(.+?)[\s._-]+(\d{1,4}))$',
       ).firstMatch(title);
       if (trailingNumber != null) {
         final candidateTitle = _cleanTitle(
@@ -932,7 +934,7 @@ class ParsedMediaName {
     final genericName =
         title.isEmpty ||
         RegExp(r'^\d+$').hasMatch(title) ||
-        RegExp(r'^S\d{1,2}E\d{1,3}$', caseSensitive: false).hasMatch(title);
+        RegExp(r'^S\d{1,2}E\d{1,4}$', caseSensitive: false).hasMatch(title);
     if (genericName &&
         ((directoryName != null && directoryName.trim().isNotEmpty) ||
             (directoryPath != null && directoryPath.trim().isNotEmpty))) {
@@ -1160,6 +1162,19 @@ class ParsedMediaName {
       ),
       '',
     );
+
+    // Collection folders often append uploader/account labels after the
+    // actual title, for example 倚天屠龙记@猪猪乐园@zerocool9527 or
+    // 片名 6v电影 地址发布页. These labels are not useful search terms.
+    title = title
+        .replaceFirst(RegExp(r'\s*[@＠].*$'), '')
+        .replaceFirst(
+          RegExp(
+            r'\s+(?:猪猪乐园|6v电影|地址发布页|收藏不迷路|不迷路|发布页|V信|微信|Q裙|QQ群|公众号|下载地址).*$',
+            caseSensitive: false,
+          ),
+          '',
+        );
 
     // Some library folders use a single Latin letter only as a manual sort
     // prefix, for example `Q-翘楚`. Strip it only when a Chinese title follows
