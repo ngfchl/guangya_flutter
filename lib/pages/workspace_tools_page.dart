@@ -3085,207 +3085,6 @@ class _ToolSection extends StatelessWidget {
   }
 }
 
-class _MediaOrganizerFilePicker extends ConsumerStatefulWidget {
-  const _MediaOrganizerFilePicker();
-
-  @override
-  ConsumerState<_MediaOrganizerFilePicker> createState() =>
-      _MediaOrganizerFilePickerState();
-}
-
-class _MediaOrganizerFilePickerState
-    extends ConsumerState<_MediaOrganizerFilePicker> {
-  final _path = <CloudFile>[];
-  List<CloudFile> _files = const [];
-  bool _loading = true;
-  String? _error;
-
-  String? get _parentID => _path.lastOrNull?.id;
-  String get _pathLabel =>
-      _path.isEmpty ? '云盘根目录' : _path.map((file) => file.name).join(' / ');
-
-  @override
-  void initState() {
-    super.initState();
-    Future.microtask(_load);
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final response = await ref
-          .read(authProvider.notifier)
-          .api
-          .fsFiles(parentID: _parentID, pageSize: 1000);
-      final files =
-          _extractCloudFiles(
-              response,
-            ).where((file) => file.isDirectory || file.isVideo).toList()
-            ..sort((a, b) {
-              if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
-              return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-            });
-      if (mounted) setState(() => _files = files);
-    } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  List<CloudFile> _extractCloudFiles(Map<String, dynamic> response) {
-    final files = <String, CloudFile>{};
-    void visit(dynamic node) {
-      if (node is Map) {
-        try {
-          final file = CloudFile.fromJson(Map<String, dynamic>.from(node));
-          if (file.id.isNotEmpty) files[file.id] = file;
-        } catch (_) {}
-        for (final child in node.values) {
-          visit(child);
-        }
-      } else if (node is List) {
-        for (final child in node) {
-          visit(child);
-        }
-      }
-    }
-
-    visit(response);
-    return files.values.toList(growable: false);
-  }
-
-  void _selectFile(CloudFile file) {
-    final path = _pathLabel == '云盘根目录'
-        ? '/${file.name}'
-        : '/$_pathLabel/${file.name}';
-    Navigator.of(
-      context,
-    ).pop(file.copyWith(parentID: _parentID, cloudPath: path));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return ShadDialog(
-      title: const Text('选择整理起点'),
-      description: Text('选择一个媒体文件，将整理它所在文件夹中的已识别视频。\n当前：$_pathLabel'),
-      actions: [
-        ShadButton.outline(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-      ],
-      child: Material(
-        type: MaterialType.transparency,
-        child: SizedBox(
-          width: 620,
-          height: 430,
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  ShadButton.ghost(
-                    size: ShadButtonSize.sm,
-                    onPressed: _path.isEmpty
-                        ? null
-                        : () {
-                            setState(() => _path.removeLast());
-                            _load();
-                          },
-                    leading: const Icon(Icons.arrow_back_rounded, size: 16),
-                    child: const Text('返回上级'),
-                  ),
-                  const Spacer(),
-                  ShadTooltip(
-                    builder: (_) => const Text('刷新'),
-                    child: ShadButton.ghost(
-                      size: ShadButtonSize.sm,
-                      onPressed: _loading ? null : _load,
-                      child: const Icon(Icons.refresh_rounded, size: 16),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: cs.border),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: _loading
-                      ? const Center(
-                          child: AppLoadingIndicator(
-                            size: AppLoadingSize.page,
-                            label: '正在读取目录',
-                          ),
-                        )
-                      : _error != null
-                      ? Center(
-                          child: Text(
-                            _error!,
-                            style: TextStyle(color: cs.destructive),
-                          ),
-                        )
-                      : _files.isEmpty
-                      ? Center(
-                          child: Text(
-                            '当前目录没有文件夹或视频',
-                            style: TextStyle(color: cs.mutedForeground),
-                          ),
-                        )
-                      : ListView.separated(
-                          itemCount: _files.length,
-                          separatorBuilder: (_, _) =>
-                              Divider(height: 1, color: cs.border),
-                          itemBuilder: (context, index) {
-                            final file = _files[index];
-                            return ListTile(
-                              leading: Icon(
-                                file.isDirectory
-                                    ? Icons.folder_rounded
-                                    : Icons.movie_outlined,
-                                color: file.isDirectory
-                                    ? cs.primary
-                                    : cs.mutedForeground,
-                              ),
-                              title: Text(
-                                file.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: file.isDirectory
-                                  ? null
-                                  : Text(file.formattedSize),
-                              trailing: Icon(
-                                file.isDirectory
-                                    ? Icons.chevron_right_rounded
-                                    : Icons.check_circle_outline_rounded,
-                                size: 18,
-                              ),
-                              onTap: file.isDirectory
-                                  ? () {
-                                      setState(() => _path.add(file));
-                                      _load();
-                                    }
-                                  : () => _selectFile(file),
-                            );
-                          },
-                        ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _MediaOrganizerEntry {
   final MediaLibraryItem item;
   final String? rootID;
@@ -3315,10 +3114,12 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
   final _tmdbDetailsCache = <String, Map<String, dynamic>>{};
   final _destinationFiles = <String, Map<String, String>>{};
   final _failures = <String, String>{};
-  CloudFile? _anchorFile;
+  String? _selectedLibraryID;
   String? _libraryName;
-  int _folderVideoCount = 0;
+  int _resourceCount = 0;
+  int _directoryCount = 0;
   int _unmatchedCount = 0;
+  int _outsideSourceCount = 0;
   bool _loading = false;
   bool _running = false;
   bool _stopRequested = false;
@@ -3360,43 +3161,31 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
   Future<void> _prepare() async {
     if (_loading || _running) return;
     final state = ref.read(mediaLibraryProvider);
-    final anchorFile = _anchorFile;
-    if (anchorFile == null) {
-      setState(() => _status = '请先选择一个媒体文件');
+    final libraryID = _selectedLibraryID ?? state.selectedLibraryID;
+    final library = state.libraries
+        .where((candidate) => candidate.id == libraryID)
+        .firstOrNull;
+    if (library == null) {
+      setState(() => _status = '请先选择一个媒体库');
       return;
     }
     setState(() {
       _loading = true;
-      _status = '正在读取已识别项目';
+      _status = '正在读取「${library.name}」的已识别资源';
     });
     try {
-      final folderResponse = await ref
-          .read(authProvider.notifier)
-          .api
-          .fsFiles(parentID: anchorFile.parentID, pageSize: 1000);
-      final folderFiles = _extractFiles(folderResponse)
-          .where((file) => !file.isDirectory && file.isVideo)
-          .toList(growable: false);
-      final folderIDs = folderFiles.map((file) => file.id).toSet();
-      final library = _libraryForFolder(anchorFile, folderIDs, state);
-      if (library == null) {
-        if (mounted) {
-          setState(() {
-            _entries = const [];
-            _status = '当前文件夹的内容未关联到任何媒体库';
-          });
-        }
-        return;
-      }
-      final items = <(String, String), MediaLibraryItem>{
+      final libraryItems = <String, MediaLibraryItem>{
         for (final item in state.allItems)
-          if (item.libraryID == library.id &&
-              folderIDs.contains(item.file.id) &&
-              item.tmdbID != null &&
-              (item.mediaKind == TMDBMediaKind.movie ||
-                  item.mediaKind == TMDBMediaKind.tv))
-            (item.libraryID, item.id): item,
+          if (item.libraryID == library.id) item.id: item,
       }.values.toList(growable: false);
+      final items = libraryItems
+          .where(
+            (item) =>
+                item.tmdbID != null &&
+                (item.mediaKind == TMDBMediaKind.movie ||
+                    item.mediaKind == TMDBMediaKind.tv),
+          )
+          .toList(growable: false);
       final api = ref.read(authProvider.notifier).api;
       final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
       final proxyHost =
@@ -3443,7 +3232,13 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
       }
       final rules = _categoryRules();
       final entries = <_MediaOrganizerEntry>[];
+      var outsideSourceCount = 0;
       for (final item in items) {
+        final source = _sourceForItem(item, library);
+        if (source == null || item.id == source.rootID) {
+          outsideSourceCount += 1;
+          continue;
+        }
         final detail = details['${item.mediaKind!.name}:${item.tmdbID}'];
         final language =
             (detail?['original_language'] ?? detail?['originalLanguage'] ?? '')
@@ -3473,15 +3268,14 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
           if (item.mediaKind == TMDBMediaKind.tv && parsed.season != null)
             'Season ${parsed.season!.toString().padLeft(2, '0')}',
         ];
-        final currentPath = _parentPath(anchorFile.cloudPath);
         final targetPath = [
-          if (currentPath.isNotEmpty) currentPath,
+          if (source.path.isNotEmpty) _normalizeCloudPath(source.path),
           ...folders,
         ].join('/');
         entries.add(
           _MediaOrganizerEntry(
             item: item,
-            rootID: anchorFile.parentID,
+            rootID: source.rootID,
             folders: folders,
             targetPath: targetPath,
           ),
@@ -3490,81 +3284,73 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
       if (!mounted) return;
       setState(() {
         _entries = entries;
-        _anchorFile = anchorFile;
+        _selectedLibraryID = library.id;
         _libraryName = library.name;
-        _folderVideoCount = folderFiles.length;
-        _unmatchedCount = folderFiles.length - items.length;
+        _resourceCount = libraryItems.length;
+        _directoryCount = libraryItems
+            .where((item) => item.file.isDirectory)
+            .length;
+        _unmatchedCount = libraryItems.length - items.length;
+        _outsideSourceCount = outsideSourceCount;
         _failures.clear();
         _selectedKeys.clear();
         _status = entries.isEmpty
-            ? '所选文件夹没有可整理的已识别资源'
-            : '已读取 ${folderFiles.length} 个视频，生成 ${entries.length} 条整理预览';
+            ? '「${library.name}」没有可整理的已识别资源'
+            : '已读取 ${libraryItems.length} 个资源，生成 ${entries.length} 条整理预览';
       });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _entries = const [];
+          _selectedKeys.clear();
+          _status = '生成整理预览失败：$error';
+        });
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  MediaLibraryDefinition? _libraryForFolder(
-    CloudFile file,
-    Set<String> folderFileIDs,
-    MediaLibraryState state,
+  MediaLibrarySource? _sourceForItem(
+    MediaLibraryItem item,
+    MediaLibraryDefinition library,
   ) {
-    final counts = <String, int>{};
-    for (final item in state.allItems) {
-      if (folderFileIDs.contains(item.file.id)) {
-        counts.update(item.libraryID, (count) => count + 1, ifAbsent: () => 1);
-      }
-    }
-    if (counts.isNotEmpty) {
-      final libraryID = counts.entries
-          .reduce((a, b) => a.value >= b.value ? a : b)
-          .key;
-      final indexed = state.libraries
-          .where((library) => library.id == libraryID)
-          .firstOrNull;
-      if (indexed != null) return indexed;
-    }
-    final path = file.cloudPath.replaceAll(RegExp(r'\\+'), '/');
-    final matches = <MediaLibraryDefinition>[];
-    for (final library in state.libraries) {
-      if (library.sources.any((source) {
-        final sourcePath = source.path
-            .replaceAll(RegExp(r'\\+'), '/')
-            .replaceFirst(RegExp(r'/$'), '');
-        return source.rootID == file.parentID ||
-            (sourcePath.isNotEmpty &&
-                (path == sourcePath || path.startsWith('$sourcePath/')));
-      })) {
-        matches.add(library);
-      }
-    }
-    matches.sort((a, b) => b.rootPath.length.compareTo(a.rootPath.length));
+    final itemPath = _normalizeCloudPath(item.file.cloudPath);
+    final matches =
+        library.sources.where((source) {
+          final sourcePath = _normalizeCloudPath(source.path);
+          return source.rootID == item.file.parentID ||
+              (sourcePath.isNotEmpty &&
+                  (itemPath == sourcePath ||
+                      itemPath.startsWith('$sourcePath/')));
+        }).toList()..sort(
+          (a, b) => _normalizeCloudPath(
+            b.path,
+          ).length.compareTo(_normalizeCloudPath(a.path).length),
+        );
     return matches.firstOrNull;
   }
 
-  String _parentPath(String path) {
-    final normalized = path.replaceAll(RegExp(r'\\+'), '/');
-    final index = normalized.lastIndexOf('/');
-    if (index <= 0) return '';
-    return normalized.substring(0, index);
-  }
+  String _normalizeCloudPath(String path) => path
+      .replaceAll(RegExp(r'\\+'), '/')
+      .replaceAll(RegExp(r'/+'), '/')
+      .replaceFirst(RegExp(r'/$'), '');
 
-  Future<void> _chooseFile() async {
-    final file = await showShadDialog<CloudFile>(
-      context: context,
-      builder: (_) => const _MediaOrganizerFilePicker(),
-    );
-    if (file == null || !mounted) return;
+  Future<void> _selectLibrary(String libraryID) async {
+    if (_running || _loading) return;
     setState(() {
-      _anchorFile = file;
+      _selectedLibraryID = libraryID;
       _libraryName = null;
-      _folderVideoCount = 0;
+      _resourceCount = 0;
+      _directoryCount = 0;
       _unmatchedCount = 0;
+      _outsideSourceCount = 0;
       _entries = const [];
+      _selectedKeys.clear();
       _failures.clear();
-      _status = '正在读取 ${file.name} 所在文件夹';
+      _status = '';
     });
+    await ref.read(mediaLibraryProvider.notifier).selectLibrary(libraryID);
     await _prepare();
   }
 
@@ -3696,7 +3482,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
           );
           filesByName = {
             for (final file in _extractFiles(response))
-              if (!file.isDirectory) file.name.toLowerCase(): file.id,
+              file.name.toLowerCase(): file.id,
           };
           _destinationFiles[destinationKey] = filesByName;
         }
@@ -3752,6 +3538,11 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final mediaState = ref.watch(mediaLibraryProvider);
+    final selectedLibraryID =
+        mediaState.libraries.any((library) => library.id == _selectedLibraryID)
+        ? _selectedLibraryID
+        : mediaState.selectedLibraryID;
     final selectedCount = _selectedKeys.length;
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -3761,36 +3552,41 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
           child: Column(
             children: [
               _ToolSection(
-                title: '媒体文件整理',
+                title: '媒体库整理',
                 description: _status.isEmpty
-                    ? '选择一个文件，预览并整理它所在文件夹中的已识别视频。'
+                    ? '选择一个媒体库，预览并整理该库全部已识别文件和文件夹。'
                     : _status,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (_anchorFile != null) ...[
+                    if (_libraryName != null) ...[
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         children: [
                           _OrganizerMetric(
-                            icon: Icons.folder_outlined,
-                            label: _parentPath(_anchorFile!.cloudPath),
+                            icon: Icons.video_library_outlined,
+                            label: _libraryName!,
                           ),
-                          if (_libraryName != null)
-                            _OrganizerMetric(
-                              icon: Icons.video_library_outlined,
-                              label: _libraryName!,
-                            ),
                           _OrganizerMetric(
-                            icon: Icons.movie_outlined,
-                            label: '$_folderVideoCount 个视频',
+                            icon: Icons.inventory_2_outlined,
+                            label: '$_resourceCount 个资源',
                           ),
+                          if (_directoryCount > 0)
+                            _OrganizerMetric(
+                              icon: Icons.folder_outlined,
+                              label: '$_directoryCount 个文件夹',
+                            ),
                           if (_unmatchedCount > 0)
                             _OrganizerMetric(
                               icon: Icons.help_outline_rounded,
                               label: '$_unmatchedCount 个未识别',
+                            ),
+                          if (_outsideSourceCount > 0)
+                            _OrganizerMetric(
+                              icon: Icons.warning_amber_rounded,
+                              label: '$_outsideSourceCount 个来源不明确',
                             ),
                         ],
                       ),
@@ -3799,23 +3595,43 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        ShadButton.outline(
-                          onPressed: _loading || _running ? null : _chooseFile,
-                          leading: const Icon(
-                            Icons.file_open_rounded,
-                            size: 16,
+                        ShadSelect<String>(
+                          key: ValueKey(selectedLibraryID),
+                          initialValue: selectedLibraryID,
+                          enabled:
+                              !_loading &&
+                              !_running &&
+                              mediaState.libraries.isNotEmpty,
+                          minWidth: compact ? 190 : 240,
+                          placeholder: const Text('选择媒体库'),
+                          selectedOptionBuilder: (context, value) => Text(
+                            mediaState.libraries
+                                    .where((library) => library.id == value)
+                                    .firstOrNull
+                                    ?.name ??
+                                '选择媒体库',
                           ),
-                          child: Text(_anchorFile == null ? '选择文件' : '更换文件'),
+                          options: [
+                            for (final library in mediaState.libraries)
+                              ShadOption(
+                                value: library.id,
+                                child: Text(library.name),
+                              ),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) unawaited(_selectLibrary(value));
+                          },
                         ),
-                        if (_anchorFile != null)
+                        if (selectedLibraryID != null)
                           ShadButton.outline(
                             onPressed: _loading || _running ? null : _prepare,
                             leading: const Icon(
                               Icons.refresh_rounded,
                               size: 16,
                             ),
-                            child: const Text('刷新预览'),
+                            child: Text(_entries.isEmpty ? '生成预览' : '刷新预览'),
                           ),
                         if (_running)
                           ShadButton.outline(
@@ -3890,17 +3706,17 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                _anchorFile == null
-                                    ? Icons.file_open_outlined
+                                selectedLibraryID == null
+                                    ? Icons.video_library_outlined
                                     : Icons.check_circle_outline_rounded,
                                 size: 34,
                                 color: cs.mutedForeground,
                               ),
                               const SizedBox(height: 10),
                               Text(
-                                _anchorFile == null
-                                    ? '选择一个媒体文件开始预览'
-                                    : '当前文件夹没有待整理的已识别资源',
+                                selectedLibraryID == null
+                                    ? '选择一个媒体库开始预览'
+                                    : '当前媒体库没有待整理的已识别资源',
                                 style: TextStyle(color: cs.mutedForeground),
                               ),
                             ],
@@ -3947,7 +3763,10 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                                 ],
                               ),
                               secondary: Icon(
-                                entry.item.mediaKind == TMDBMediaKind.movie
+                                entry.item.file.isDirectory
+                                    ? Icons.folder_rounded
+                                    : entry.item.mediaKind ==
+                                          TMDBMediaKind.movie
                                     ? Icons.movie_rounded
                                     : Icons.tv_rounded,
                                 color: cs.primary,
