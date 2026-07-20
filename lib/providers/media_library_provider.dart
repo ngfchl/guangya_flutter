@@ -3331,6 +3331,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
 
     final attempts = <String>[];
+    final allRelated = <String, Map<String, dynamic>>{};
     for (final variant in variants) {
       final years = year == null ? <int?>[null] : <int?>[year, null];
       for (final attemptYear in years) {
@@ -3441,15 +3442,36 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           '${values.length} 条，相关 $relatedCount 条$fallbackLabel',
         );
         if (relatedCount > 0) {
-          return _TMDBRecognitionSearchResult(
-            candidates: related.values.toList(growable: false),
-            attempts: attempts,
-          );
+          for (final entry in related.entries) {
+            final previous = allRelated[entry.key];
+            final previousScore =
+                _toInt(previous?['_recognitionTitleScore']) ?? -1;
+            final currentScore =
+                _toInt(entry.value['_recognitionTitleScore']) ?? -1;
+            if (previous == null || currentScore > previousScore) {
+              allRelated[entry.key] = entry.value;
+            }
+          }
+          final decisive = related.values
+              .where((candidate) {
+                return candidate['_recognitionUniqueExactYear'] == true ||
+                    (_toInt(candidate['_recognitionTitleScore']) ?? 0) >= 95;
+              })
+              .toList(growable: false);
+          // A broad title can produce several plausible works. Keep trying
+          // parent, alias and alternate-language evidence until one strategy
+          // produces a single exact candidate.
+          if (decisive.length == 1) {
+            return _TMDBRecognitionSearchResult(
+              candidates: decisive,
+              attempts: attempts,
+            );
+          }
         }
       }
     }
     return _TMDBRecognitionSearchResult(
-      candidates: const [],
+      candidates: allRelated.values.toList(growable: false),
       attempts: attempts,
     );
   }
@@ -3497,7 +3519,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (values.isEmpty) return fallback;
       if (titleVariants.isEmpty) return fallback;
       final refinedValues = _refineTMDBCandidates(fallback, parsed, values);
-      if (refinedValues.length != 1) return fallback;
+      if (refinedValues.length != 1) {
+        _appendScanLog(
+          '[同步识别][调试] 自动识别未完成：候选收敛后仍有 '
+          '${refinedValues.length} 条，保留为未识别以避免误匹配。'
+          '文件=${fallback.file.name}',
+        );
+        return fallback;
+      }
       Map<String, dynamic>? candidate;
       var bestScore = -1;
       for (final value in refinedValues) {
@@ -3555,7 +3584,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         // The search result already has enough information for an initial row.
       }
       return item;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _appendScanLog(
+        '[同步识别][调试] 自动识别异常：${fallback.file.name}，$error',
+        isError: true,
+      );
+      AppLogger.error(
+        'Media',
+        '自动识别流程异常：${fallback.file.name}',
+        error: error,
+        stackTrace: stackTrace,
+      );
       return fallback;
     }
   }
@@ -4060,7 +4099,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         proxyPort: proxyPort,
       );
       item = _itemFromTMDBDetails(item, details);
-    } catch (_) {
+    } catch (error) {
+      _appendScanLog(
+        '[同步识别][调试] TMDB 详情刷新失败，保留搜索候选：'
+        'tmdbId=${item.tmdbID}，$error',
+        isError: true,
+      );
       // The selected search candidate remains usable when detail hydration fails.
     }
     return item;
@@ -4307,7 +4351,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
 
     void addBilingualTitleVariant(String? raw, String source) {
-      final value = raw?.trim() ?? '';
+      final value = (raw?.trim() ?? '')
+          .replaceAll(RegExp(r'[._]+'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ');
       if (!RegExp(r'[\u4e00-\u9fff]').hasMatch(value)) return;
       final matches = RegExp(
         r"[A-Za-z][A-Za-z0-9]*(?:[ '\-]+[A-Za-z0-9]+){1,}",
@@ -4325,6 +4371,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final value = raw?.trim() ?? '';
       if (!RegExp(r'[A-Za-z]').hasMatch(value)) return;
       const replacements = {
+        'daeth': 'death',
+        'asteriks': 'asterix',
         'saber': 'sabre',
         'sabre': 'saber',
         'color': 'colour',
@@ -4351,6 +4399,80 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           },
         );
         if (variant != value) add(variant, '$source拼写变体');
+      }
+    }
+
+    void addAliasTitleVariants(String? raw, String source) {
+      final value = raw?.trim() ?? '';
+      final parts = value
+          .split(
+            RegExp(r'\s+(?:aka|又名|别名|亦名)\s*[:：,，.-]?\s*', caseSensitive: false),
+          )
+          .map((part) => part.trim())
+          .where((part) => part.length >= 2)
+          .toList(growable: false);
+      if (parts.length < 2) return;
+      for (final part in parts) {
+        add(part, '$source别名');
+        final cleaned = ParsedMediaName.parse(part).title.trim();
+        if (cleaned.isNotEmpty && cleaned != part) {
+          add(cleaned, '$source别名清理后');
+        }
+      }
+    }
+
+    void addNumberGlyphVariants(String? raw, String source) {
+      final value = raw?.trim() ?? '';
+      if (!RegExp(r'[①②③④⑤⑥⑦⑧⑨⑩]').hasMatch(value)) return;
+      const replacements = {
+        '①': '1',
+        '②': '2',
+        '③': '3',
+        '④': '4',
+        '⑤': '5',
+        '⑥': '6',
+        '⑦': '7',
+        '⑧': '8',
+        '⑨': '9',
+        '⑩': '10',
+      };
+      final cleaned = ParsedMediaName.parse(value).title.trim();
+      var normalized = cleaned.isEmpty ? value : cleaned;
+      for (final entry in replacements.entries) {
+        normalized = normalized.replaceAll(entry.key, entry.value);
+      }
+      add(normalized, '$source圈号归一');
+      final firstInstallment = RegExp(
+        r'^(.+?[\u4e00-\u9fff])\s*1$',
+      ).firstMatch(normalized);
+      if (firstInstallment != null) {
+        add(firstInstallment.group(1), '$source首部标题');
+      }
+    }
+
+    void addDescriptiveTitleVariants(String? raw, String source) {
+      final value = raw?.trim() ?? '';
+      final withoutParenthetical = value
+          .replaceFirst(RegExp(r'\s*[（(][^（）()]{1,30}[）)]\s*$'), '')
+          .trim();
+      if (withoutParenthetical != value) {
+        add(withoutParenthetical, '$source去尾注');
+      }
+      final firstSentence = value.split(RegExp(r'[。；;！!]')).first.trim();
+      if (firstSentence.length >= 2 && firstSentence != value) {
+        add(firstSentence, '$source主标题');
+      }
+      final withoutEdition = value
+          .replaceFirst(
+            RegExp(
+              r'[ ._-]*(?:混剪完整版|重新调色版|(?:美亚|泰吉)?修复版?|完整版|加长版)\s*$',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .trim();
+      if (withoutEdition != value) {
+        add(withoutEdition, '$source去版本说明');
       }
     }
 
@@ -4390,6 +4512,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       add(raw, source);
       addReleaseCleanVariant(raw, source);
       addTVSeasonTitleVariants(raw, source);
+      addAliasTitleVariants(raw, source);
+      addNumberGlyphVariants(raw, source);
+      addDescriptiveTitleVariants(raw, source);
       // Prefer a complete alternate-language title before falling back to a
       // broader franchise name.
       addBilingualTitleVariant(raw, source);
@@ -4425,6 +4550,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       addWithVariants(rawFileTitle, '文件名原始标题');
     }
     addWithVariants(primaryTitle, '文件名');
+    addBilingualTitleVariant(fileStem, '文件名原始标题');
+    addAliasTitleVariants(fileStem, '文件名原始标题');
+    addDescriptiveTitleVariants(fileStem, '文件名原始标题');
 
     final pathSegments = fallback.file.cloudPath
         .replaceAll(RegExp(r'\\+'), '/')

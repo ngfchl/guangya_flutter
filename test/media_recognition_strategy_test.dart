@@ -174,6 +174,85 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'Shanghai Triad') {
+      return {
+        'results': [
+          {
+            'id': 200010,
+            'media_type': 'movie',
+            'title': '摇啊摇，摇到外婆桥',
+            'original_title': '摇啊摇，摇到外婆桥',
+            'release_date': '1995-09-14',
+          },
+          {
+            'id': 200011,
+            'media_type': 'movie',
+            'title': '上海往事',
+            'original_title': '上海往事',
+            'release_date': '2001-01-01',
+          },
+        ],
+      };
+    }
+    if (query == 'Death Race') {
+      return {
+        'results': [
+          {
+            'id': 200012,
+            'media_type': 'movie',
+            'title': '死亡飞车',
+            'original_title': 'Death Race',
+            'release_date': '2008-08-22',
+          },
+        ],
+      };
+    }
+    if (query == '亡命天涯') {
+      return {
+        'results': [
+          {
+            'id': 200013,
+            'media_type': 'movie',
+            'title': '亡命天涯',
+            'original_title': 'The Fugitive',
+            'release_date': '1993-08-06',
+          },
+          {
+            'id': 200014,
+            'media_type': 'movie',
+            'title': '亡命天涯',
+            'original_title': 'On the Run',
+            'release_date': '1988-11-15',
+          },
+        ],
+      };
+    }
+    if (query == 'The Fugitive') {
+      return {
+        'results': [
+          {
+            'id': 200013,
+            'media_type': 'movie',
+            'title': '亡命天涯',
+            'original_title': 'The Fugitive',
+            'release_date': '1993-08-06',
+          },
+        ],
+      };
+    }
+    if (query == '雷霆沙赞') {
+      return {
+        'results': [
+          {
+            'id': 200015,
+            'media_type': 'movie',
+            'title': '雷霆沙赞！',
+            'original_title': 'Shazam!',
+            'release_date': '2019-03-29',
+          },
+        ],
+      };
+    }
     if (query == 'Chronicles of Grace and Grudges in the Primordial Age' ||
         query == '荒古恩仇录') {
       return {
@@ -285,6 +364,38 @@ class _RecognitionAPI extends GuangyaAPI {
         'title': '这个杀手不太冷',
         'original_title': 'Léon: The Professional',
         'release_date': '1994-09-14',
+      };
+    }
+    if (id == 200010) {
+      return {
+        'id': id,
+        'title': '摇啊摇，摇到外婆桥',
+        'original_title': '摇啊摇，摇到外婆桥',
+        'release_date': '1995-09-14',
+      };
+    }
+    if (id == 200012) {
+      return {
+        'id': id,
+        'title': '死亡飞车',
+        'original_title': 'Death Race',
+        'release_date': '2008-08-22',
+      };
+    }
+    if (id == 200013) {
+      return {
+        'id': id,
+        'title': '亡命天涯',
+        'original_title': 'The Fugitive',
+        'release_date': '1993-08-06',
+      };
+    }
+    if (id == 200015) {
+      return {
+        'id': id,
+        'title': '雷霆沙赞！',
+        'original_title': 'Shazam!',
+        'release_date': '2019-03-29',
       };
     }
     return {
@@ -700,5 +811,113 @@ void main() {
     );
 
     expect(recognized.tmdbID, 200008);
+  });
+
+  test('recognition uses a related parent year for opaque file names', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'shanghai-triad-1995',
+        name: 'abd-shanghaitriad1080p.mkv',
+        isDirectory: false,
+        cloudPath:
+            '/电影/Shanghai.Triad.1995.1080p.BluRay.x264-aBD/abd-shanghaitriad1080p.mkv',
+      ),
+      directoryName: 'Shanghai.Triad.1995.1080p.BluRay.x264-aBD',
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200010);
+    expect(
+      api.calls,
+      contains((query: 'Shanghai Triad', mediaKind: 'movie', year: 1995)),
+    );
+  });
+
+  test('recognition corrects a controlled title typo', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'death-race-2008',
+        name:
+            'Daeth.Race.2008.UNRATED.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1.mkv',
+        isDirectory: false,
+        cloudPath:
+            '/电影/杰森斯坦森40部/死亡飞车① 蓝光原盘REMUX 内封字幕/'
+            'Daeth.Race.2008.UNRATED.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1.mkv',
+      ),
+      directoryName: '死亡飞车① 蓝光原盘REMUX 内封字幕',
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200012);
+    expect(
+      api.calls,
+      contains((query: 'Death Race', mediaKind: 'movie', year: 2008)),
+    );
+  });
+
+  test('recognition keeps searching after an ambiguous title result', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'fugitive-bilingual',
+        name: '亡命天涯.The.Fugitive.mkv',
+        isDirectory: false,
+        cloudPath: '/电影/亡命天涯/亡命天涯.The.Fugitive.mkv',
+      ),
+      directoryName: '亡命天涯',
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200013);
+    expect(
+      api.calls.map((call) => call.query),
+      containsAllInOrder(['亡命天涯', 'The Fugitive']),
+    );
+  });
+
+  test('recognition tries the first exclamation-delimited title', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'shazam-2019',
+        name: '雷霆沙赞！沙赞！神力集结.2019.2160p.mkv',
+        isDirectory: false,
+        cloudPath: '/电影/雷霆沙赞！沙赞！神力集结.2019.2160p.mkv',
+      ),
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200015);
+    expect(api.calls.map((call) => call.query), contains('雷霆沙赞'));
   });
 }
