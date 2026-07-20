@@ -788,7 +788,7 @@ class ParsedMediaName {
         .replaceAll('＆', ' and ')
         // Keep apostrophes in English contractions such as Li'l and Can't;
         // they are part of the searchable title, not release separators.
-        .replaceAll(RegExp(r'''[._!@#\$%^*+=|~`｜，、；？！…<>?"\:;]+'''), ' ');
+        .replaceAll(RegExp(r'''[._!@#\$%^*=|~`｜，、；？！…<>?"\:;]+'''), ' ');
     final episodeMatch = RegExp(
       r'\bS\s*0?(\d{1,2})[ ._-]*E\s*0?(\d{1,4})\b|\b(\d{1,2})x(\d{1,4})\b|第\s*(\d{1,2})\s*季\s*第?\s*(\d{1,4})\s*[集话期]',
       caseSensitive: false,
@@ -1314,7 +1314,10 @@ class ParsedMediaName {
     final chineseEnglishBoundary = RegExp(
       r'[\u4e00-\u9fff\d\)）]\s*(?=[A-Z][A-Za-z])',
     ).firstMatch(title);
-    if (chineseEnglishBoundary != null) {
+    if (chineseEnglishBoundary != null &&
+        RegExp(
+          r'[\u4e00-\u9fff]',
+        ).hasMatch(title.substring(0, chineseEnglishBoundary.end))) {
       title = title.substring(0, chineseEnglishBoundary.start + 1);
     }
 

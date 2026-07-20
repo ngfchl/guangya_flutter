@@ -76,6 +76,31 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'Belle The Dragon and the Freckled Princess') {
+      return {
+        'results': [
+          {
+            'id': 200018,
+            'media_type': 'movie',
+            'title': '龙和雀斑公主',
+            'original_title': '竜とそばかすの姫',
+          },
+        ],
+      };
+    }
+    if (query == 'Evangelion 3 0+1 0 Thrice Upon a Time') {
+      return {
+        'results': [
+          {
+            'id': 200019,
+            'media_type': 'movie',
+            'title': '新世纪福音战士新剧场版：终',
+            'original_title': 'シン・エヴァンゲリオン劇場版:||',
+            'release_date': '2021-03-08',
+          },
+        ],
+      };
+    }
     if (query == '春日来信') {
       return {
         'results': [
@@ -342,6 +367,22 @@ class _RecognitionAPI extends GuangyaAPI {
         'title': '春天的信',
         'original_title': 'Spring Letter',
         'release_date': '2008-04-11',
+      };
+    }
+    if (id == 200018) {
+      return {
+        'id': id,
+        'title': '龙和雀斑公主',
+        'original_title': '竜とそばかすの姫',
+        'release_date': '2021-07-16',
+      };
+    }
+    if (id == 200019) {
+      return {
+        'id': id,
+        'title': '新世纪福音战士新剧场版：终',
+        'original_title': 'シン・エヴァンゲリオン劇場版:||',
+        'release_date': '2021-03-08',
       };
     }
     if (id == 200003) {
@@ -682,6 +723,65 @@ void main() {
     expect(recognized.tmdbID, 200002);
     expect(recognized.title, '春天的信');
   });
+
+  test(
+    'year-constrained unique result remains usable without a result date',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'belle-2021',
+          name:
+              'Belle.The.Dragon.and.the.Freckled.Princess.2021.2160p.BluRay.mkv',
+          isDirectory: false,
+          cloudPath:
+              '/电影/Belle.The.Dragon.and.the.Freckled.Princess.2021/'
+              'Belle.The.Dragon.and.the.Freckled.Princess.2021.2160p.BluRay.mkv',
+        ),
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200018);
+      expect(recognized.title, '龙和雀斑公主');
+      expect(api.calls.first.year, 2021);
+    },
+  );
+
+  test(
+    'recognition preserves plus signs in Evangelion version titles',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'evangelion-2021',
+          name:
+              'Evangelion.3.0+1.0.Thrice.Upon.a.Time.2021.2160p.UHD.BluRay.mkv',
+          isDirectory: false,
+          cloudPath:
+              '/电影/天鹰战士：最后的冲击[粤日多音轨+粤语配音+中文字幕].2021.2160p.UHD.BluRay/'
+              'Evangelion.3.0+1.0.Thrice.Upon.a.Time.2021.2160p.UHD.BluRay.mkv',
+        ),
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200019);
+      expect(api.calls.first.query, 'Evangelion 3 0+1 0 Thrice Upon a Time');
+    },
+  );
 
   test(
     'recognition searches the work name after collection brackets',

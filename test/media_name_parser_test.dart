@@ -85,6 +85,15 @@ void main() {
       expect(value.episode, 1);
     });
 
+    test('preserves plus signs inside versioned movie titles', () {
+      final value = ParsedMediaName.parse(
+        'Evangelion.3.0+1.0.Thrice.Upon.a.Time.2021.2160p.UHD.BluRay.mkv',
+      );
+
+      expect(value.title, 'Evangelion 3 0+1 0 Thrice Upon a Time');
+      expect(value.year, 2021);
+    });
+
     test('supports four-digit episode numbers for long-running series', () {
       final value = ParsedMediaName.parse(
         '海贼王.One.Piece.S22E1097.1999.2160p.WEB-DL.mkv',

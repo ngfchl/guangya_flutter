@@ -3366,7 +3366,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         }
 
         final typedCandidates = <Map<String, dynamic>>[];
-        final exactYearCandidates = <Map<String, dynamic>>[];
+        final yearCompatibleCandidates = <Map<String, dynamic>>[];
         for (final value in values) {
           if (value is! Map) continue;
           final candidate = Map<String, dynamic>.from(value);
@@ -3382,8 +3382,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 (candidate['release_date'] ?? candidate['first_air_date'])
                     ?.toString() ??
                 '';
-            if (!releaseDate.startsWith('$attemptYear')) continue;
-            exactYearCandidates.add(candidate);
+            if (releaseDate.isEmpty || releaseDate.startsWith('$attemptYear')) {
+              yearCompatibleCandidates.add(candidate);
+            }
           }
         }
 
@@ -3402,7 +3403,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                   ?.toString() ??
               '';
           final expectedYearMatches =
-              attemptYear == null || releaseDate.startsWith('$attemptYear');
+              attemptYear == null ||
+              releaseDate.isEmpty ||
+              releaseDate.startsWith('$attemptYear');
           final titleMatch = _bestMediaTitleMatch(
             variant.value,
             title: (candidate['title'] ?? candidate['name'] ?? '').toString(),
@@ -3416,8 +3419,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               titleMatch.score == 0 &&
               attemptYear != null &&
               expectedYearMatches &&
-              exactYearCandidates.length == 1 &&
-              exactYearCandidates.single['id']?.toString() ==
+              yearCompatibleCandidates.length == 1 &&
+              yearCompatibleCandidates.single['id']?.toString() ==
                   candidate['id']?.toString();
           final uniqueSpecificQueryFallback =
               titleMatch.score == 0 &&
@@ -3582,6 +3585,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             (map['release_date'] ?? map['first_air_date'])?.toString() ?? '';
         final recognitionYear = _toInt(map['_recognitionYear']);
         if (recognitionYear != null &&
+            releaseDate.isNotEmpty &&
             !releaseDate.startsWith('$recognitionYear')) {
           continue;
         }
@@ -3925,6 +3929,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           '';
       final recognitionYear = _toInt(candidate['_recognitionYear']);
       if (recognitionYear != null &&
+          releaseDate.isNotEmpty &&
           !releaseDate.startsWith('$recognitionYear')) {
         diagnostics.add('${describe(candidate, type)} -> 跳过：年份不匹配');
         continue;
