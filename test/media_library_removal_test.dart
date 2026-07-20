@@ -45,15 +45,19 @@ MediaLibraryItem _item(String libraryID, String fileID) {
 class _FakeMediaLibraryStore extends MediaLibraryStore {
   final List<MediaLibraryDefinition> definitions;
   final List<MediaLibraryItem> records;
+  final itemDelays = <String, Duration>{};
+  final librarySaveDelays = <String, Duration>{};
   final List<Set<String>> deleteCalls = [];
+  final deletedLibraries = <String>[];
   bool initialized = false;
   int removeFilesFromAllFoldersCalls = 0;
   int removeLiveFileIDsCalls = 0;
 
   _FakeMediaLibraryStore({
-    required this.definitions,
+    required List<MediaLibraryDefinition> definitions,
     required List<MediaLibraryItem> records,
-  }) : records = [...records];
+  }) : definitions = [...definitions],
+       records = [...records];
 
   @override
   Future<void> initialize() async {
@@ -67,10 +71,29 @@ class _FakeMediaLibraryStore extends MediaLibraryStore {
   Future<List<MediaLibraryDefinition>> libraries() async => [...definitions];
 
   @override
+  Future<void> saveLibraries(List<MediaLibraryDefinition> libraries) async {
+    for (final library in libraries) {
+      final delay = librarySaveDelays[library.id];
+      if (delay != null) await Future<void>.delayed(delay);
+      definitions.removeWhere((item) => item.id == library.id);
+      definitions.add(library);
+    }
+  }
+
+  @override
   Future<List<MediaLibraryItem>> items({String? libraryID}) async {
+    final delay = libraryID == null ? null : itemDelays[libraryID];
+    if (delay != null) await Future<void>.delayed(delay);
     return records
         .where((item) => libraryID == null || item.libraryID == libraryID)
         .toList(growable: false);
+  }
+
+  @override
+  Future<void> deleteLibrary(String id) async {
+    deletedLibraries.add(id);
+    definitions.removeWhere((library) => library.id == id);
+    records.removeWhere((item) => item.libraryID == id);
   }
 
   @override
@@ -189,5 +212,141 @@ void main() {
       );
       expect(notifier.state.statusMessage, '已从影视库移除 2 条记录，云盘文件未删除');
     });
+  });
+
+  test(
+    'deleteLibrary removes its persisted definition and orphan history',
+    () async {
+      final onlyA = _item(_libraryA.id, 'only-a');
+      final sharedA = _item(_libraryA.id, 'shared-file');
+      final sharedB = _item(_libraryB.id, 'shared-file');
+      final store = _FakeMediaLibraryStore(
+        definitions: const [_libraryA, _libraryB],
+        records: [onlyA, sharedA, sharedB],
+      );
+      final historyCalls = <Set<String>>[];
+      final notifier = MediaLibraryNotifier(
+        store: store,
+        removeWatchHistory: (fileIDs) async => historyCalls.add({...fileIDs}),
+      );
+      addTearDown(notifier.dispose);
+
+      await notifier.load();
+      await notifier.deleteLibrary(_libraryA.id);
+
+      expect(store.deletedLibraries, [_libraryA.id]);
+      expect(store.definitions.map((library) => library.id), [_libraryB.id]);
+      expect(store.records.map((item) => item.libraryID).toSet(), {
+        _libraryB.id,
+      });
+      expect(historyCalls, [
+        {'only-a'},
+      ]);
+      expect(notifier.state.selectedLibraryID, _libraryB.id);
+    },
+  );
+
+  test(
+    'latest media library selection wins when loads finish out of order',
+    () async {
+      final store = _FakeMediaLibraryStore(
+        definitions: const [_libraryA, _libraryB],
+        records: [_item(_libraryA.id, 'a'), _item(_libraryB.id, 'b')],
+      );
+      final notifier = MediaLibraryNotifier(store: store);
+      addTearDown(notifier.dispose);
+      await notifier.load();
+      store.itemDelays[_libraryA.id] = const Duration(milliseconds: 30);
+
+      final older = notifier.selectLibrary(_libraryA.id);
+      final latest = notifier.selectLibrary(_libraryB.id);
+      await Future.wait([older, latest]);
+
+      expect(notifier.state.selectedLibraryID, _libraryB.id);
+      expect(notifier.state.items.map((item) => item.id), ['b']);
+    },
+  );
+
+  test('concurrent library updates preserve both latest definitions', () async {
+    final store = _FakeMediaLibraryStore(
+      definitions: const [_libraryA, _libraryB],
+      records: const [],
+    );
+    store.librarySaveDelays[_libraryA.id] = const Duration(milliseconds: 30);
+    final notifier = MediaLibraryNotifier(store: store);
+    addTearDown(notifier.dispose);
+    await notifier.load();
+
+    final updateA = notifier.updateLibrary(
+      _libraryA.copyWith(name: 'Updated A'),
+    );
+    final updateB = notifier.updateLibrary(
+      _libraryB.copyWith(name: 'Updated B'),
+    );
+    await Future.wait([updateA, updateB]);
+
+    expect(
+      {
+        for (final library in notifier.state.libraries)
+          library.id: library.name,
+      },
+      {_libraryA.id: 'Updated A', _libraryB.id: 'Updated B'},
+    );
+  });
+
+  test('deleting a background library preserves current selection', () async {
+    final store = _FakeMediaLibraryStore(
+      definitions: const [_libraryA, _libraryB],
+      records: [_item(_libraryA.id, 'a'), _item(_libraryB.id, 'b')],
+    );
+    final notifier = MediaLibraryNotifier(store: store);
+    addTearDown(notifier.dispose);
+    await notifier.load();
+    await notifier.selectLibrary(_libraryB.id);
+
+    await notifier.deleteLibrary(_libraryA.id);
+
+    expect(notifier.state.selectedLibraryID, _libraryB.id);
+    expect(notifier.state.items.map((item) => item.id), ['b']);
+  });
+
+  test('editing a background library preserves current selection', () async {
+    final store = _FakeMediaLibraryStore(
+      definitions: const [_libraryA, _libraryB],
+      records: [_item(_libraryA.id, 'a'), _item(_libraryB.id, 'b')],
+    );
+    final notifier = MediaLibraryNotifier(store: store);
+    addTearDown(notifier.dispose);
+    await notifier.load();
+
+    await notifier.updateLibrary(_libraryB.copyWith(name: 'Updated B'));
+
+    expect(notifier.state.selectedLibraryID, _libraryA.id);
+    expect(notifier.state.items.map((item) => item.id), ['a']);
+  });
+
+  test('creating a library supersedes an older pending selection', () async {
+    final store = _FakeMediaLibraryStore(
+      definitions: const [_libraryA, _libraryB],
+      records: [_item(_libraryA.id, 'a'), _item(_libraryB.id, 'b')],
+    );
+    store.itemDelays[_libraryB.id] = const Duration(milliseconds: 30);
+    final notifier = MediaLibraryNotifier(store: store);
+    addTearDown(notifier.dispose);
+    await notifier.load();
+
+    final olderSelection = notifier.selectLibrary(_libraryB.id);
+    await notifier.createLibrary(
+      name: 'Created',
+      rootID: 'created-root',
+      rootPath: '/Created',
+    );
+    final createdID = notifier.state.selectedLibraryID;
+    await olderSelection;
+
+    expect(createdID, isNotNull);
+    expect(createdID, isNot(_libraryB.id));
+    expect(notifier.state.selectedLibraryID, createdID);
+    expect(notifier.state.items, isEmpty);
   });
 }

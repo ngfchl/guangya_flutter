@@ -383,11 +383,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   final _searchResultsCache = <String, List<MediaLibraryItem>>{};
   final _artworkHydrationLibraries = <String>{};
   bool _loaded = false;
+  int _librarySelectionSerial = 0;
   final _cancelledScanLibraries = <String>{};
   final _stoppedScanLibraries = <String>{};
   final _pausedScanLibraries = <String>{};
   final _scanPauseGates = <String, Completer<void>>{};
   final _scanRuns = <String, Future<void>>{};
+  Future<void> _scanTaskHistoryPersistence = Future.value();
+  Future<void> _scanHistoryPersistence = Future.value();
   bool _cancelDetailSync = false;
   bool _refreshingCloudIndex = false;
   bool _reconcilingMediaGCIDs = false;
@@ -460,7 +463,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> selectLibrary(String id) async {
+    final serial = ++_librarySelectionSerial;
     final items = await _loadItems(id);
+    if (serial != _librarySelectionSerial ||
+        !state.libraries.any((library) => library.id == id)) {
+      return;
+    }
     state = state.copyWith(
       selectedLibraryID: id,
       items: items,
@@ -500,8 +508,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       minimumSizeMB: minimumSizeMB,
       updatedAt: now,
     );
-    final libraries = [...state.libraries, library];
-    await _saveLibraries(libraries);
+    await _saveLibraries([library]);
+    final libraries = [
+      ...state.libraries.where((item) => item.id != library.id),
+      library,
+    ];
+    _librarySelectionSerial += 1;
     state = state.copyWith(
       libraries: libraries,
       selectedLibraryID: library.id,
@@ -518,19 +530,40 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       return;
     }
+    final removedItems = (await _loadAllItems())
+        .where((item) => item.libraryID == id)
+        .toList(growable: false);
+    await _store.deleteLibrary(id);
+    final allItems = await _loadAllItems();
+    final retainedFileIDs = allItems.map((item) => item.id).toSet();
+    final orphanedHistoryIDs = removedItems
+        .map((item) => item.id)
+        .where((fileID) => !retainedFileIDs.contains(fileID))
+        .toSet();
+    if (orphanedHistoryIDs.isNotEmpty) {
+      try {
+        await _removeWatchHistory?.call(orphanedHistoryIDs);
+      } catch (error) {
+        AppLogger.warning('Media', '媒体库已删除，但观看历史清理失败：$error');
+      }
+    }
+    _librarySelectionSerial += 1;
     final libraries = state.libraries
         .where((library) => library.id != id)
-        .toList();
-    final allItems = await _loadAllItems()
-      ..removeWhere((item) => item.libraryID == id);
-    await _saveLibraries(libraries);
-    await _saveAllItems(allItems);
-    final selectedID = libraries.isEmpty ? null : libraries.first.id;
+        .toList(growable: false);
+    final selectedID = state.selectedLibraryID == id
+        ? (libraries.isEmpty ? null : libraries.first.id)
+        : state.selectedLibraryID;
+    final selectedItems = selectedID == null
+        ? const <MediaLibraryItem>[]
+        : allItems
+              .where((item) => item.libraryID == selectedID)
+              .toList(growable: false);
     state = state.copyWith(
       libraries: libraries,
       selectedLibraryID: selectedID,
       clearSelectedLibrary: selectedID == null,
-      items: selectedID == null ? const [] : await _loadItems(selectedID),
+      items: selectedItems,
       allItems: allItems,
       statusMessage: '媒体库已删除',
     );
@@ -662,14 +695,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       return;
     }
+    await _saveLibraries([library]);
     final libraries = state.libraries
         .map((item) => item.id == library.id ? library : item)
-        .toList();
-    await _saveLibraries(libraries);
+        .toList(growable: false);
     state = state.copyWith(
       libraries: libraries,
-      selectedLibraryID: library.id,
-      items: await _loadItems(library.id),
       statusMessage: '媒体库「${library.name}」已更新',
     );
   }
@@ -1130,10 +1161,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         .toList(growable: false);
   }
 
-  Future<void> _persistScanTaskHistory() => StorageManager.set(
-    StorageKeys.mediaScanTaskHistory,
-    state.scanTasks.take(80).map((task) => task.toJson()).toList(),
-  );
+  Future<void> _persistScanTaskHistory() {
+    final snapshot = state.scanTasks
+        .take(80)
+        .map((task) => task.toJson())
+        .toList(growable: false);
+    _scanTaskHistoryPersistence = _scanTaskHistoryPersistence
+        .catchError((_) {})
+        .then(
+          (_) => StorageManager.set(StorageKeys.mediaScanTaskHistory, snapshot),
+        )
+        .catchError((error) {
+          AppLogger.warning('Media', '刮削任务历史保存失败：$error');
+        });
+    return _scanTaskHistoryPersistence;
+  }
 
   Future<void> scanLibrary(
     String libraryID, {
@@ -1162,7 +1204,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
     _scanRuns[libraryID] = run;
     await run;
-    _scanRuns.remove(libraryID);
+    if (identical(_scanRuns[libraryID], run)) _scanRuns.remove(libraryID);
   }
 
   /// Scans only the folders configured by the selected media library. A
@@ -1530,12 +1572,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 .where((item) => !discoveredIDs.contains(item.id))
                 .length;
       final updatedLibrary = library.copyWith(updatedAt: DateTime.now());
+      await _store.replaceLibraryItems(library.id, items);
+      await _saveLibraries([updatedLibrary]);
       final libraries = state.libraries
           .map((item) => item.id == library.id ? updatedLibrary : item)
-          .toList();
-
-      await _store.replaceLibraryItems(library.id, items);
-      await _saveLibraries(libraries);
+          .toList(growable: false);
       final allItems = await _loadAllItems();
       final visibleItems = state.selectedLibraryID == library.id
           ? await _loadItems(library.id)
@@ -1720,7 +1761,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
     _scanRuns[task.libraryID] = run;
     await run;
-    _scanRuns.remove(task.libraryID);
+    if (identical(_scanRuns[task.libraryID], run)) {
+      _scanRuns.remove(task.libraryID);
+    }
   }
 
   void stopScanTask(String taskID) {
@@ -1888,10 +1931,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     _reconcilingMediaGCIDs = true;
     try {
       final allItems = await _loadAllItems();
-      final indexedItems = allItems
-          .where((item) => item.file.gcid?.trim().isNotEmpty == true)
-          .toList();
-      if (indexedItems.isEmpty) return;
+      if (allItems.isEmpty) return;
       final indexedFiles = (await FileMetadataCache.allCachedFolderChildren())
           .where((file) => !file.isDirectory)
           .toList();
@@ -1905,28 +1945,34 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final missing = <MediaLibraryItem>[];
       final replacements = <String, MediaLibraryItem>{};
       final assignedFileIDs = <String, Set<String>>{};
-      for (final item in indexedItems) {
-        final gcid = item.file.gcid!.trim();
-        final liveFiles = liveByGCID[gcid] ?? const <CloudFile>[];
-        final assigned = assignedFileIDs[gcid] ??= <String>{};
+      for (final item in allItems) {
+        final gcid = item.file.gcid?.trim() ?? '';
+        final liveFiles = gcid.isEmpty
+            ? const <CloudFile>[]
+            : liveByGCID[gcid] ?? const <CloudFile>[];
+        final assigned = gcid.isEmpty
+            ? <String>{}
+            : assignedFileIDs[gcid] ??= <String>{};
         CloudFile? live = liveByID[item.id];
-        live ??= liveFiles
-            .where(
-              (file) =>
-                  !assigned.contains(file.id) &&
-                  file.cloudPath.isNotEmpty &&
-                  file.cloudPath == item.file.cloudPath,
-            )
-            .firstOrNull;
-        live ??= liveFiles
-            .where(
-              (file) =>
-                  !assigned.contains(file.id) && file.name == item.file.name,
-            )
-            .firstOrNull;
-        live ??= liveFiles
-            .where((file) => !assigned.contains(file.id))
-            .firstOrNull;
+        if (live == null && gcid.isNotEmpty) {
+          live = liveFiles
+              .where(
+                (file) =>
+                    !assigned.contains(file.id) &&
+                    file.cloudPath.isNotEmpty &&
+                    file.cloudPath == item.file.cloudPath,
+              )
+              .firstOrNull;
+          live ??= liveFiles
+              .where(
+                (file) =>
+                    !assigned.contains(file.id) && file.name == item.file.name,
+              )
+              .firstOrNull;
+          live ??= liveFiles
+              .where((file) => !assigned.contains(file.id))
+              .firstOrNull;
+        }
         if (live == null) {
           var confirmedNotFound = false;
           live = await _resolveCurrentCloudFile(
@@ -1946,7 +1992,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             libraryID: item.libraryID,
           );
         }
-        assigned.add(live.id);
+        if (gcid.isNotEmpty) assigned.add(live.id);
         final liveName = live.name.isEmpty ? item.file.name : live.name;
         final livePath = recoverCloudFilePath(
           fileName: liveName,
@@ -1963,7 +2009,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             id: live.id,
             name: liveName,
             size: live.size ?? item.file.size,
-            gcid: gcid,
+            gcid: live.gcid?.trim().isNotEmpty == true
+                ? live.gcid
+                : item.file.gcid,
             modifiedAt: live.modifiedAt.isEmpty
                 ? item.file.modifiedAt
                 : live.modifiedAt,
@@ -1990,7 +2038,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               .toList(),
         );
         _appendScanLog(
-          '[GCID 校验] 更新 ${replacements.length} 条资源映射，'
+          '[云盘索引校验] 更新 ${replacements.length} 条资源映射，'
           '移除 ${missing.length} 条已不存在的媒体记录；GCID 内容缓存已保留',
         );
       }
@@ -2395,10 +2443,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         .toList();
   }
 
-  Future<void> _persistScanHistory() => StorageManager.set(
-    StorageKeys.mediaScanHistory,
-    state.scanLogs.map((entry) => entry.toJson()).toList(),
-  );
+  Future<void> _persistScanHistory() {
+    final snapshot = state.scanLogs
+        .map((entry) => entry.toJson())
+        .toList(growable: false);
+    _scanHistoryPersistence = _scanHistoryPersistence
+        .catchError((_) {})
+        .then((_) => StorageManager.set(StorageKeys.mediaScanHistory, snapshot))
+        .catchError((error) {
+          AppLogger.warning('Media', '媒体库扫描日志保存失败：$error');
+        });
+    return _scanHistoryPersistence;
+  }
 
   void setSearchQuery(String query) {
     state = state.copyWith(searchQuery: query);
@@ -5613,38 +5669,45 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return _store.saveLibraries(libraries);
   }
 
-  Future<void> _saveAllItems(List<MediaLibraryItem> items) {
-    return _store.replaceItems(items);
-  }
-
   Future<void> _replaceItemsByPreviousIDs(
     Map<String, MediaLibraryItem> replacements,
   ) async {
     if (replacements.isEmpty) return;
-    final allItems = await _loadAllItems();
-    final replacementIDs = replacements.values
-        .map((item) => '${item.libraryID}:${item.id}')
-        .toSet();
-    allItems.removeWhere((item) {
-      final key = '${item.libraryID}:${item.id}';
-      return replacements.containsKey(key) || replacementIDs.contains(key);
-    });
-    allItems.addAll(replacements.values);
-    await _saveAllItems(allItems);
+    await _store.replaceItemsByPreviousIDs(
+      replacements.entries.map((entry) {
+        final separator = entry.key.indexOf(':');
+        if (separator <= 0 || separator == entry.key.length - 1) {
+          throw FormatException('无效的媒体记录键：${entry.key}');
+        }
+        return (
+          previousLibraryID: entry.key.substring(0, separator),
+          previousFileID: entry.key.substring(separator + 1),
+          item: entry.value,
+        );
+      }),
+    );
   }
 
   Future<void> _removeMissingMediaItems(
     Iterable<MediaLibraryItem> values,
   ) async {
-    final keys = values.map((item) => '${item.libraryID}:${item.id}').toSet();
+    final removedItems = values.toList(growable: false);
+    final keys = removedItems
+        .map((item) => '${item.libraryID}:${item.id}')
+        .toSet();
     if (keys.isEmpty) return;
-    final fileIDs = values.map((item) => item.id).toSet();
-    final allItems = await _loadAllItems()
-      ..removeWhere((item) => keys.contains('${item.libraryID}:${item.id}'));
-    await _saveAllItems(allItems);
-    await FileMetadataCache.removeFilesFromAllFolders(fileIDs);
-    await FileMetadataCache.removeLiveFileIDs(fileIDs);
-    await _removeWatchHistory?.call(fileIDs);
+    final fileIDs = removedItems.map((item) => item.id).toSet();
+    await _store.deleteItems(removedItems);
+    final allItems = await _loadAllItems();
+    final retainedFileIDs = allItems.map((item) => item.id).toSet();
+    final orphanedFileIDs = fileIDs
+        .where((fileID) => !retainedFileIDs.contains(fileID))
+        .toSet();
+    if (orphanedFileIDs.isNotEmpty) {
+      await FileMetadataCache.removeFilesFromAllFolders(orphanedFileIDs);
+      await FileMetadataCache.removeLiveFileIDs(orphanedFileIDs);
+      await _removeWatchHistory?.call(orphanedFileIDs);
+    }
     _searchResultsCache.clear();
     state = state.copyWith(
       items: state.items
@@ -5656,12 +5719,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<int> _removeDiscInternalItems() async {
     final items = await _loadAllItems();
-    final retained = items
-        .where((item) => !isMediaScanDiscInternalPath(item.file.cloudPath))
-        .toList();
-    final removed = items.length - retained.length;
-    if (removed > 0) await _saveAllItems(retained);
-    return removed;
+    final removed = items
+        .where((item) => isMediaScanDiscInternalPath(item.file.cloudPath))
+        .toList(growable: false);
+    if (removed.isEmpty) return 0;
+    return _store.deleteItems(removed);
   }
 
   Future<void> _upsertItems(Iterable<MediaLibraryItem> items) {

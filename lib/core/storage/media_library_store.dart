@@ -171,11 +171,19 @@ class MediaLibraryStore {
   }
 
   Future<void> deleteLibrary(String id) async {
-    await (await _db).delete(
-      'media_libraries',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    final db = await _db;
+    await db.transaction((txn) async {
+      // Older databases were created without enforced foreign keys. Delete
+      // dependants explicitly so a removed library cannot reappear with stale
+      // sources or leave inaccessible media rows behind.
+      await txn.delete('media_items', where: 'library_id = ?', whereArgs: [id]);
+      await txn.delete(
+        'media_library_sources',
+        where: 'library_id = ?',
+        whereArgs: [id],
+      );
+      await txn.delete('media_libraries', where: 'id = ?', whereArgs: [id]);
+    });
   }
 
   Future<void> replaceItems(List<MediaLibraryItem> items) async {
@@ -264,6 +272,39 @@ class MediaLibraryStore {
         );
       }
       return removed;
+    });
+  }
+
+  Future<void> replaceItemsByPreviousIDs(
+    Iterable<
+      ({String previousLibraryID, String previousFileID, MediaLibraryItem item})
+    >
+    replacements,
+  ) async {
+    final values = replacements.toList(growable: false);
+    if (values.isEmpty) return;
+    final db = await _db;
+    await _ensureMediaItemLocationColumns(db);
+    await db.transaction((txn) async {
+      for (final replacement in values) {
+        await txn.delete(
+          'media_items',
+          where: 'library_id = ? AND file_id = ?',
+          whereArgs: [
+            replacement.previousLibraryID,
+            replacement.previousFileID,
+          ],
+        );
+        if (replacement.previousLibraryID != replacement.item.libraryID ||
+            replacement.previousFileID != replacement.item.id) {
+          await txn.delete(
+            'media_items',
+            where: 'library_id = ? AND file_id = ?',
+            whereArgs: [replacement.item.libraryID, replacement.item.id],
+          );
+        }
+        await _upsertItem(txn, replacement.item);
+      }
     });
   }
 

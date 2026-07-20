@@ -412,9 +412,10 @@ class MediaScanMenuState extends State<MediaScanMenu> {
 }
 
 class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
-  final String _tmdbApiKey =
+  String get _tmdbApiKey =>
       StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
   bool _tmdbSearching = false;
+  int _tmdbSearchSerial = 0;
   String? _tmdbError;
   List<Map<String, dynamic>> _tmdbResults = [];
   bool _backupBusy = false;
@@ -1742,6 +1743,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   Future<void> _searchTMDB(String query) async {
     final text = query.trim();
     if (text.isEmpty || _tmdbApiKey.isEmpty) return;
+    final serial = ++_tmdbSearchSerial;
 
     setState(() {
       _tmdbSearching = true;
@@ -1767,11 +1769,13 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               .map((item) => Map<String, dynamic>.from(item))
               .toList() ??
           [];
+      if (!mounted || serial != _tmdbSearchSerial) return;
       setState(() {
         _tmdbResults = results;
         _tmdbSearching = false;
       });
     } catch (e) {
+      if (!mounted || serial != _tmdbSearchSerial) return;
       setState(() {
         _tmdbError = e.toString();
         _tmdbSearching = false;
@@ -4118,9 +4122,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   Map<String, dynamic>? _tmdbDetails;
   Map<String, dynamic>? _episodeDetails;
   int? _loadedTMDBID;
+  TMDBMediaKind? _loadedTMDBKind;
   int? _selectedSeason;
   String? _selectedEpisodeID;
   bool _loadingTMDBDetails = false;
+  int _tmdbDetailRequestSerial = 0;
   bool _loadingEpisodeDetails = false;
   bool _removingRecords = false;
   bool _initialEpisodeSelectionRequested = false;
@@ -4159,7 +4165,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         Future.microtask(_selectInitialEpisode);
       }
     }
-    if (widget.work.primary.tmdbID != _loadedTMDBID) {
+    if (widget.work.primary.tmdbID != _loadedTMDBID ||
+        widget.work.primary.mediaKind != _loadedTMDBKind) {
+      _tmdbDetails = null;
       _selectedSeason = null;
       _selectedEpisodeID = null;
       _episodeDetails = null;
@@ -4176,6 +4184,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   }
 
   Future<void> _loadTMDBDetails({bool force = false}) async {
+    if (!mounted) return;
     final item = widget.work.primary;
     final tmdbID = item.tmdbID;
     final kind = item.mediaKind;
@@ -4183,10 +4192,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     if (tmdbID == null ||
         kind == null ||
         apiKey.isEmpty ||
-        (!force && _loadedTMDBID == tmdbID) ||
-        _loadingTMDBDetails) {
+        (!force && _loadedTMDBID == tmdbID && _loadedTMDBKind == kind)) {
       return;
     }
+    final requestSerial = ++_tmdbDetailRequestSerial;
     setState(() => _loadingTMDBDetails = true);
     try {
       final details = await ref
@@ -4201,17 +4210,22 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             proxyPort:
                 StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
           );
-      if (mounted) {
+      if (mounted &&
+          requestSerial == _tmdbDetailRequestSerial &&
+          widget.work.primary.tmdbID == tmdbID) {
         setState(() {
           _tmdbDetails = details;
           _loadedTMDBID = tmdbID;
+          _loadedTMDBKind = kind;
         });
         _restartBackdropCarousel();
       }
     } catch (_) {
       // Artwork enrichments are optional and should not interrupt playback.
     } finally {
-      if (mounted) setState(() => _loadingTMDBDetails = false);
+      if (mounted && requestSerial == _tmdbDetailRequestSerial) {
+        setState(() => _loadingTMDBDetails = false);
+      }
     }
   }
 
@@ -5546,6 +5560,8 @@ class _ManualTMDBMatchDialogState
   late String _mediaKind;
   bool _searching = false;
   bool _loadingDetail = false;
+  int _searchRequestSerial = 0;
+  int _detailRequestSerial = 0;
   String? _error;
   List<Map<String, dynamic>> _results = const [];
   Map<String, dynamic>? _detailCandidate;
@@ -5581,8 +5597,11 @@ class _ManualTMDBMatchDialogState
   }
 
   Future<void> _search() async {
+    if (!mounted) return;
+    final requestSerial = ++_searchRequestSerial;
     final query = _queryController.text.trim();
     final year = int.tryParse(_yearController.text.trim());
+    final mediaKind = _mediaKind;
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
     if (query.isEmpty || apiKey.isEmpty) {
       setState(() {
@@ -5602,7 +5621,7 @@ class _ManualTMDBMatchDialogState
           .tmdbSearch(
             query,
             apiKey: apiKey,
-            mediaKind: _mediaKind,
+            mediaKind: mediaKind,
             year: year,
             proxyHost:
                 StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
@@ -5619,8 +5638,8 @@ class _ManualTMDBMatchDialogState
                 // 同一份候选渲染逻辑，避免把所有专用搜索结果过滤为空。
                 final type =
                     item['media_type']?.toString() ??
-                    (_mediaKind == 'movie' || _mediaKind == 'tv'
-                        ? _mediaKind
+                    (mediaKind == 'movie' || mediaKind == 'tv'
+                        ? mediaKind
                         : null);
                 if (type == null) return item;
                 return {...item, 'media_type': type};
@@ -5633,11 +5652,17 @@ class _ManualTMDBMatchDialogState
               )
               .toList() ??
           const <Map<String, dynamic>>[];
-      if (mounted) setState(() => _results = values);
+      if (mounted && requestSerial == _searchRequestSerial) {
+        setState(() => _results = values);
+      }
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted && requestSerial == _searchRequestSerial) {
+        setState(() => _error = error.toString());
+      }
     } finally {
-      if (mounted) setState(() => _searching = false);
+      if (mounted && requestSerial == _searchRequestSerial) {
+        setState(() => _searching = false);
+      }
     }
   }
 
@@ -5904,6 +5929,7 @@ class _ManualTMDBMatchDialogState
   }
 
   Future<void> _viewDetails(Map<String, dynamic> candidate) async {
+    if (!mounted) return;
     final id = int.tryParse(candidate['id']?.toString() ?? '');
     final type = candidate['media_type']?.toString();
     final mediaKind = type == 'tv'
@@ -5916,6 +5942,7 @@ class _ManualTMDBMatchDialogState
       setState(() => _error = '无法获取该 TMDB 条目的详细信息');
       return;
     }
+    final requestSerial = ++_detailRequestSerial;
     setState(() {
       _loadingDetail = true;
       _error = null;
@@ -5933,16 +5960,20 @@ class _ManualTMDBMatchDialogState
             proxyPort:
                 StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
           );
-      if (mounted) {
+      if (mounted && requestSerial == _detailRequestSerial) {
         setState(
           () =>
               _detailCandidate = {...candidate, ...details, 'media_type': type},
         );
       }
     } catch (error) {
-      if (mounted) setState(() => _error = '获取 TMDB 详情失败：$error');
+      if (mounted && requestSerial == _detailRequestSerial) {
+        setState(() => _error = '获取 TMDB 详情失败：$error');
+      }
     } finally {
-      if (mounted) setState(() => _loadingDetail = false);
+      if (mounted && requestSerial == _detailRequestSerial) {
+        setState(() => _loadingDetail = false);
+      }
     }
   }
 
