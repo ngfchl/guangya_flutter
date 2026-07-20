@@ -322,8 +322,10 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     final screen = MediaQuery.sizeOf(context);
     final compact = screen.width < 600;
     final sideWidth = _showEpisodes && !compact ? 250.0 : 0.0;
+    final dialogPadding = compact ? 12.0 : 20.0;
     final maxDialogWidth = math.max(1.0, screen.width - 24);
-    final maxVideoWidth = math.max(1.0, maxDialogWidth - sideWidth - 24);
+    final maxContentWidth = math.max(1.0, maxDialogWidth - dialogPadding * 2);
+    final maxVideoWidth = math.max(1.0, maxContentWidth - sideWidth);
     final minVideoWidth = math.min(compact ? 240.0 : 360.0, maxVideoWidth);
     final minVideoHeight = compact ? 160.0 : 240.0;
     final maxVideoHeight = math.max(
@@ -342,10 +344,10 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     final contentWidth = videoWidth + sideWidth;
     return ShadDialog(
       constraints: BoxConstraints(
-        maxWidth: math.min(maxDialogWidth, contentWidth + 24),
+        maxWidth: math.min(maxDialogWidth, contentWidth + dialogPadding * 2),
         maxHeight: math.max(260, screen.height - 16),
       ),
-      padding: EdgeInsets.all(compact ? 12 : 20),
+      padding: EdgeInsets.all(dialogPadding),
       scrollable: false,
       title: Text(
         _currentFile.name,
@@ -375,8 +377,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
           height: videoHeight,
           child: Row(
             children: [
-              SizedBox(
-                width: videoWidth,
+              Expanded(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(6),
                   child: ColoredBox(
