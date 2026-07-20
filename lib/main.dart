@@ -61,7 +61,8 @@ void _triggerNetworkPermission() {
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 5);
       final request = await client.getUrl(url);
-      await request.close();
+      final response = await request.close();
+      await response.drain<void>();
       client.close();
     } catch (_) {
       // Silently ignore - permission dialog may have been shown
