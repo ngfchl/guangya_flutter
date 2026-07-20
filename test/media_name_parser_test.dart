@@ -30,6 +30,22 @@ void main() {
       expect(chinese.episode, 3);
     });
 
+    test(
+      'uses a trailing number as an episode when the folder title matches',
+      () {
+        final value = ParsedMediaName.parse(
+          '知否知否应是绿肥红瘦 26.mp4',
+          directoryName: '知否知否应是绿肥红瘦',
+          directoryPath: '/电视剧/国产剧/知否知否应是绿肥红瘦/知否知否应是绿肥红瘦 26.mp4',
+        );
+
+        expect(value.title, '知否知否应是绿肥红瘦');
+        expect(value.season, 1);
+        expect(value.episode, 26);
+        expect(value.isEpisode, isTrue);
+      },
+    );
+
     test('keeps film year and ignores unresolvable disc stream names', () {
       final movie = ParsedMediaName.parse('加勒比海盗5：死无对证(2017).1080p.mp4');
       final stream = ParsedMediaName.parse(

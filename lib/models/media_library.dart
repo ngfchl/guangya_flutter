@@ -872,11 +872,30 @@ class ParsedMediaName {
         )
         .replaceFirst(RegExp(r'(?:\s|[._-])+第\s*[一二三四五六七八九十两\d]+\s*季$'), '')
         .trim();
+    ParsedMediaName? parent;
+    if (episode == null && directoryName?.trim().isNotEmpty == true) {
+      final trailingNumber = RegExp(
+        r'^(.+?)[\s._-]+(\d{1,3})$',
+      ).firstMatch(title);
+      if (trailingNumber != null) {
+        final candidateTitle = _cleanTitle(trailingNumber.group(1)!);
+        final candidateEpisode = int.tryParse(trailingNumber.group(2)!);
+        final directory = ParsedMediaName.parse(directoryName!.trim());
+        if (candidateEpisode != null &&
+            candidateEpisode > 0 &&
+            _titleComparisonKey(candidateTitle) ==
+                _titleComparisonKey(directory.title)) {
+          title = candidateTitle;
+          episode = candidateEpisode;
+          season ??= directory.season;
+          parent = directory;
+        }
+      }
+    }
     final genericName =
         title.isEmpty ||
         RegExp(r'^\d+$').hasMatch(title) ||
         RegExp(r'^S\d{1,2}E\d{1,3}$', caseSensitive: false).hasMatch(title);
-    ParsedMediaName? parent;
     if (genericName &&
         ((directoryName != null && directoryName.trim().isNotEmpty) ||
             (directoryPath != null && directoryPath.trim().isNotEmpty))) {
@@ -1220,6 +1239,9 @@ class ParsedMediaName {
     if (RegExp(r'(?:系列|合集|收藏|分类)$').hasMatch(title)) score -= 12;
     return score;
   }
+
+  static String _titleComparisonKey(String value) =>
+      value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\u4e00-\u9fff]+'), '');
 }
 
 int? _toInt(dynamic value) {
