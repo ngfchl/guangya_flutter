@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -44,6 +45,36 @@ class _DraggedCloudFiles {
   final _PaneIdentity source;
 
   const _DraggedCloudFiles(this.files, this.source);
+}
+
+class _CloudFileDraggable extends StatelessWidget {
+  final _DraggedCloudFiles data;
+  final Widget feedback;
+  final Widget childWhenDragging;
+  final Widget child;
+
+  const _CloudFileDraggable({
+    required this.data,
+    required this.feedback,
+    required this.childWhenDragging,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final touchPlatform = switch (defaultTargetPlatform) {
+      TargetPlatform.android || TargetPlatform.iOS => true,
+      _ => false,
+    };
+    return LongPressDraggable<_DraggedCloudFiles>(
+      data: data,
+      delay: Duration(milliseconds: touchPlatform ? 500 : 250),
+      hapticFeedbackOnStart: touchPlatform,
+      feedback: feedback,
+      childWhenDragging: childWhenDragging,
+      child: child,
+    );
+  }
 }
 
 bool _hasPressedKey(LogicalKeyboardKey key) =>
@@ -102,10 +133,13 @@ class _FolderMoveTarget extends StatefulWidget {
 
 class _FolderMoveTargetState extends State<_FolderMoveTarget> {
   Timer? _openTimer;
+  Timer? _dropReadyTimer;
+  bool _dropReady = false;
 
   @override
   void dispose() {
     _openTimer?.cancel();
+    _dropReadyTimer?.cancel();
     super.dispose();
   }
 
@@ -120,6 +154,17 @@ class _FolderMoveTargetState extends State<_FolderMoveTarget> {
   void _cancelOpen() {
     _openTimer?.cancel();
     _openTimer = null;
+    _dropReadyTimer?.cancel();
+    _dropReadyTimer = null;
+    if (_dropReady && mounted) setState(() => _dropReady = false);
+  }
+
+  void _prepareDrop() {
+    if (_dropReady || _dropReadyTimer?.isActive == true) return;
+    _dropReadyTimer = Timer(const Duration(milliseconds: 350), () {
+      _dropReadyTimer = null;
+      if (mounted) setState(() => _dropReady = true);
+    });
   }
 
   @override
@@ -128,10 +173,15 @@ class _FolderMoveTargetState extends State<_FolderMoveTarget> {
     return DragTarget<_DraggedCloudFiles>(
       onWillAcceptWithDetails: (details) =>
           !details.data.files.any((source) => source.id == widget.file.id),
-      onMove: (_) => _scheduleOpen(),
+      onMove: (_) {
+        _prepareDrop();
+        _scheduleOpen();
+      },
       onLeave: (_) => _cancelOpen(),
       onAcceptWithDetails: (details) async {
+        final canMove = _dropReady;
         _cancelOpen();
+        if (!canMove) return;
         await widget.onMove(details.data.files, widget.file.id);
       },
       builder: (context, candidates, _) => DecoratedBox(
@@ -139,7 +189,9 @@ class _FolderMoveTargetState extends State<_FolderMoveTarget> {
           border: candidates.isEmpty
               ? null
               : Border.all(
-                  color: ShadTheme.of(context).colorScheme.primary,
+                  color: _dropReady
+                      ? ShadTheme.of(context).colorScheme.primary
+                      : ShadTheme.of(context).colorScheme.mutedForeground,
                   width: 2,
                 ),
           borderRadius: BorderRadius.circular(6),
@@ -3295,7 +3347,7 @@ class _PrimaryFilePane extends ConsumerWidget {
                   ? notifier.restoreFiles([file])
                   : notifier.deleteFiles([file]),
             );
-            final item = Draggable<_DraggedCloudFiles>(
+            final item = _CloudFileDraggable(
               data: _DraggedCloudFiles(
                 selected
                     ? files
@@ -3315,7 +3367,7 @@ class _PrimaryFilePane extends ConsumerWidget {
               ),
             );
             if (viewMode == _FileViewMode.list) return item;
-            return Draggable<_DraggedCloudFiles>(
+            return _CloudFileDraggable(
               data: _DraggedCloudFiles(
                 selected
                     ? files
@@ -4463,7 +4515,7 @@ class _FinderColumnState extends State<_FinderColumn> {
                                     },
                                   ),
                                 );
-                                return Draggable<_DraggedCloudFiles>(
+                                return _CloudFileDraggable(
                                   data: _DraggedCloudFiles(
                                     selected
                                         ? column.files
@@ -5227,7 +5279,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
                   ref.read(fileProvider.notifier).deleteFiles([file]),
             );
             if (_viewMode == _FileViewMode.list) {
-              return Draggable<_DraggedCloudFiles>(
+              return _CloudFileDraggable(
                 data: _DraggedCloudFiles(
                   selected
                       ? _files
@@ -5284,7 +5336,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
                 onOpen: () => _open(file),
               ),
             );
-            return Draggable<_DraggedCloudFiles>(
+            return _CloudFileDraggable(
               data: _DraggedCloudFiles(
                 selected
                     ? _files
