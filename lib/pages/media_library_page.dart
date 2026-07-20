@@ -10,15 +10,18 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
+import '../models/media_navigation.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../providers/watch_history_provider.dart';
 import '../models/watch_history.dart';
 import '../widgets/app_loading_indicator.dart';
+import '../widgets/confirm_dialog.dart';
 import '../widgets/media_player_dialog.dart';
 
-enum MediaLibraryBrowseFilter { all, movies, series, collections, unmatched }
+export '../models/media_navigation.dart'
+    show MediaLibraryBrowseFilter, MediaNavigationState, MediaWorkspaceView;
 
 String _tmdbImageURL(String path, {required String size}) {
   final source = _tmdbDirectImageURL(path, size: size);
@@ -81,6 +84,7 @@ class MediaLibraryPage extends ConsumerStatefulWidget {
   final bool showBrowseHeader;
   final bool showHomePanel;
   final MediaLibraryBrowseFilter browseFilter;
+  final MediaLibraryBrowseFilter librarySection;
   final String? searchTitle;
 
   const MediaLibraryPage({
@@ -90,11 +94,19 @@ class MediaLibraryPage extends ConsumerStatefulWidget {
     this.showBrowseHeader = true,
     this.showHomePanel = false,
     this.browseFilter = MediaLibraryBrowseFilter.all,
+    this.librarySection = MediaLibraryBrowseFilter.all,
     this.searchTitle,
   });
 
   static void showCreateDialog(BuildContext context, WidgetRef ref) {
     _MediaLibraryPageState._showCreateLibraryDialog(context, ref);
+  }
+
+  static void showManagementDialog(BuildContext context, WidgetRef ref) {
+    showShadDialog(
+      context: context,
+      builder: (_) => const _MediaLibraryManagementDialog(),
+    );
   }
 
   @override
@@ -253,35 +265,58 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
   );
 }
 
-class _MediaScanMenu extends StatefulWidget {
+class MediaScanMenu extends StatefulWidget {
   final bool compact;
+  final bool iconOnly;
   final bool disabled;
   final VoidCallback onScanUnrecognized;
   final VoidCallback onForceAll;
+  final ShadPopoverController? controller;
 
-  const _MediaScanMenu({
+  const MediaScanMenu({
+    super.key,
     required this.compact,
+    this.iconOnly = false,
     required this.disabled,
     required this.onScanUnrecognized,
     required this.onForceAll,
+    this.controller,
   });
 
   @override
-  State<_MediaScanMenu> createState() => _MediaScanMenuState();
+  State<MediaScanMenu> createState() => MediaScanMenuState();
 }
 
-class _MediaScanMenuState extends State<_MediaScanMenu> {
-  final _controller = ShadPopoverController();
+class MediaScanMenuState extends State<MediaScanMenu> {
+  late final _controller = widget.controller ?? ShadPopoverController();
 
   @override
   void dispose() {
-    _controller.dispose();
+    if (widget.controller == null) _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final trigger = widget.iconOnly
+        ? ShadTooltip(
+            builder: (_) => const Text('重新扫描'),
+            child: ShadButton.ghost(
+              width: 38,
+              height: 36,
+              padding: EdgeInsets.zero,
+              onPressed: widget.disabled ? null : _controller.toggle,
+              child: const Icon(Icons.refresh_rounded, size: 18),
+            ),
+          )
+        : ShadButton.ghost(
+            size: ShadButtonSize.sm,
+            onPressed: widget.disabled ? null : _controller.toggle,
+            leading: const Icon(Icons.refresh_rounded, size: 16),
+            trailing: const Icon(Icons.keyboard_arrow_down_rounded, size: 15),
+            child: Text(widget.compact ? '扫描' : '重新扫描'),
+          );
     return ShadPopover(
       controller: _controller,
       popover: (_) => SizedBox(
@@ -320,13 +355,7 @@ class _MediaScanMenuState extends State<_MediaScanMenu> {
           ),
         ),
       ),
-      child: ShadButton.ghost(
-        size: ShadButtonSize.sm,
-        onPressed: widget.disabled ? null : _controller.toggle,
-        leading: const Icon(Icons.refresh_rounded, size: 16),
-        trailing: const Icon(Icons.keyboard_arrow_down_rounded, size: 15),
-        child: Text(widget.compact ? '扫描' : '重新扫描'),
-      ),
+      child: trigger,
     );
   }
 
@@ -613,7 +642,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 ),
               ),
               Text(
-                '${statistics.movies} 部电影 · ${statistics.series} 部剧集 · ${statistics.total} 个媒体文件',
+                _libraryStatisticsLabel(statistics),
                 style: TextStyle(fontSize: 12, color: cs.mutedForeground),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -768,7 +797,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               leading: const Icon(Icons.stop_rounded, size: 16),
               child: const Text('停止扫描'),
             )
-          : _MediaScanMenu(
+          : MediaScanMenu(
               compact: compact,
               disabled: state.selectedLibrary == null,
               onScanUnrecognized: () => ref
@@ -866,8 +895,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           ),
           const SizedBox(height: 10),
           ShadButton.outline(
-            onPressed: () => _showCreateLibraryDialog(context, ref),
-            child: const Text('创建媒体库'),
+            onPressed: () =>
+                MediaLibraryPage.showManagementDialog(context, ref),
+            child: const Text('打开媒体库管理'),
           ),
         ],
       ),
@@ -883,11 +913,17 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     if (_tmdbSearching || _tmdbResults.isNotEmpty || _tmdbError != null) {
       return _tmdbResultPanel(context);
     }
+    final isCurrentLibraryView =
+        !widget.showHomePanel && _wallFilter == MediaLibraryBrowseFilter.all;
+    final activeFilter = isCurrentLibraryView
+        ? widget.librarySection
+        : _wallFilter;
     final useGlobalBrowse =
         widget.showHomePanel ||
-        _wallFilter == MediaLibraryBrowseFilter.movies ||
-        _wallFilter == MediaLibraryBrowseFilter.series ||
-        _wallFilter == MediaLibraryBrowseFilter.unmatched;
+        (!isCurrentLibraryView &&
+            (_wallFilter == MediaLibraryBrowseFilter.movies ||
+                _wallFilter == MediaLibraryBrowseFilter.series ||
+                _wallFilter == MediaLibraryBrowseFilter.unmatched));
     final visibleItems = useGlobalBrowse
         ? state.globalVisibleItems
         : state.visibleItems;
@@ -895,7 +931,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     final activeCollection = collections
         .where((collection) => collection.key == _activeCollectionKey)
         .firstOrNull;
-    final filteredItems = switch (_wallFilter) {
+    final filteredItems = switch (activeFilter) {
       MediaLibraryBrowseFilter.all => visibleItems,
       MediaLibraryBrowseFilter.movies =>
         visibleItems
@@ -971,10 +1007,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       );
     }
     final showingCollectionOverview =
-        _wallFilter == MediaLibraryBrowseFilter.collections &&
+        activeFilter == MediaLibraryBrowseFilter.collections &&
         activeCollection == null;
     final wallContent =
-        widget.showHomePanel && _wallFilter == MediaLibraryBrowseFilter.all
+        widget.showHomePanel && activeFilter == MediaLibraryBrowseFilter.all
         ? _homePanel(context, state)
         : showingCollectionOverview
         ? _collectionOverview(context, collections)
@@ -983,7 +1019,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             context,
             state.isScanning
                 ? '正在扫描媒体库'
-                : (_wallFilter == MediaLibraryBrowseFilter.all
+                : (activeFilter == MediaLibraryBrowseFilter.all
                       ? '没有扫描结果'
                       : '当前筛选没有结果'),
             state.isScanning ? '发现并入库的资源会立即显示在这里' : '点击扫描读取该媒体库下的视频文件',
@@ -2017,6 +2053,440 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     controller.show();
     return completer.future;
   }
+}
+
+class _MediaLibraryManagementDialog extends ConsumerStatefulWidget {
+  const _MediaLibraryManagementDialog();
+
+  @override
+  ConsumerState<_MediaLibraryManagementDialog> createState() =>
+      _MediaLibraryManagementDialogState();
+}
+
+class _MediaLibraryManagementDialogState
+    extends ConsumerState<_MediaLibraryManagementDialog> {
+  bool _backupBusy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(mediaLibraryProvider);
+    final cs = ShadTheme.of(context).colorScheme;
+    final size = MediaQuery.sizeOf(context);
+    final width = (size.width - 32).clamp(320.0, 760.0).toDouble();
+    final height = (size.height - 160).clamp(360.0, 620.0).toDouble();
+    return ShadDialog(
+      title: const Text('媒体库管理'),
+      description: const Text('集中管理媒体库、目录来源和刮削数据备份。'),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: Column(
+          children: [
+            Row(
+              children: [
+                ShadButton(
+                  size: ShadButtonSize.sm,
+                  onPressed: state.isScanning
+                      ? null
+                      : () => _MediaLibraryPageState._showCreateLibraryDialog(
+                          context,
+                          ref,
+                        ),
+                  leading: const Icon(Icons.add_rounded, size: 16),
+                  child: const Text('新建媒体库'),
+                ),
+                const SizedBox(width: 8),
+                _BackupActionsMenu(
+                  compact: true,
+                  disabled: _backupBusy || state.isScanning,
+                  progress: state.cloudBackupSync,
+                  onExport: _exportScrapedData,
+                  onImport: _importScrapedData,
+                  onSyncToCloud: _syncScrapedDataToCloud,
+                  onRestoreFromCloud: _syncScrapedDataFromCloud,
+                ),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: state.isScanning
+                        ? Text(
+                            '扫描中，请先停止扫描再调整媒体库',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: cs.mutedForeground,
+                            ),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: state.libraries.isEmpty
+                  ? _emptyState(context)
+                  : ListView.separated(
+                      itemCount: state.libraries.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        final library = state.libraries[index];
+                        final statistics = MediaLibraryStatistics.fromItems(
+                          state.allItems.where(
+                            (item) => item.libraryID == library.id,
+                          ),
+                        );
+                        return _ManagementLibraryRow(
+                          library: library,
+                          statistics: statistics,
+                          selected: library.id == state.selectedLibraryID,
+                          disabled: state.isScanning,
+                          onSelect: () => ref
+                              .read(mediaLibraryProvider.notifier)
+                              .selectLibrary(library.id),
+                          onEdit: () =>
+                              _MediaLibraryPageState._showEditLibraryDialog(
+                                context,
+                                ref,
+                                library,
+                              ),
+                          onDelete: () => _deleteLibrary(library),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyState(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.video_library_outlined,
+            size: 44,
+            color: cs.mutedForeground,
+          ),
+          const SizedBox(height: 12),
+          Text('暂无媒体库', style: TextStyle(color: cs.foreground)),
+          const SizedBox(height: 6),
+          Text(
+            '点击上方按钮创建第一个媒体库',
+            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteLibrary(MediaLibraryDefinition library) async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: '删除媒体库',
+      content: '将删除「${library.name}」的媒体库记录和本地刮削数据，不会删除云盘文件。',
+      confirmText: '删除',
+    );
+    if (!confirmed || !mounted) return;
+    await ref.read(mediaLibraryProvider.notifier).deleteLibrary(library.id);
+  }
+
+  Future<void> _exportScrapedData() async {
+    final directory = await FilePicker.getDirectoryPath(
+      dialogTitle: '选择刮削数据导出目录',
+    );
+    if (directory == null || !mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      await ref
+          .read(mediaLibraryProvider.notifier)
+          .exportScrapedData('$directory/media-library.sqlite3');
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _importScrapedData() async {
+    final backup = await FilePicker.pickFile(
+      dialogTitle: '导入影视缓存与刮削数据',
+      type: FileType.custom,
+      allowedExtensions: const ['sqlite3', 'sqlite', 'db'],
+    );
+    final path = backup?.path;
+    if (path == null || !mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      await ref.read(mediaLibraryProvider.notifier).importScrapedData(path);
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _syncScrapedDataToCloud() async {
+    setState(() => _backupBusy = true);
+    try {
+      await ref.read(mediaLibraryProvider.notifier).exportScrapedDataToCloud();
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _syncScrapedDataFromCloud() async {
+    final notifier = ref.read(mediaLibraryProvider.notifier);
+    setState(() => _backupBusy = true);
+    List<CloudFile> backups;
+    try {
+      backups = await notifier.cloudScrapedBackups();
+    } catch (_) {
+      return;
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+    if (!mounted || backups.isEmpty) {
+      if (mounted && backups.isEmpty) {
+        ShadSonner.maybeOf(context)?.show(
+          const ShadToast(
+            title: Text('云盘恢复'),
+            description: Text('云盘中没有找到 media-library.sqlite3 备份。'),
+          ),
+        );
+      }
+      return;
+    }
+    final selected = await showShadDialog<CloudFile>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('从云盘恢复刮削数据'),
+        description: const Text('选择一个 SQLite 备份，恢复会合并到当前本地媒体库。'),
+        scrollable: false,
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+        child: SizedBox(
+          width: (MediaQuery.sizeOf(dialogContext).width - 32)
+              .clamp(300.0, 520.0)
+              .toDouble(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var index = 0; index < backups.length; index++) ...[
+                _CloudBackupRestoreRow(backup: backups[index]),
+                if (index < backups.length - 1)
+                  const ShadSeparator.horizontal(),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      await notifier.importScrapedDataFromCloud(selected);
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+}
+
+class _ManagementLibraryRow extends StatelessWidget {
+  final MediaLibraryDefinition library;
+  final MediaLibraryStatistics statistics;
+  final bool selected;
+  final bool disabled;
+  final VoidCallback onSelect;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _ManagementLibraryRow({
+    required this.library,
+    required this.statistics,
+    required this.selected,
+    required this.disabled,
+    required this.onSelect,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: selected
+            ? cs.primary.withValues(alpha: 0.08)
+            : cs.muted.withValues(alpha: 0.42),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: selected ? cs.primary : cs.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+        child: Row(
+          children: [
+            Icon(
+              library.kind == MediaLibraryKind.series
+                  ? Icons.live_tv_rounded
+                  : Icons.smart_display_rounded,
+              size: 22,
+              color: selected ? cs.primary : cs.mutedForeground,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          library.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: cs.foreground,
+                          ),
+                        ),
+                      ),
+                      if (selected) ShadBadge.outline(child: const Text('当前')),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _libraryStatisticsLabel(statistics),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: cs.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '${library.rootPath} · ${library.sources.length} 个目录 · '
+                    '${library.recursive ? '递归' : '仅当前目录'} · 最小 ${library.minimumSizeMB} MB',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            ShadTooltip(
+              builder: (_) => const Text('打开媒体库'),
+              child: ShadButton.ghost(
+                size: ShadButtonSize.sm,
+                onPressed: selected ? null : onSelect,
+                child: const Icon(Icons.open_in_new_rounded, size: 16),
+              ),
+            ),
+            ShadTooltip(
+              builder: (_) => const Text('编辑媒体库'),
+              child: ShadButton.ghost(
+                size: ShadButtonSize.sm,
+                onPressed: disabled ? null : onEdit,
+                child: const Icon(Icons.edit_outlined, size: 16),
+              ),
+            ),
+            ShadTooltip(
+              builder: (_) => const Text('删除媒体库'),
+              child: ShadButton.destructive(
+                size: ShadButtonSize.sm,
+                onPressed: disabled ? null : onDelete,
+                child: const Icon(Icons.delete_outline_rounded, size: 16),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CloudBackupRestoreRow extends StatelessWidget {
+  final CloudFile backup;
+
+  const _CloudBackupRestoreRow({required this.backup});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return LayoutBuilder(
+      builder: (context, constraints) => Container(
+        decoration: BoxDecoration(
+          color: cs.muted.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: cs.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ShadButton.ghost(
+              width: constraints.maxWidth,
+              expands: false,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              leading: Icon(
+                Icons.storage_rounded,
+                size: 18,
+                color: cs.mutedForeground,
+              ),
+              trailing: Icon(
+                Icons.chevron_right_rounded,
+                color: cs.mutedForeground,
+              ),
+              onPressed: () => Navigator.of(context).pop(backup),
+              child: Text(
+                backup.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: cs.foreground,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(38, 0, 10, 9),
+              child: Text(
+                '${backup.formattedSize} · ${backup.modifiedAt}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _libraryStatisticsLabel(MediaLibraryStatistics statistics) {
+  final parts = <String>[
+    if (statistics.movies > 0) '${statistics.movies} 部电影',
+    if (statistics.series > 0) '${statistics.series} 部剧集',
+    if (statistics.unmatched > 0) '${statistics.unmatched} 个未识别资源',
+    if (statistics.total > 0) '${statistics.total} 个影视条目',
+  ];
+  return parts.isEmpty ? '暂无影视条目' : parts.join(' · ');
 }
 
 class _CreateMediaLibraryDialog extends ConsumerStatefulWidget {
