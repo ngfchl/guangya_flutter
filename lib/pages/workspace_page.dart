@@ -2564,7 +2564,7 @@ class _SidebarTile extends StatelessWidget {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
-                        count! > 99 ? '99+' : '$count',
+                        '$count',
                         style: TextStyle(
                           fontSize: 10,
                           height: 1,
