@@ -3,13 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/file_list_tile.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/share_link_dialog.dart';

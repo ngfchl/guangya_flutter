@@ -2,12 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 import '../providers/theme_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/app_log_dialog.dart';
 import '../core/http/dio_client.dart';
 import '../core/storage/storage_manager.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
 
 class SettingsDialog extends ConsumerStatefulWidget {

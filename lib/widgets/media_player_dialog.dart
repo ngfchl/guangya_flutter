@@ -8,13 +8,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import '../core/logging/app_logger.dart';
 import '../providers/file_provider.dart';
 import '../providers/watch_history_provider.dart';
+import 'app_dialog.dart';
 import 'app_loading_indicator.dart';
 
 Future<void> showMediaPlayerDialog(

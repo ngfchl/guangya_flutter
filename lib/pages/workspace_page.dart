@@ -7,7 +7,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 import 'package:window_manager/window_manager.dart';
 
 import '../app/app_theme.dart';
@@ -17,6 +17,7 @@ import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/breadcrumb_bar.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/file_list_tile.dart';
@@ -781,7 +782,6 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   void _showSettings(BuildContext context) {
     showShadDialog<void>(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.18),
       builder: (_) => const SettingsDialog(),
     );
   }

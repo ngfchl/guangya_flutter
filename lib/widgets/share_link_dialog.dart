@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
+
+import 'app_dialog.dart';
 
 Future<void> showShareLinkDialog(
   BuildContext context, {

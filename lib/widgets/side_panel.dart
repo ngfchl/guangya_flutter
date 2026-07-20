@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 import '../providers/file_provider.dart';
 import '../providers/auth_provider.dart';
 import '../models/cloud_file.dart';
+import 'app_dialog.dart';
 import 'share_link_dialog.dart';
 
 class SidePanel extends ConsumerWidget {

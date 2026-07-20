@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
 import '../models/cloud_file.dart';
+import 'app_dialog.dart';
 import 'file_icon.dart';
 
 /// A file row with Finder-style inline rename support and a context menu.

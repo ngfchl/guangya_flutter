@@ -5,7 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
@@ -15,6 +15,7 @@ import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
 import 'media_library_page.dart';
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
+
+import 'app_dialog.dart';
 
 Future<bool> showConfirmDialog(
   BuildContext context, {

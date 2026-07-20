@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
@@ -16,6 +16,7 @@ import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../providers/watch_history_provider.dart';
 import '../models/watch_history.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/media_player_dialog.dart';
