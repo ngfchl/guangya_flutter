@@ -4157,6 +4157,44 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       variants.add(_MediaTitleVariant(value, source));
     }
 
+    void addChineseSubtitleVariants(String? raw, String source) {
+      final value = raw?.trim() ?? '';
+      final match = RegExp(
+        r'^([\u4e00-\u9fff][\u4e00-\u9fff\s]{1,})[·•・:：]([\u4e00-\u9fff][\u4e00-\u9fff\s]{1,})$',
+      ).firstMatch(value);
+      if (match == null) return;
+      final mainTitle = match.group(1)!.trim();
+      final subtitle = match.group(2)!.trim();
+      add('$mainTitle$subtitle', '$source去副标题分隔符');
+      add('$mainTitle之$subtitle', '$source副标题连接词');
+      // Keep the broader series title last. TMDB sometimes stores a release
+      // under its franchise title while scene names append the arc subtitle.
+      add(mainTitle, '$source系列主名');
+    }
+
+    void addBilingualTitleVariant(String? raw, String source) {
+      final value = raw?.trim() ?? '';
+      if (!RegExp(r'[\u4e00-\u9fff]').hasMatch(value)) return;
+      final matches = RegExp(
+        r"[A-Za-z][A-Za-z0-9]*(?:[ '\-]+[A-Za-z0-9]+){1,}",
+      ).allMatches(value).toList(growable: false);
+      if (matches.isEmpty) return;
+      final englishTitle = matches
+          .map((match) => match.group(0)!.trim())
+          .reduce(
+            (first, second) => first.length >= second.length ? first : second,
+          );
+      add(englishTitle, '$source英文标题');
+    }
+
+    void addWithVariants(String? raw, String source) {
+      add(raw, source);
+      // Prefer a complete alternate-language title before falling back to a
+      // broader franchise name.
+      addBilingualTitleVariant(raw, source);
+      addChineseSubtitleVariants(raw, source);
+    }
+
     final fileStem = fallback.file.name.replaceFirst(RegExp(r'\.[^.]+$'), '');
     final episodeMarker = RegExp(
       r'\bS\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,3}\b',
@@ -4171,9 +4209,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       // Keep this before the parsed title. A real work title may itself end
       // in `S01` or `S02`, while the following marker still identifies the
       // resource episode, for example `Project.S01.S01E01`.
-      add(rawFileTitle, '文件名原始标题');
+      addWithVariants(rawFileTitle, '文件名原始标题');
     }
-    add(primaryTitle, '文件名');
+    addWithVariants(primaryTitle, '文件名');
 
     final pathSegments = fallback.file.cloudPath
         .replaceAll(RegExp(r'\\+'), '/')
@@ -4194,16 +4232,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final source = index == lastDirectoryIndex ? '父目录' : '上级目录';
       // Keep the raw segment before the parsed title. A number that looks like
       // a year can be part of the actual show name, for example `你好1983`.
-      add(segment, '$source原名');
-      add(parsed.title, '$source解析');
+      addWithVariants(segment, '$source原名');
+      addWithVariants(parsed.title, '$source解析');
     }
 
     // Legacy rows may have a better parsed title than the current filename.
-    add(fallback.title, '已有记录');
+    addWithVariants(fallback.title, '已有记录');
     // An unmatched legacy row can contain a stale original title from an old
     // guess; only reuse it when the row is already backed by a TMDB id.
     if (fallback.tmdbID != null) {
-      add(fallback.originalTitle, '原有原名');
+      addWithVariants(fallback.originalTitle, '原有原名');
     }
     return variants;
   }

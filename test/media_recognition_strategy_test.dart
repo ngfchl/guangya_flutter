@@ -43,6 +43,20 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'Chronicles of Grace and Grudges in the Primordial Age' ||
+        query == '荒古恩仇录') {
+      return {
+        'results': [
+          {
+            'id': 300001,
+            'media_type': 'tv',
+            'name': '荒古恩仇录之破风篇',
+            'original_name': '荒古恩仇录之破风篇',
+            'first_air_date': '2025-09-17',
+          },
+        ],
+      };
+    }
     return const {'results': <Map<String, dynamic>>[]};
   }
 
@@ -60,6 +74,14 @@ class _RecognitionAPI extends GuangyaAPI {
         'name': 'Project S01',
         'original_name': 'Project S01',
         'first_air_date': '2026-01-01',
+      };
+    }
+    if (id == 300001) {
+      return {
+        'id': id,
+        'name': '荒古恩仇录之破风篇',
+        'original_name': '荒古恩仇录之破风篇',
+        'first_air_date': '2025-09-17',
       };
     }
     return {
@@ -155,6 +177,73 @@ void main() {
       expect(recognized.tmdbID, 999001);
       expect(recognized.title, 'Project S01');
       expect(api.calls.first.query, 'Project S01');
+    },
+  );
+
+  test('recognition extracts English from a bilingual release title', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'chronicles-episode-1',
+        name:
+            '荒古恩仇录·破风篇.Chronicles.of.Grace.and.Grudges.in.the.Primordial.Age.S01E01.2025.2160p.WEB-DL.mkv',
+        isDirectory: false,
+        cloudPath:
+            '/电视剧/国产剧/荒古恩仇录·破风篇[全40集][国语配音+中文字幕].2025.2160p.WEB-DL.H265.HDR.AAC-ColorTV/'
+            '荒古恩仇录·破风篇.Chronicles.of.Grace.and.Grudges.in.the.Primordial.Age.S01E01.2025.2160p.WEB-DL.mkv',
+      ),
+      directoryName:
+          '荒古恩仇录·破风篇[全40集][国语配音+中文字幕].2025.2160p.WEB-DL.H265.HDR.AAC-ColorTV',
+    );
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 300001);
+    expect(recognized.title, '荒古恩仇录之破风篇');
+    expect(
+      api.calls,
+      contains((
+        query: 'Chronicles of Grace and Grudges in the Primordial Age',
+        mediaKind: 'tv',
+        year: 2025,
+      )),
+    );
+  });
+
+  test(
+    'recognition falls back from a Chinese arc title to its series',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'chronicles-chinese-episode-1',
+          name: '荒古恩仇录·破风篇.S01E01.2025.2160p.WEB-DL.mkv',
+          isDirectory: false,
+          cloudPath:
+              '/电视剧/国产剧/荒古恩仇录·破风篇/荒古恩仇录·破风篇.S01E01.2025.2160p.WEB-DL.mkv',
+        ),
+        directoryName: '荒古恩仇录·破风篇',
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 300001);
+      expect(
+        api.calls,
+        contains((query: '荒古恩仇录', mediaKind: 'tv', year: 2025)),
+      );
     },
   );
 }
