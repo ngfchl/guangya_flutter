@@ -43,6 +43,26 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'Inception') {
+      return {
+        'results': [
+          {
+            'id': 400001,
+            'media_type': 'tv',
+            'name': 'Inception',
+            'original_name': 'Inception',
+            'first_air_date': '2010-01-01',
+          },
+          {
+            'id': 400002,
+            'media_type': 'movie',
+            'title': 'Inception',
+            'original_title': 'Inception',
+            'release_date': '2010-07-16',
+          },
+        ],
+      };
+    }
     if (query == 'Chronicles of Grace and Grudges in the Primordial Age' ||
         query == '荒古恩仇录') {
       return {
@@ -82,6 +102,14 @@ class _RecognitionAPI extends GuangyaAPI {
         'name': '荒古恩仇录之破风篇',
         'original_name': '荒古恩仇录之破风篇',
         'first_air_date': '2025-09-17',
+      };
+    }
+    if (id == 400002) {
+      return {
+        'id': id,
+        'title': 'Inception',
+        'original_title': 'Inception',
+        'release_date': '2010-07-16',
       };
     }
     return {
@@ -244,6 +272,38 @@ void main() {
         api.calls,
         contains((query: '荒古恩仇录', mediaKind: 'tv', year: 2025)),
       );
+    },
+  );
+
+  test(
+    'recognition narrows mixed movie and TV results by media type',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'inception-movie',
+          name: 'Inception.2010.1080p.BluRay.mkv',
+          isDirectory: false,
+          cloudPath: '/电影/Inception/Inception.2010.1080p.BluRay.mkv',
+        ),
+        directoryName: 'Inception',
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 400002);
+      expect(recognized.mediaKind, TMDBMediaKind.movie);
+      expect(api.calls.first, (
+        query: 'Inception',
+        mediaKind: 'movie',
+        year: 2010,
+      ));
     },
   );
 }
