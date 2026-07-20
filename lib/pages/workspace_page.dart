@@ -553,9 +553,11 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                         : _MediaSidebar(
                             onModeChanged: _changeMode,
                             onSettings: () => _showSettings(context),
+                            onScanTasks: () => _showScanTaskManagement(context),
                             onManage: () =>
                                 _showMediaLibraryManagement(context),
                             onTool: _openTool,
+                            activeTool: _mediaActiveTool,
                             selectedFilter: _mediaBrowseFilter,
                             onFilter: _changeMediaBrowseFilter,
                             homeSelected: _mediaHomeSelected,
@@ -627,6 +629,12 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
     setState(() => _mediaActiveTool = null);
     MediaLibraryPage.showManagementDialog(context, ref);
+  }
+
+  void _showScanTaskManagement(BuildContext context) {
+    ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
+    setState(() => _mediaActiveTool = null);
+    MediaLibraryPage.showScanTaskDialog(context, ref);
   }
 
   void _selectMediaLibrary(String id) {
@@ -752,6 +760,10 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                             showBrand: false,
                             onModeChanged: _changeMode,
                             onSettings: () => _showSettings(context),
+                            onScanTasks: () {
+                              Navigator.of(sheetContext).pop();
+                              _showScanTaskManagement(context);
+                            },
                             onManage: () {
                               Navigator.of(sheetContext).pop();
                               _showMediaLibraryManagement(context);
@@ -760,6 +772,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                               Navigator.of(sheetContext).pop();
                               _openTool(tool);
                             },
+                            activeTool: _mediaActiveTool,
                             selectedFilter: _mediaBrowseFilter,
                             onFilter: _changeMediaBrowseFilter,
                             homeSelected: _mediaHomeSelected,
@@ -1136,11 +1149,6 @@ class _TopBar extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               if (showLibraryScan) ...[
-                _MediaLibraryScanTaskTopAction(
-                  compact: true,
-                  state: mediaState,
-                ),
-                const SizedBox(width: 4),
                 _MediaLibraryScanTopAction(compact: true, state: mediaState),
                 const SizedBox(width: 4),
               ],
@@ -1182,11 +1190,6 @@ class _TopBar extends StatelessWidget {
                   ),
                 ],
                 if (showLibraryScan) ...[
-                  const SizedBox(width: 8),
-                  _MediaLibraryScanTaskTopAction(
-                    compact: compactActions,
-                    state: mediaState,
-                  ),
                   const SizedBox(width: 8),
                   _MediaLibraryScanTopAction(
                     compact: compactActions,
@@ -1643,71 +1646,6 @@ class _TopBarIconButton extends StatelessWidget {
         padding: EdgeInsets.zero,
         onPressed: onTap,
         child: Icon(icon, size: 18, color: cs.mutedForeground),
-      ),
-    );
-  }
-}
-
-class _MediaLibraryScanTaskTopAction extends ConsumerWidget {
-  final bool compact;
-  final MediaLibraryState state;
-
-  const _MediaLibraryScanTaskTopAction({
-    required this.compact,
-    required this.state,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final count = state.activeScanCount;
-    return ShadTooltip(
-      builder: (_) => const Text('刮削任务管理'),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          ShadButton.outline(
-            width: compact ? 38 : 108,
-            height: 36,
-            padding: compact
-                ? EdgeInsets.zero
-                : const EdgeInsets.symmetric(horizontal: 10),
-            onPressed: () => MediaLibraryPage.showScanTaskDialog(context, ref),
-            leading: compact
-                ? null
-                : const Icon(Icons.assignment_rounded, size: 16),
-            child: compact
-                ? const Icon(Icons.assignment_rounded, size: 18)
-                : const Text('刮削任务'),
-          ),
-          if (count > 0)
-            Positioned(
-              right: compact ? -3 : -5,
-              top: -5,
-              child: IgnorePointer(
-                child: Container(
-                  constraints: const BoxConstraints(
-                    minWidth: 18,
-                    minHeight: 18,
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 5),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.error,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    count > 99 ? '99+' : '$count',
-                    style: const TextStyle(
-                      fontSize: 10,
-                      height: 1,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
       ),
     );
   }
@@ -2244,8 +2182,10 @@ class _MediaSidebar extends ConsumerWidget {
   final bool showBrand;
   final ValueChanged<WorkspaceMode> onModeChanged;
   final VoidCallback onSettings;
+  final VoidCallback onScanTasks;
   final VoidCallback onManage;
   final ValueChanged<WorkspaceTool> onTool;
+  final WorkspaceTool? activeTool;
   final MediaLibraryBrowseFilter selectedFilter;
   final ValueChanged<MediaLibraryBrowseFilter> onFilter;
   final bool homeSelected;
@@ -2257,8 +2197,10 @@ class _MediaSidebar extends ConsumerWidget {
     this.showBrand = true,
     required this.onModeChanged,
     required this.onSettings,
+    required this.onScanTasks,
     required this.onManage,
     required this.onTool,
+    required this.activeTool,
     required this.selectedFilter,
     required this.onFilter,
     required this.homeSelected,
@@ -2276,7 +2218,7 @@ class _MediaSidebar extends ConsumerWidget {
         opacity: showBrand ? 0.56 : 0,
         border: showBrand ? null : const Border(),
         applyBlur: showBrand,
-        padding: EdgeInsets.fromLTRB(14, showBrand ? 14 : 12, 14, 12),
+        padding: EdgeInsets.fromLTRB(12, showBrand ? 14 : 10, 12, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -2288,8 +2230,9 @@ class _MediaSidebar extends ConsumerWidget {
                 onSwitchMode: () => onModeChanged(WorkspaceMode.cloud),
                 onSettings: onSettings,
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
             ],
+            const _SidebarSectionLabel('浏览'),
             _SidebarTile(
               icon: Icons.home_rounded,
               label: '首页',
@@ -2317,13 +2260,8 @@ class _MediaSidebar extends ConsumerWidget {
               selected: selectedFilter == MediaLibraryBrowseFilter.unmatched,
               onTap: () => onFilter(MediaLibraryBrowseFilter.unmatched),
             ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(8, 18, 8, 8),
-              child: Text(
-                '媒体库',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-              ),
-            ),
+            const SizedBox(height: 8),
+            const _SidebarSectionLabel('媒体库'),
             Expanded(
               child: ListView(
                 children: [
@@ -2352,19 +2290,53 @@ class _MediaSidebar extends ConsumerWidget {
                 ],
               ),
             ),
+            const Padding(
+              padding: EdgeInsets.only(top: 8, bottom: 10),
+              child: ShadSeparator.horizontal(),
+            ),
+            const _SidebarSectionLabel('管理'),
             _SidebarTile(
-              icon: Icons.auto_fix_high_rounded,
-              label: '媒体库管理',
+              icon: Icons.assignment_rounded,
+              label: '刮削管理',
+              count: state.activeScanCount,
               selected: false,
-              onTap: onManage,
+              onTap: onScanTasks,
             ),
             _SidebarTile(
               icon: Icons.category_rounded,
               label: '分类管理',
-              selected: false,
+              selected: activeTool == WorkspaceTool.categories,
               onTap: () => onTool(WorkspaceTool.categories),
             ),
+            _SidebarTile(
+              icon: Icons.video_library_rounded,
+              label: '媒体库管理',
+              selected: false,
+              onTap: onManage,
+            ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SidebarSectionLabel extends StatelessWidget {
+  final String label;
+
+  const _SidebarSectionLabel(this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 0, 10, 7),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: cs.mutedForeground,
         ),
       ),
     );
@@ -2440,7 +2412,7 @@ class _SidebarBrand extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
-                  letterSpacing: 1.6,
+                  letterSpacing: 0,
                   color: cs.mutedForeground,
                 ),
               ),
@@ -2499,80 +2471,111 @@ class _SidebarTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          height: subtitle == null ? 44 : 58,
-          padding: const EdgeInsets.symmetric(horizontal: 9),
-          decoration: BoxDecoration(
-            color: selected
-                ? cs.primary.withValues(alpha: 0.14)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-            border: selected
-                ? Border.all(color: cs.primary.withValues(alpha: 0.24))
-                : null,
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: selected
-                      ? cs.primary.withValues(alpha: 0.18)
-                      : cs.muted,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, size: 17, color: cs.primary),
+    final visibleCount = count != null && count! > 0;
+    final semanticsLabel = [
+      label,
+      ?subtitle,
+      if (visibleCount) '$count',
+    ].join('，');
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: semanticsLabel,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(7),
+            overlayColor: WidgetStatePropertyAll(
+              cs.foreground.withValues(alpha: 0.05),
+            ),
+            onTap: onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              height: subtitle == null ? 40 : 52,
+              padding: const EdgeInsets.symmetric(horizontal: 9),
+              decoration: BoxDecoration(
+                color: selected
+                    ? cs.primary.withValues(alpha: 0.12)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(7),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: selected
-                            ? FontWeight.w800
-                            : FontWeight.w600,
-                        color: selected ? cs.foreground : cs.mutedForeground,
-                      ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? cs.primary.withValues(alpha: 0.16)
+                          : cs.muted.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(6),
                     ),
-                    if (subtitle != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    child: Icon(
+                      icon,
+                      size: 16,
+                      color: selected ? cs.primary : cs.mutedForeground,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: selected
+                                ? FontWeight.w700
+                                : FontWeight.w600,
+                            color: cs.foreground,
+                          ),
+                        ),
+                        if (subtitle != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitle!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              color: cs.mutedForeground,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (visibleCount)
+                    Container(
+                      constraints: const BoxConstraints(minWidth: 20),
+                      height: 20,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? cs.primary.withValues(alpha: 0.16)
+                            : cs.muted,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        count! > 99 ? '99+' : '$count',
                         style: TextStyle(
-                          fontSize: 10.5,
-                          color: cs.mutedForeground,
+                          fontSize: 10,
+                          height: 1,
+                          fontWeight: FontWeight.w700,
+                          color: selected ? cs.primary : cs.mutedForeground,
                         ),
                       ),
-                    ],
-                  ],
-                ),
+                    ),
+                ],
               ),
-              if (count != null)
-                Text(
-                  count.toString(),
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: cs.mutedForeground,
-                  ),
-                ),
-            ],
+            ),
           ),
         ),
       ),
