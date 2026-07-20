@@ -46,7 +46,7 @@ class AppLogInterceptor extends Interceptor {
     final endpoint = uri.host.isEmpty
         ? uri.path
         : '${uri.host}${uri.hasPort ? ':${uri.port}' : ''}${uri.path}';
-    return '[请求 $requestID] ${_actionName(uri.path)} '
+    return '[请求 $requestID] ${_actionName(uri)} '
         '${options.method.toUpperCase()} $endpoint';
   }
 
@@ -56,7 +56,13 @@ class AppLogInterceptor extends Interceptor {
     return ((DateTime.now().microsecondsSinceEpoch - startedAt) / 1000).round();
   }
 
-  static String _actionName(String path) {
+  static String _actionName(Uri uri) {
+    final path = uri.path;
+    if (uri.host == 'themoviedb.org' ||
+        uri.host.endsWith('.themoviedb.org') ||
+        path.contains('/tmdb')) {
+      return 'TMDB 影视信息请求';
+    }
     if (path.contains('/v1/user/me')) return '获取账户资料';
     if (path.contains('/assets/v1/get_assets')) return '获取云盘空间信息';
     if (path.contains('/search_files')) return '搜索云盘文件';
@@ -75,7 +81,6 @@ class AppLogInterceptor extends Interceptor {
     if (path.contains('/create_task')) return '创建云盘任务';
     if (path.contains('/auth/token')) return '刷新登录凭据';
     if (path.contains('/auth/')) return '登录认证';
-    if (path.contains('/tmdb')) return '获取影视资料';
     return '云盘服务请求';
   }
 }
