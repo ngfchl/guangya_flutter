@@ -75,6 +75,55 @@ void main() {
       expect(value.isEpisode, isFalse);
     });
 
+    test('extracts movie titles after leading archive years', () {
+      final parenthesized = ParsedMediaName.parse(
+        '(1985)夏日福星(高清).MP4',
+        directoryName: '刘德华电影(1)',
+      );
+      final separated = ParsedMediaName.parse(
+        '1972 合气道.mkv',
+        directoryName: '洪金宝电影(1)',
+      );
+
+      expect(parenthesized.title, '夏日福星');
+      expect(parenthesized.year, 1985);
+      expect(separated.title, '合气道');
+      expect(separated.year, 1972);
+    });
+
+    test('preserves a numeric movie title before its release year', () {
+      final value = ParsedMediaName.parse(
+        '2046.2004.CHINESE.2160p.BluRay.REMUX.HEVC.DTS-HD.MA.5.1-FGT.mkv',
+        directoryName: 'BluRay.REMUX-HD.M5.1',
+      );
+
+      expect(value.title, '2046');
+      expect(value.year, 2004);
+      expect(value.resolution, '2160p');
+    });
+
+    test('removes download-site prefixes from localized movie titles', () {
+      final heaven = ParsedMediaName.parse(
+        '[电影天堂www.dytt89.com]源氏物语：千年之谜BD日语中字.mp4',
+      );
+      final bay = ParsedMediaName.parse(
+        '[电影湾dy196.com]消失的子弹.1080p.1.92g.H264.AAC.mkv',
+      );
+
+      expect(heaven.title, '源氏物语：千年之谜');
+      expect(bay.title, '消失的子弹');
+    });
+
+    test('uses the work suffix after bracketed collection metadata', () {
+      final value = ParsedMediaName.parse(
+        '[成龙1976-1992蓝光原盘集1 Jackie Chan 1976-1992]'
+        '[原盘国语中字][HDSKY][784.23GB]拳精 Spiritual Kung Fu 1978.iso',
+      );
+
+      expect(value.title, '拳精');
+      expect(value.year, 1978);
+    });
+
     test('keeps film year and ignores unresolvable disc stream names', () {
       final movie = ParsedMediaName.parse('加勒比海盗5：死无对证(2017).1080p.mp4');
       final stream = ParsedMediaName.parse(

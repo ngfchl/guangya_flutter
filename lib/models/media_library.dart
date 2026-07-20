@@ -845,17 +845,42 @@ class ParsedMediaName {
       caseSensitive: false,
     );
     final boundaryMatches = boundary.allMatches(normalized).toList();
-    final boundaryMatch =
-        boundaryMatches.length > 1 &&
-            boundaryMatches.first.start == 0 &&
-            RegExp(
-              r'^(?:19\d{2}|20\d{2})$',
-            ).hasMatch(boundaryMatches.first.group(0) ?? '')
-        ? boundaryMatches[1]
-        : boundaryMatches.firstOrNull;
-    var title = boundaryMatch != null
-        ? normalized.substring(0, boundaryMatch.start)
-        : normalized;
+    final leadingArchiveDate = RegExp(
+      r'^\s*(?:19|20)\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*[日号]?[ ._-]*',
+    ).firstMatch(normalized);
+    final leadingYear = RegExp(
+      r'^\s*(?:[\[(（]\s*)?((?:19|20)\d{2})(?:\s*[\])）])?[ ._-]*',
+    ).firstMatch(normalized);
+    var titleStart = 0;
+    var titleEnd = boundaryMatches.firstOrNull?.start ?? normalized.length;
+    if (leadingArchiveDate != null) {
+      titleStart = leadingArchiveDate.end;
+      titleEnd =
+          boundaryMatches
+              .where((match) => match.start >= titleStart)
+              .map((match) => match.start)
+              .firstOrNull ??
+          normalized.length;
+    } else if (leadingYear != null) {
+      final laterYear = yearMatches.skip(1).firstOrNull;
+      final textBeforeLaterYear = laterYear == null
+          ? ''
+          : normalized.substring(leadingYear.end, laterYear.start).trim();
+      if (laterYear != null && textBeforeLaterYear.isEmpty) {
+        // A numeric work title followed by its release year, e.g. `2046.2004`.
+        titleEnd = laterYear.start;
+      } else {
+        // Legacy archives commonly use `(1985)Title` or `1985 Title`.
+        titleStart = leadingYear.end;
+        titleEnd =
+            boundaryMatches
+                .where((match) => match.start >= titleStart)
+                .map((match) => match.start)
+                .firstOrNull ??
+            normalized.length;
+      }
+    }
+    var title = normalized.substring(titleStart, titleEnd).trim();
     // Movie archives may prefix the title with a studio/catalog label, for
     // example `中国香港邵氏出品.1968.拜倒石榴裙`.
     final catalogTitle = RegExp(
@@ -866,9 +891,6 @@ class ParsedMediaName {
           r'(?:出品|片库|电影库|合集|收藏|目录)$',
         ).hasMatch(catalogTitle.group(1)!.trim())) {
       title = catalogTitle.group(3)!;
-    }
-    if (yearMatches.length > 1 && yearMatches.first.start == 0) {
-      title = title.replaceFirst(RegExp(r'^\s*\d{4}[ ._-]+'), '');
     }
     title = _cleanTitle(title);
     if (bracketedRelease.title != null) {
@@ -975,7 +997,9 @@ class ParsedMediaName {
         (directoryPath == null ? null : _repairSpacedYear(directoryPath));
     return ParsedMediaName(
       title: title,
-      year: yearMatch == null
+      year: bracketedRelease.title != null && bracketedRelease.year != null
+          ? bracketedRelease.year
+          : yearMatch == null
           ? (bracketedRelease.year ?? repairedYear ?? inheritedYear)
           : int.tryParse(yearMatch.group(1)!),
       season: resolvedSeason,
@@ -996,8 +1020,8 @@ class ParsedMediaName {
   static ({String? title, int? year, int? episode}) _parseBracketedRelease(
     String value,
   ) {
-    final segments = RegExp(r'[\[【]([^\]】]+)[\]】]')
-        .allMatches(value)
+    final matches = RegExp(r'[\[【]([^\]】]+)[\]】]').allMatches(value).toList();
+    final segments = matches
         .map((match) => match.group(1)?.trim() ?? '')
         .where((segment) => segment.isNotEmpty)
         .toList(growable: false);
@@ -1008,6 +1032,19 @@ class ParsedMediaName {
     String? title;
     int? year;
     int? episode;
+    final suffix = matches.isEmpty
+        ? ''
+        : value.substring(matches.last.end).trim();
+    if (suffix.isNotEmpty) {
+      final suffixYear = RegExp(r'\b(19\d{2}|20\d{2})\b').firstMatch(suffix);
+      final suffixTitle = _cleanTitle(
+        suffixYear == null ? suffix : suffix.substring(0, suffixYear.start),
+      );
+      if (suffixTitle.isNotEmpty) {
+        title = suffixTitle;
+        year = suffixYear == null ? null : int.tryParse(suffixYear.group(1)!);
+      }
+    }
     for (final segment in segments) {
       final numeric = int.tryParse(segment);
       if (numeric != null) {
@@ -1113,6 +1150,17 @@ class ParsedMediaName {
       '',
     );
 
+    // Download sites and uploader labels are transport metadata even when
+    // their bracket contains Chinese text. Preserve ordinary localized title
+    // brackets, but remove URL/domain/upload prefixes.
+    title = title.replaceFirst(
+      RegExp(
+        r'^\s*[\[【](?=[^\]】]*(?:www\.|\.(?:com|cn|net|org)\b|upload\b|电影天堂|电影湾|影视))[^\]】]*[\]】]\s*[-_. ]*',
+        caseSensitive: false,
+      ),
+      '',
+    );
+
     // Some library folders use a single Latin letter only as a manual sort
     // prefix, for example `Q-翘楚`. Strip it only when a Chinese title follows
     // so legitimate English and mixed-language titles remain untouched.
@@ -1190,6 +1238,13 @@ class ParsedMediaName {
         .replaceFirst(RegExp(r'^\s*[\[【(（]\s*\d{1,3}\s*[\]】)）][ ._-]*'), '')
         .replaceFirst(RegExp(r'^\s*\d{1,3}[ ._-]+'), '')
         .replaceAll(RegExp(r'[\(（](?:港台|港版?|台版?|国配|国语|简繁?|中字?)[\)）]'), ' ')
+        .replaceAll(
+          RegExp(
+            r'[\(（](?:高清(?:粤|国)?|超清|修复版?|完整版?|加长版?)[\)）]',
+            caseSensitive: false,
+          ),
+          ' ',
+        )
         .replaceAll(
           RegExp(
             r'(?:[ ._-]+|^)(?:国[粤英日韩][语字]?|国粤(?:双语)?(?:中字|中英(?:字幕|双字)?)?|国语|粤语|(?:中英|中日|中韩)(?:双语|字幕)?|中文字幕|中字|简繁(?:字幕)?|内封(?:特效)?中英(?:双字|字幕)?|CHINESE|CHN)(?=$|[ ._-])',

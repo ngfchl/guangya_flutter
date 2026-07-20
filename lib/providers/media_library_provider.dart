@@ -4269,6 +4269,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
 
     final fileStem = fallback.file.name.replaceFirst(RegExp(r'\.[^.]+$'), '');
+    final lastReleaseBracket = fileStem.lastIndexOf(RegExp(r'[\]】]'));
+    if (lastReleaseBracket >= 0 && lastReleaseBracket + 1 < fileStem.length) {
+      final suffix = fileStem.substring(lastReleaseBracket + 1).trim();
+      final suffixYear = RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(suffix);
+      final suffixTitle =
+          (suffixYear == null ? suffix : suffix.substring(0, suffixYear.start))
+              .replaceAll(RegExp(r'[._]+'), ' ')
+              .replaceAll(RegExp(r'\s+'), ' ')
+              .trim();
+      addWithVariants(suffixTitle, '括号后作品名');
+    }
     final episodeMarker = RegExp(
       r'\bS\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,3}\b',
       caseSensitive: false,

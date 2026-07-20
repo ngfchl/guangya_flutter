@@ -89,6 +89,19 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'Spiritual Kung Fu') {
+      return {
+        'results': [
+          {
+            'id': 200003,
+            'media_type': 'movie',
+            'title': '拳精',
+            'original_title': '拳精',
+            'release_date': '1978-12-01',
+          },
+        ],
+      };
+    }
     if (query == 'Chronicles of Grace and Grudges in the Primordial Age' ||
         query == '荒古恩仇录') {
       return {
@@ -152,6 +165,14 @@ class _RecognitionAPI extends GuangyaAPI {
         'title': '春天的信',
         'original_title': 'Spring Letter',
         'release_date': '2008-04-11',
+      };
+    }
+    if (id == 200003) {
+      return {
+        'id': id,
+        'title': '拳精',
+        'original_title': '拳精',
+        'release_date': '1978-12-01',
       };
     }
     return {
@@ -396,4 +417,39 @@ void main() {
     expect(recognized.tmdbID, 200002);
     expect(recognized.title, '春天的信');
   });
+
+  test(
+    'recognition searches the work name after collection brackets',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'spiritual-kung-fu',
+          name:
+              '[成龙1976-1992蓝光原盘集1 Jackie Chan 1976-1992]'
+              '[原盘国语中字][HDSKY][784.23GB]拳精 Spiritual Kung Fu 1978.iso',
+          isDirectory: false,
+          cloudPath:
+              '/电影/成龙1976-2016原盘电影集/'
+              '[成龙1976-1992蓝光原盘集1 Jackie Chan 1976-1992]'
+              '[原盘国语中字][HDSKY][784.23GB]拳精 Spiritual Kung Fu 1978.iso',
+        ),
+        directoryName: '成龙1976-2016原盘电影集',
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200003);
+      expect(
+        api.calls,
+        contains((query: 'Spiritual Kung Fu', mediaKind: 'movie', year: 1978)),
+      );
+    },
+  );
 }
