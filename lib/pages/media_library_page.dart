@@ -1933,7 +1933,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       _manualMatchPreparingResourceKey = targetKey;
     });
     try {
-      final resources = await notifier.refreshParsedTitles(work.resources);
+      // Manual matching only needs the selected resource's current filename
+      // to initialize the search. Refreshing every resource in a large
+      // series here blocks the dialog behind storage writes and a full reload.
+      final resources = work.resources;
       if (!mounted ||
           _detailSession != detailSession ||
           _detailWork == null ||
@@ -1941,16 +1944,17 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         return;
       }
       setState(() => _manualMatchPreparingResourceKey = null);
-      final refreshedTarget = resources
-          .where(
-            (resource) =>
-                resource.libraryID == target.libraryID &&
-                (resource.id == target.id ||
-                    (target.file.gcid?.isNotEmpty == true &&
-                        resource.file.gcid == target.file.gcid)),
-          )
-          .firstOrNull;
-      final queryResource = refreshedTarget ?? resources.first;
+      final queryResource =
+          resources
+              .where(
+                (resource) =>
+                    resource.libraryID == target.libraryID &&
+                    (resource.id == target.id ||
+                        (target.file.gcid?.isNotEmpty == true &&
+                            resource.file.gcid == target.file.gcid)),
+              )
+              .firstOrNull ??
+          target;
       final parsed = ParsedMediaName.parse(
         queryResource.file.name,
         directoryName: _parentDirectoryName(queryResource.file.cloudPath),
@@ -1958,7 +1962,13 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       final candidate = await _showManualMatchPopover(
         initialQuery: parsed.title,
         initialYear: parsed.year,
-        initialMediaKind: 'auto',
+        initialMediaKind: parsed.isEpisode || parsed.season != null
+            ? 'tv'
+            : switch (queryResource.mediaKind) {
+                TMDBMediaKind.movie => 'movie',
+                TMDBMediaKind.tv => 'tv',
+                TMDBMediaKind.automatic || null => 'auto',
+              },
         initialSeason: parsed.season,
         initialEpisode: parsed.episode,
       );
