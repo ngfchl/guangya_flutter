@@ -5704,21 +5704,43 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         final files = pathfulSnapshots[index];
         final isDiscRoot = isMediaScanDiscLayout(files);
         final discoveredBatch = <CloudFile>[];
-        for (final file in files) {
-          final path = file.cloudPath;
-          if (file.isDirectory) {
-            if (library.recursive && !isDiscRoot) {
-              folders.add(_ScanFolder(file.id, path));
-            }
-            continue;
+        if (isDiscRoot) {
+          // A disc root folder (BDMV / VIDEO_TS) represents a single
+          // playable work. Turn the folder itself into a media item so
+          // it can be recognized and played as a whole.
+          final discFolder = batch[index];
+          final discFile = CloudFile(
+            id: discFolder.id ?? 'disc:${discFolder.path}',
+            name: discFolder.path.split(RegExp(r'[/\\]+')).lastWhere(
+              (part) => part.isNotEmpty,
+              orElse: () => discFolder.path,
+            ),
+            isDirectory: true,
+            size: files.fold<int>(0, (sum, f) => sum + (f.size ?? 0)),
+            cloudPath: discFolder.path,
+            subFileCount: files.where((f) => !f.isDirectory).length,
+          );
+          if (!mediaFiles.containsKey(discFile.id)) {
+            mediaFiles[discFile.id] = discFile;
+            discoveredBatch.add(discFile);
           }
-          if (file.isVideo &&
-              (file.size ?? 0) >= library.minimumSizeMB * 1024 * 1024 &&
-              !isMediaScanDiscInternalPath(path)) {
-            final mediaFile = _withPath(file, path);
-            if (!mediaFiles.containsKey(file.id)) {
-              mediaFiles[file.id] = mediaFile;
-              discoveredBatch.add(mediaFile);
+        } else {
+          for (final file in files) {
+            final path = file.cloudPath;
+            if (file.isDirectory) {
+              if (library.recursive) {
+                folders.add(_ScanFolder(file.id, path));
+              }
+              continue;
+            }
+            if (file.isVideo &&
+                (file.size ?? 0) >= library.minimumSizeMB * 1024 * 1024 &&
+                !isMediaScanDiscInternalPath(path)) {
+              final mediaFile = _withPath(file, path);
+              if (!mediaFiles.containsKey(file.id)) {
+                mediaFiles[file.id] = mediaFile;
+                discoveredBatch.add(mediaFile);
+              }
             }
           }
         }
@@ -5831,16 +5853,32 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         // of one work, not separately scrapeable media files.
         final isDiscRoot = isMediaScanDiscLayout(files);
         final mediaBatch = <CloudFile>[];
-        for (final file in files) {
-          if (file.isDirectory) {
-            if (recursive && !isDiscRoot) {
-              final childPath = file.cloudPath;
-              if (!isMediaScanDiscInternalPath(childPath)) {
-                folders.add(_ScanFolder(file.id, childPath));
+        if (isDiscRoot) {
+          // Treat the disc root folder itself as a single playable media item.
+          final discFile = CloudFile(
+            id: folder.id ?? 'disc:${folder.path}',
+            name: folder.path.split(RegExp(r'[/\\]+')).lastWhere(
+              (part) => part.isNotEmpty,
+              orElse: () => folder.path,
+            ),
+            isDirectory: true,
+            size: files.fold<int>(0, (sum, f) => sum + (f.size ?? 0)),
+            cloudPath: folder.path,
+            subFileCount: files.where((f) => !f.isDirectory).length,
+          );
+          mediaBatch.add(discFile);
+        } else {
+          for (final file in files) {
+            if (file.isDirectory) {
+              if (recursive) {
+                final childPath = file.cloudPath;
+                if (!isMediaScanDiscInternalPath(childPath)) {
+                  folders.add(_ScanFolder(file.id, childPath));
+                }
               }
+            } else if (file.isVideo && (file.size ?? 0) >= minimumSizeBytes) {
+              mediaBatch.add(file);
             }
-          } else if (file.isVideo && (file.size ?? 0) >= minimumSizeBytes) {
-            mediaBatch.add(file);
           }
         }
         discovered += mediaBatch.length;
