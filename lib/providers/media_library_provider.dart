@@ -2972,9 +2972,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
           );
           if (_cancelDetailSync) break;
-          // Type, exact title and year refinement has already removed weaker
-          // results. Multiple survivors are genuinely ambiguous and must not
-          // be resolved by TMDB's result order.
           if (candidates.length == 1) {
             updated = await _applyTMDBCandidateAndDetails(
               fallback,
@@ -2994,12 +2991,105 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             }
           } else if (candidates.length > 1 &&
               (original.tmdbID == null || rejectedPersistedMatch)) {
-            pendingMatches.add(
-              MediaTMDBMatchRequest(items: [fallback], candidates: candidates),
+            final parsed = ParsedMediaName.parse(
+              fallback.file.name,
+              directoryName: _parentDirectoryName(fallback.file.cloudPath),
             );
-            _appendScanLog(
-              '[同步识别][调试] 存在 ${candidates.length} 个 TMDB 候选，等待用户选择',
+            final titleVariants = _recognitionTitleVariants(
+              fallback,
+              primaryTitle: parsed.title.trim().isEmpty
+                  ? fallback.title
+                  : parsed.title,
             );
+            final doubanItems = await _searchDoubanCandidates(
+              titleVariants,
+              _requestedTMDBMediaKind(fallback, parsed),
+              parsed.year,
+            );
+            var narrowed = candidates;
+            if (doubanItems.isNotEmpty) {
+              narrowed = _crossReferenceWithDouban(
+                candidates,
+                doubanItems,
+                parsed,
+              );
+              final boosted = narrowed
+                  .where((c) => c['_douban_boost'] == true)
+                  .toList();
+              if (boosted.length == 1) {
+                updated = await _applyTMDBCandidateAndDetails(
+                  fallback,
+                  boosted.first,
+                  apiKey,
+                  proxyHost:
+                      StorageManager.get<String>(StorageKeys.tmdbProxyHost) ??
+                      '',
+                  proxyPort:
+                      StorageManager.get<String>(StorageKeys.tmdbProxyPort) ??
+                      '',
+                );
+                _appendScanLog(
+                  '[同步识别][调试] 豆瓣比对收敛：TMDB ${candidates.length} 候选中，'
+                  '豆瓣匹配后自动选定 "${updated.title}" (tmdbId=${updated.tmdbID ?? '-'})',
+                );
+                if (seriesKey == null ||
+                    updated.mediaKind == TMDBMediaKind.tv) {
+                  automaticMatches[recognitionKey] = updated;
+                }
+              } else {
+                pendingMatches.add(
+                  MediaTMDBMatchRequest(
+                    items: [fallback],
+                    candidates: narrowed,
+                  ),
+                );
+                _appendScanLog(
+                  '[同步识别][调试] 豆瓣比对后仍有 ${narrowed.length} 个候选，等待用户选择',
+                );
+              }
+            } else {
+              pendingMatches.add(
+                MediaTMDBMatchRequest(
+                  items: [fallback],
+                  candidates: candidates,
+                ),
+              );
+              _appendScanLog(
+                '[同步识别][调试] 存在 ${candidates.length} 个 TMDB 候选，等待用户选择',
+              );
+            }
+          } else if (candidates.isEmpty && updated.tmdbID == null) {
+            final parsed = ParsedMediaName.parse(
+              fallback.file.name,
+              directoryName: _parentDirectoryName(fallback.file.cloudPath),
+            );
+            final titleVariants = _recognitionTitleVariants(
+              fallback,
+              primaryTitle: parsed.title.trim().isEmpty
+                  ? fallback.title
+                  : parsed.title,
+            );
+            final doubanItems = await _searchDoubanCandidates(
+              titleVariants,
+              _requestedTMDBMediaKind(fallback, parsed),
+              parsed.year,
+            );
+            if (doubanItems.isNotEmpty) {
+              final doubanResult = _pickBestDoubanCandidate(
+                fallback,
+                parsed,
+                titleVariants,
+                _requestedTMDBMediaKind(fallback, parsed),
+                doubanItems,
+              );
+              if (doubanResult != null) {
+                updated = doubanResult;
+                if (seriesKey == null ||
+                    updated.mediaKind == TMDBMediaKind.tv) {
+                  automaticMatches[recognitionKey] = updated;
+                }
+              }
+            }
           }
         }
         if (updated.tmdbID != null) {
@@ -3699,14 +3789,41 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         year: parsed.year,
       );
       final values = searchResult.candidates;
-      if (values.isEmpty) {
+      final doubanItems = await _searchDoubanCandidates(
+        titleVariants,
+        requestedKind,
+        parsed.year,
+      );
+      if (values.isEmpty && doubanItems.isEmpty) {
         _appendScanLog(
-          '[同步识别][调试] TMDB 未命中：${fallback.file.name}；'
+          '[同步识别][调试] TMDB + 豆瓣均未命中：${fallback.file.name}；'
           '${_describeTMDBRecognitionAttempts(searchResult.attempts)}',
         );
         return fallback;
       }
+      if (values.isEmpty && doubanItems.isNotEmpty) {
+        _appendScanLog(
+          '[同步识别][调试] TMDB 未命中，豆瓣返回 ${doubanItems.length} 条：'
+          '${fallback.file.name}',
+        );
+        final doubanResult = _pickBestDoubanCandidate(
+          fallback,
+          parsed,
+          titleVariants,
+          requestedKind,
+          doubanItems,
+        );
+        if (doubanResult != null) return doubanResult;
+        return fallback;
+      }
       var refinedValues = _refineTMDBCandidates(fallback, parsed, values);
+      if (doubanItems.isNotEmpty) {
+        refinedValues = _crossReferenceWithDouban(
+          refinedValues,
+          doubanItems,
+          parsed,
+        );
+      }
       if (refinedValues.length > 1 ||
           _tmdbCandidatesNeedDetails(refinedValues)) {
         final resolution = await _resolveAmbiguousTMDBCandidates(
@@ -3798,6 +3915,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           // differs from a release/package year embedded in the file name.
           score -= 15;
         }
+        if (map['_douban_boost'] == true) {
+          score += 20;
+        }
         if (score > bestScore) {
           bestScore = score;
           map['media_type'] = type;
@@ -3850,6 +3970,216 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final visible = attempts.take(4).join('；');
     final remaining = attempts.length - 4;
     return remaining <= 0 ? '查询尝试：$visible' : '查询尝试：$visible；另有 $remaining 次';
+  }
+
+  Future<List<Map<String, dynamic>>> _searchDoubanCandidates(
+    List<_MediaTitleVariant> titleVariants,
+    String requestedKind,
+    int? year,
+  ) async {
+    if (_api == null || titleVariants.isEmpty) return const [];
+    for (final variant in titleVariants) {
+      final q = variant.value.trim();
+      if (RegExp(
+        r'合集|出品|系列|合辑|收藏|精选|套装|全集|典藏',
+      ).hasMatch(q)) {
+        _appendScanLog(
+          '[豆瓣][跳过] 疑似合集/合辑名，不搜索："$q"',
+        );
+        continue;
+      }
+      Map<String, dynamic> result;
+      try {
+        result = await _api!.doubanSearch(variant.value);
+      } catch (error) {
+        _appendScanLog(
+          '[豆瓣][搜索] 请求失败：query="${variant.value}"，错误=$error',
+        );
+        continue;
+      }
+      final items = result['items'];
+      if (items is! List || items.isEmpty) {
+        _appendScanLog(
+          '[豆瓣][搜索] 无结果：query="${variant.value}"',
+        );
+        continue;
+      }
+      _appendScanLog(
+        '[豆瓣][搜索] 返回 ${items.length} 条：query="${variant.value}"',
+      );
+      final candidates = <Map<String, dynamic>>[];
+      for (final raw in items) {
+        if (raw is! Map) continue;
+        final target = raw['target'];
+        if (target is! Map) continue;
+        final candidate = Map<String, dynamic>.from(target);
+        final id = candidate['id']?.toString();
+        if (id == null || id.isEmpty) continue;
+        final cardSubtitle =
+            (candidate['card_subtitle'] ?? '').toString();
+        final type = cardSubtitle.contains('集') ? 'tv' : 'movie';
+        if (requestedKind != 'auto' && type != requestedKind) continue;
+        candidate['media_type'] = type;
+        candidate['douban_id'] = id;
+        final yearStr = candidate['year']?.toString() ?? '';
+        if (yearStr.length >= 4) {
+          candidate['release_date'] = '$yearStr-01-01';
+        }
+        candidate['poster_path'] = candidate['cover_url']?.toString();
+        candidate['overview'] = cardSubtitle;
+        final rating = candidate['rating'];
+        if (rating is Map) {
+          candidate['vote_average'] = rating['value'];
+          candidate['vote_count'] = rating['count'];
+        }
+        candidates.add(candidate);
+      }
+      if (candidates.isEmpty) continue;
+      _appendScanLog(
+        '[豆瓣][筛选] ${candidates.length} 条候选通过类型筛选',
+      );
+      return candidates;
+    }
+    return const [];
+  }
+
+  List<Map<String, dynamic>> _crossReferenceWithDouban(
+    List<Map<String, dynamic>> tmdbCandidates,
+    List<Map<String, dynamic>> doubanItems,
+    ParsedMediaName parsed,
+  ) {
+    if (doubanItems.isEmpty || tmdbCandidates.isEmpty) return tmdbCandidates;
+    final doubanYears = <int>{};
+    final doubanTypes = <String>{};
+    for (final item in doubanItems) {
+      final date = item['release_date']?.toString() ?? '';
+      final y = date.length >= 4 ? int.tryParse(date.substring(0, 4)) : null;
+      if (y != null) doubanYears.add(y);
+      final t = item['media_type']?.toString();
+      if (t != null) doubanTypes.add(t);
+    }
+    final boosted = <Map<String, dynamic>>[];
+    for (final candidate in tmdbCandidates) {
+      var map = Map<String, dynamic>.from(candidate);
+      final date =
+          (map['release_date'] ?? map['first_air_date'])?.toString() ?? '';
+      final candidateYear =
+          date.length >= 4 ? int.tryParse(date.substring(0, 4)) : null;
+      final type = map['media_type']?.toString();
+      final yearMatch = candidateYear != null && doubanYears.contains(candidateYear);
+      final typeMatch = type != null && doubanTypes.contains(type);
+      if (yearMatch && typeMatch) {
+        final doubanMatch = doubanItems.firstWhere(
+          (d) {
+            final dDate = d['release_date']?.toString() ?? '';
+            final dYear =
+                dDate.length >= 4 ? int.tryParse(dDate.substring(0, 4)) : null;
+            return dYear == candidateYear && d['media_type'] == type;
+          },
+          orElse: () => {},
+        );
+        if (doubanMatch.isNotEmpty) {
+          map['_douban_boost'] = true;
+          map['douban_id'] = doubanMatch['douban_id'];
+          _appendScanLog(
+            '[豆瓣][比对] TMDB "${map['title'] ?? map['name']}" '
+            '与豆瓣 "${doubanMatch['title']}" 年份=$candidateYear 类型=$type 匹配，加分 +20',
+          );
+        }
+      }
+      boosted.add(map);
+    }
+    return boosted;
+  }
+
+  MediaLibraryItem? _pickBestDoubanCandidate(
+    MediaLibraryItem fallback,
+    ParsedMediaName parsed,
+    List<_MediaTitleVariant> titleVariants,
+    String requestedKind,
+    List<Map<String, dynamic>> candidates,
+  ) {
+    var refined = candidates;
+    if (parsed.year != null) {
+      final sameYear = refined.where((c) {
+        final date = c['release_date']?.toString() ?? '';
+        return date.startsWith('${parsed.year}');
+      }).toList();
+      if (sameYear.isNotEmpty) refined = sameYear;
+    }
+    final ranked = <({int score, Map<String, dynamic> value})>[];
+    for (final candidate in refined.take(5)) {
+      final title =
+          (candidate['title'] ?? candidate['name'])?.toString() ?? '';
+      final titleScore = _bestMediaTitleMatch(
+        titleVariants.first.value,
+        title: title,
+        originalTitle: title,
+      ).score;
+      var score = titleScore;
+      if (score == 0) {
+        score = _fuzzyTitleScore(titleVariants.first.value, title);
+      }
+      final date = candidate['release_date']?.toString() ?? '';
+      final candidateYear =
+          date.length >= 4 ? int.tryParse(date.substring(0, 4)) : null;
+      if (parsed.year != null && candidateYear != null) {
+        final delta = (candidateYear - parsed.year!).abs();
+        if (delta == 0) {
+          score += 30;
+        } else if (delta == 1) {
+          score += 20;
+        } else {
+          score -= 40;
+        }
+      }
+      ranked.add((score: score, value: candidate));
+      _appendScanLog(
+        '[豆瓣][评分] "${candidate['title']}" 标题分=$titleScore，'
+        '模糊分=${_fuzzyTitleScore(titleVariants.first.value, title)}，'
+        '年份=${date.isEmpty ? '-' : date}，总分=$score',
+      );
+    }
+    ranked.sort((a, b) => b.score.compareTo(a.score));
+    final yearMatched =
+        parsed.year != null && refined.every((c) {
+          final date = c['release_date']?.toString() ?? '';
+          return date.startsWith('${parsed.year}');
+        });
+    final uniqueByYear = yearMatched && refined.length == 1;
+    final uniqueAltogether = refined.length == 1;
+    if (ranked.isEmpty ||
+        (ranked.first.score < 30 && !uniqueByYear && !uniqueAltogether)) {
+      _appendScanLog(
+        '[豆瓣][结果] 最高分 ${ranked.isEmpty ? 0 : ranked.first.score} < 30'
+        '${uniqueByYear ? '，年份唯一匹配，采纳' : ''}'
+        '${uniqueAltogether && !uniqueByYear ? '，唯一候选，采纳' : ''}'
+        '${!uniqueByYear && !uniqueAltogether ? '，放弃' : ''}',
+      );
+      if (!uniqueByYear && !uniqueAltogether) return null;
+    }
+    final best = ranked.first.value;
+    final title =
+        (best['title'] ?? best['name'])?.toString().trim() ?? '';
+    final date = best['release_date']?.toString() ?? '';
+    final type = best['media_type']?.toString() ?? 'movie';
+    final doubanId = best['douban_id']?.toString();
+    _appendScanLog(
+      '[豆瓣][命中] ${fallback.file.name} -> '
+      '"$title" ($date)，豆瓣ID=$doubanId',
+    );
+    return fallback.copyWith(
+      title: title.isEmpty ? fallback.title : title,
+      originalTitle: title.isEmpty ? fallback.originalTitle : title,
+      doubanID: doubanId,
+      mediaKind: type == 'tv'
+          ? TMDBMediaKind.tv
+          : TMDBMediaKind.movie,
+      releaseDate: date,
+      overview: best['overview']?.toString() ?? '',
+      posterPath: best['poster_path']?.toString(),
+      updatedAt: DateTime.now(),
+    );
   }
 
   /// fs_detail/search responses sometimes return only a bare filename. Keep
@@ -4420,7 +4750,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     int? manualSeason,
     int? manualEpisode,
   }) async {
-    if (_api == null || item.tmdbID == null || item.mediaKind == null) {
+    if (_api == null || item.mediaKind == null) {
+      return item;
+    }
+    if (item.tmdbID == null && item.doubanID == null) {
       return item;
     }
     final directoryName = _parentDirectoryName(item.file.cloudPath);
@@ -4954,6 +5287,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       originalTitle: originalTitle,
     );
     return (score: match.score, basis: match.basis);
+  }
+
+  int _fuzzyTitleScore(String query, String doubanTitle) {
+    final q = MediaTitleMatcher.normalize(query);
+    final d = MediaTitleMatcher.normalize(doubanTitle);
+    if (q.isEmpty || d.isEmpty) return 0;
+    if (q == d) return 80;
+    if (q.contains(d) || d.contains(q)) return 60;
+    var shared = 0;
+    for (final rune in q.runes) {
+      if (d.contains(String.fromCharCode(rune))) shared++;
+    }
+    final ratio = shared / q.length;
+    if (ratio >= 0.6) return (ratio * 50).toInt();
+    return 0;
   }
 
   String _normalizeMediaTitle(String value) {
