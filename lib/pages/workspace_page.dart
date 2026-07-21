@@ -638,7 +638,6 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                 mediaFilter: _mediaBrowseFilter,
                 mediaLibrarySection: _mediaLibrarySection,
                 mediaHomeSelected: _mediaHomeSelected,
-                onSelectMediaLibrary: _selectMediaLibrary,
                 onMediaLibrarySectionChanged: _changeMediaLibrarySection,
                 hideMediaIdentity:
                     _mode == WorkspaceMode.media && _mediaActiveTool != null,
@@ -1062,7 +1061,6 @@ class _TopBar extends StatelessWidget {
   final MediaLibraryBrowseFilter mediaFilter;
   final MediaLibraryBrowseFilter mediaLibrarySection;
   final bool mediaHomeSelected;
-  final ValueChanged<String> onSelectMediaLibrary;
   final ValueChanged<MediaLibraryBrowseFilter> onMediaLibrarySectionChanged;
   final bool hideMediaIdentity;
   final UploadProgress? uploadProgress;
@@ -1082,7 +1080,6 @@ class _TopBar extends StatelessWidget {
     required this.mediaFilter,
     required this.mediaLibrarySection,
     required this.mediaHomeSelected,
-    required this.onSelectMediaLibrary,
     required this.onMediaLibrarySectionChanged,
     required this.hideMediaIdentity,
     required this.uploadProgress,
@@ -1242,17 +1239,26 @@ class _TopBar extends StatelessWidget {
         onBack: onCloseMediaDetail,
       );
     }
-    final identity = _MediaLibraryTopPopover(
-      state: mediaState,
-      compact: compact,
-      filter: mediaFilter,
-      homeSelected: mediaHomeSelected,
-      onSelected: onSelectMediaLibrary,
-    );
     final showLibraryScan =
         !mediaHomeSelected && mediaFilter == MediaLibraryBrowseFilter.all;
     final showLibrarySections =
         showLibraryScan && !searchOpen && mediaState.statistics.total > 0;
+    final identity = compact && showLibrarySections
+        ? _MediaLibrarySectionPopover(
+            state: mediaState,
+            compact: compact,
+            filter: mediaFilter,
+            homeSelected: mediaHomeSelected,
+            statistics: mediaState.statistics,
+            selected: mediaLibrarySection,
+            onSelected: onMediaLibrarySectionChanged,
+          )
+        : _MediaLibraryTopIdentity(
+            state: mediaState,
+            compact: compact,
+            filter: mediaFilter,
+            homeSelected: mediaHomeSelected,
+          );
     final searchField = Container(
       height: compact ? 42 : 40,
       padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1455,14 +1461,16 @@ class _MediaLibraryTopIdentity extends StatelessWidget {
   final bool compact;
   final MediaLibraryBrowseFilter filter;
   final bool homeSelected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final String? tapHint;
 
   const _MediaLibraryTopIdentity({
     required this.state,
     required this.compact,
     required this.filter,
     required this.homeSelected,
-    required this.onTap,
+    this.onTap,
+    this.tapHint,
   });
 
   @override
@@ -1472,8 +1480,6 @@ class _MediaLibraryTopIdentity extends StatelessWidget {
     final statistics = homeSelected || filter != MediaLibraryBrowseFilter.all
         ? state.globalStatistics
         : state.statistics;
-    final isLibraryView =
-        !homeSelected && filter == MediaLibraryBrowseFilter.all;
     final title = homeSelected
         ? '首页'
         : switch (filter) {
@@ -1496,14 +1502,12 @@ class _MediaLibraryTopIdentity extends StatelessWidget {
             ),
           };
     return Semantics(
-      button: isLibraryView,
-      label: isLibraryView
-          ? '当前媒体库：${library?.name ?? '未选择'}，点击切换媒体库'
-          : '$title，$subtitle',
+      button: onTap != null,
+      label: tapHint == null ? '$title，$subtitle' : '$title，$tapHint',
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: isLibraryView ? onTap : null,
+          onTap: onTap,
           borderRadius: BorderRadius.circular(8),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
@@ -1544,7 +1548,7 @@ class _MediaLibraryTopIdentity extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (isLibraryView)
+                if (onTap != null)
                   Icon(
                     Icons.keyboard_arrow_down_rounded,
                     size: 18,
@@ -1559,27 +1563,32 @@ class _MediaLibraryTopIdentity extends StatelessWidget {
   }
 }
 
-class _MediaLibraryTopPopover extends StatefulWidget {
+class _MediaLibrarySectionPopover extends StatefulWidget {
   final MediaLibraryState state;
   final bool compact;
   final MediaLibraryBrowseFilter filter;
   final bool homeSelected;
-  final ValueChanged<String> onSelected;
+  final MediaLibraryStatistics statistics;
+  final MediaLibraryBrowseFilter selected;
+  final ValueChanged<MediaLibraryBrowseFilter> onSelected;
 
-  const _MediaLibraryTopPopover({
+  const _MediaLibrarySectionPopover({
     required this.state,
     required this.compact,
     required this.filter,
     required this.homeSelected,
+    required this.statistics,
+    required this.selected,
     required this.onSelected,
   });
 
   @override
-  State<_MediaLibraryTopPopover> createState() =>
-      _MediaLibraryTopPopoverState();
+  State<_MediaLibrarySectionPopover> createState() =>
+      _MediaLibrarySectionPopoverState();
 }
 
-class _MediaLibraryTopPopoverState extends State<_MediaLibraryTopPopover> {
+class _MediaLibrarySectionPopoverState
+    extends State<_MediaLibrarySectionPopover> {
   final _controller = ShadPopoverController();
 
   @override
@@ -1590,31 +1599,31 @@ class _MediaLibraryTopPopoverState extends State<_MediaLibraryTopPopover> {
 
   @override
   Widget build(BuildContext context) {
-    final isLibraryView =
-        !widget.homeSelected && widget.filter == MediaLibraryBrowseFilter.all;
     final child = _MediaLibraryTopIdentity(
       state: widget.state,
       compact: widget.compact,
       filter: widget.filter,
       homeSelected: widget.homeSelected,
       onTap: _controller.toggle,
+      tapHint: '点击选择资源分类',
     );
-    if (!isLibraryView || widget.state.libraries.isEmpty) return child;
     final cs = ShadTheme.of(context).colorScheme;
     return ShadPopover(
       controller: _controller,
       popover: (_) => SizedBox(
-        width: 248,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 280),
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.all(6),
+        width: (MediaQuery.sizeOf(context).width - 24)
+            .clamp(300.0, 520.0)
+            .toDouble(),
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+                padding: const EdgeInsets.fromLTRB(8, 3, 8, 7),
                 child: Text(
-                  '切换媒体库',
+                  '资源分类',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -1622,66 +1631,14 @@ class _MediaLibraryTopPopoverState extends State<_MediaLibraryTopPopover> {
                   ),
                 ),
               ),
-              for (final library in widget.state.libraries)
-                Builder(
-                  builder: (context) {
-                    final statistics = MediaLibraryStatistics.fromItems(
-                      widget.state.allItems.where(
-                        (item) => item.libraryID == library.id,
-                      ),
-                    );
-                    return ShadButton.ghost(
-                      width: double.infinity,
-                      height: 54,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 7,
-                      ),
-                      mainAxisAlignment: MainAxisAlignment.start,
-                      leading: Icon(
-                        library.kind == MediaLibraryKind.series
-                            ? Icons.live_tv_rounded
-                            : Icons.movie_rounded,
-                        size: 16,
-                      ),
-                      trailing: library.id == widget.state.selectedLibraryID
-                          ? Icon(
-                              Icons.check_rounded,
-                              size: 16,
-                              color: cs.primary,
-                            )
-                          : null,
-                      onPressed: () {
-                        _controller.hide();
-                        widget.onSelected(library.id);
-                      },
-                      child: SizedBox(
-                        width: 164,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              library.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _mediaLibraryStatisticsLabel(statistics),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: cs.mutedForeground,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
+              _MediaLibrarySectionSelector(
+                statistics: widget.statistics,
+                selected: widget.selected,
+                onSelected: (filter) {
+                  _controller.hide();
+                  widget.onSelected(filter);
+                },
+              ),
             ],
           ),
         ),
