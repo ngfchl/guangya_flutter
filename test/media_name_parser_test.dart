@@ -262,6 +262,22 @@ void main() {
       expect(value.audio, 'TrueHD');
     });
 
+    test('treats DVD and CD numbers as movie release parts', () {
+      final firstDisc = ParsedMediaName.parse('夜叉DVD   CD1.avi');
+      final secondDisc = ParsedMediaName.parse('夜叉DVD   CD2.avi');
+      final cdOnly = ParsedMediaName.parse('夜叉 CD1.rmvb');
+      final discLabel = ParsedMediaName.parse('夜叉.Disc.02.DVDRip.avi');
+
+      for (final value in [firstDisc, secondDisc, cdOnly, discLabel]) {
+        expect(value.title, '夜叉');
+        expect(value.season, isNull);
+        expect(value.episode, isNull);
+        expect(value.isEpisode, isFalse);
+      }
+      expect(firstDisc.source, 'DVD');
+      expect(secondDisc.source, 'DVD');
+    });
+
     test('removes bracketed numeric prefixes from localized titles', () {
       final value = ParsedMediaName.parse('【002】白玉老虎.mkv');
 

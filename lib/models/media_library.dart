@@ -849,7 +849,7 @@ class ParsedMediaName {
         ? yearMatches.last
         : yearMatches.firstOrNull;
     final boundary = RegExp(
-      r'(?:\b(?:19\d{2}|20\d{2}|S\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,4}|\d{1,2}x\d{1,4}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b|[\[(（]\s*\d[\d\s]{2,4}\s*[\])）]|第\s*\d{1,4}\s*[集话期])',
+      r'(?:\b(?:19\d{2}|20\d{2}|S\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,4}|\d{1,2}x\d{1,4}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|(?:cd|disc|disk)[ ._-]*0?\d{1,2}|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b|[\[(（]\s*\d[\d\s]{2,4}\s*[\])）]|第\s*\d{1,4}\s*[集话期])',
       caseSensitive: false,
     );
     final boundaryMatches = boundary.allMatches(normalized).toList();
@@ -1301,7 +1301,7 @@ class ParsedMediaName {
     // A few release tags are written without brackets. They are never part of
     // a searchable title and should terminate the human-readable name.
     final releaseBoundary = RegExp(
-      r'(?:\b(?:ULTRA[ .-]?HD|UHD|Blu[- ]?ray|BDRip|REMUX|BDJ|BDMV)\b|蓝光(?:原盘)?|原盘|DIY|菜单|音轨|国语|国配|字幕|次时代|SGNB|CHDBits)',
+      r'(?:\b(?:ULTRA[ .-]?HD|UHD|Blu[- ]?ray|BDRip|REMUX|BDJ|BDMV|DVD|(?:CD|DISC|DISK)[ ._-]*0?\d{1,2})\b|蓝光(?:原盘)?|原盘|DIY|菜单|音轨|国语|国配|字幕|次时代|SGNB|CHDBits)',
       caseSensitive: false,
     ).firstMatch(title);
     if (releaseBoundary != null) {

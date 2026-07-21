@@ -497,7 +497,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     super.didUpdateWidget(oldWidget);
     final browseFilterChanged = oldWidget.browseFilter != widget.browseFilter;
     final enteredHome = !oldWidget.showHomePanel && widget.showHomePanel;
-    if (browseFilterChanged || enteredHome) {
+    final externalSearchChanged = oldWidget.searchTitle != widget.searchTitle;
+    if (browseFilterChanged || enteredHome || externalSearchChanged) {
       _wallFilter = widget.browseFilter;
       _activeCollectionKey = null;
       _detailWork = null;
@@ -991,18 +992,31 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     if (_tmdbSearching || _tmdbResults.isNotEmpty || _tmdbError != null) {
       return _tmdbResultPanel(context);
     }
+    final externalSearchQuery = widget.searchTitle?.trim().toLowerCase() ?? '';
+    final hasExternalSearch = externalSearchQuery.isNotEmpty;
     final isCurrentLibraryView =
-        !widget.showHomePanel && _wallFilter == MediaLibraryBrowseFilter.all;
-    final activeFilter = isCurrentLibraryView
+        !hasExternalSearch &&
+        !widget.showHomePanel &&
+        _wallFilter == MediaLibraryBrowseFilter.all;
+    final activeFilter = hasExternalSearch
+        ? MediaLibraryBrowseFilter.all
+        : isCurrentLibraryView
         ? widget.librarySection
         : _wallFilter;
     final useGlobalBrowse =
+        hasExternalSearch ||
         widget.showHomePanel ||
         (!isCurrentLibraryView &&
             (_wallFilter == MediaLibraryBrowseFilter.movies ||
                 _wallFilter == MediaLibraryBrowseFilter.series ||
                 _wallFilter == MediaLibraryBrowseFilter.unmatched));
-    final visibleItems = useGlobalBrowse
+    final visibleItems = hasExternalSearch
+        ? state.allItems.where((item) {
+            return item.title.toLowerCase().contains(externalSearchQuery) ||
+                item.file.name.toLowerCase().contains(externalSearchQuery) ||
+                item.file.cloudPath.toLowerCase().contains(externalSearchQuery);
+          }).toList()
+        : useGlobalBrowse
         ? state.globalVisibleItems
         : state.visibleItems;
     final collections = _MediaCollection.fromItems(visibleItems);
@@ -1099,12 +1113,18 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         : works.isEmpty
         ? _mainEmpty(
             context,
-            state.isScanning
+            hasExternalSearch
+                ? '没有匹配的影视资源'
+                : state.isScanning
                 ? '正在扫描媒体库'
                 : (activeFilter == MediaLibraryBrowseFilter.all
                       ? '没有扫描结果'
                       : '当前筛选没有结果'),
-            state.isScanning ? '发现并入库的资源会立即显示在这里' : '点击扫描读取该媒体库下的视频文件',
+            hasExternalSearch
+                ? '尝试其他片名、文件名或路径关键词'
+                : state.isScanning
+                ? '发现并入库的资源会立即显示在这里'
+                : '点击扫描读取该媒体库下的视频文件',
           )
         : LayoutBuilder(
             builder: (context, constraints) {

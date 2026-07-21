@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
 import '../models/cloud_file.dart';
-import '../models/media_library.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
@@ -14,7 +13,7 @@ import '../widgets/app_dialog.dart';
 import '../widgets/file_list_tile.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/share_link_dialog.dart';
-import '../widgets/media_player_dialog.dart';
+import 'media_library_page.dart';
 
 class _SearchSelectAllIntent extends Intent {
   const _SearchSelectAllIntent();
@@ -570,7 +569,7 @@ class _SearchResultControls extends StatelessWidget {
   }
 }
 
-class MediaSearchResultsPage extends ConsumerStatefulWidget {
+class MediaSearchResultsPage extends StatelessWidget {
   final String query;
   final VoidCallback onClose;
 
@@ -581,255 +580,18 @@ class MediaSearchResultsPage extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<MediaSearchResultsPage> createState() =>
-      _MediaSearchResultsPageState();
-}
-
-class _MediaSearchResultsPageState
-    extends ConsumerState<MediaSearchResultsPage> {
-  final _selectedIDs = <String>{};
-  final _resultsFocusNode = FocusNode(debugLabel: 'media-search-results');
-  bool _recognizing = false;
-
-  @override
-  void dispose() {
-    _resultsFocusNode.dispose();
-    super.dispose();
-  }
-
-  Future<void> _recognize(Iterable<MediaLibraryItem> items) async {
-    setState(() => _recognizing = true);
-    try {
-      await ref.read(mediaLibraryProvider.notifier).recognizeItems(items);
-    } finally {
-      if (mounted) setState(() => _recognizing = false);
-    }
-  }
-
-  void _selectAllItems(List<MediaLibraryItem> items) {
-    setState(() {
-      _selectedIDs
-        ..clear()
-        ..addAll(items.map((item) => item.id));
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
     return _SearchPageFrame(
       title: '影视资源搜索',
-      query: widget.query,
-      onClose: widget.onClose,
-      child: FutureBuilder<List<MediaLibraryItem>>(
-        future: ref
-            .read(mediaLibraryProvider.notifier)
-            .searchAllItems(widget.query),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const _ShadSearchLoading();
-          }
-          final items = snapshot.data ?? const <MediaLibraryItem>[];
-          if (items.isEmpty) {
-            return Center(
-              child: Text(
-                '没有匹配的影视资源',
-                style: TextStyle(color: cs.mutedForeground),
-              ),
-            );
-          }
-          final selected = items
-              .where((item) => _selectedIDs.contains(item.id))
-              .toList();
-          return Column(
-            children: [
-              if (selected.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Text('已选择 ${selected.length} 个资源'),
-                      ShadButton(
-                        size: ShadButtonSize.sm,
-                        onPressed: _recognizing
-                            ? null
-                            : () => _recognize(selected),
-                        leading: const Icon(
-                          Icons.auto_fix_high_rounded,
-                          size: 16,
-                        ),
-                        child: Text(_recognizing ? '正在识别' : '批量识别'),
-                      ),
-                    ],
-                  ),
-                ),
-              Expanded(
-                child: FocusableActionDetector(
-                  focusNode: _resultsFocusNode,
-                  shortcuts: _searchSelectAllShortcuts,
-                  actions: {
-                    _SearchSelectAllIntent:
-                        CallbackAction<_SearchSelectAllIntent>(
-                          onInvoke: (_) {
-                            _selectAllItems(items);
-                            return null;
-                          },
-                        ),
-                  },
-                  child: Listener(
-                    onPointerDown: (_) => _resultsFocusNode.requestFocus(),
-                    child: GridView.builder(
-                      padding: const EdgeInsets.all(16),
-                      gridDelegate:
-                          const SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: 260,
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                            childAspectRatio: 2.25,
-                          ),
-                      itemCount: items.length,
-                      itemBuilder: (context, index) {
-                        final item = items[index];
-                        final isSelected = _selectedIDs.contains(item.id);
-                        return ShadContextMenuRegion(
-                          items: [
-                            ShadContextMenuItem.inset(
-                              leading: const Icon(
-                                LucideIcons.wandSparkles,
-                                size: 16,
-                              ),
-                              onPressed: _recognizing
-                                  ? null
-                                  : () => _recognize([item]),
-                              child: const Text('手动识别'),
-                            ),
-                            ShadContextMenuItem.inset(
-                              leading: const Icon(LucideIcons.play, size: 16),
-                              onPressed: () =>
-                                  showMediaPlayerDialog(context, item.file),
-                              child: const Text('播放'),
-                            ),
-                            ShadContextMenuItem.inset(
-                              leading: const Icon(
-                                LucideIcons.monitorPlay,
-                                size: 16,
-                              ),
-                              onPressed: () => showShadDialog<void>(
-                                context: context,
-                                builder: (_) =>
-                                    ExternalPlayerDialog(file: item.file),
-                              ),
-                              child: const Text('外部播放'),
-                            ),
-                            ShadContextMenuItem.inset(
-                              leading: const Icon(
-                                LucideIcons.download,
-                                size: 16,
-                              ),
-                              onPressed: () => ref
-                                  .read(fileProvider.notifier)
-                                  .downloadFile(item.file),
-                              child: const Text('下载'),
-                            ),
-                            ShadContextMenuItem.inset(
-                              leading: const Icon(
-                                LucideIcons.refreshCw,
-                                size: 16,
-                              ),
-                              onPressed: () => ref
-                                  .read(mediaLibraryProvider.notifier)
-                                  .scanSelectedLibrary(),
-                              child: const Text('重扫'),
-                            ),
-                          ],
-                          child: Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              onTap: () => setState(() {
-                                isSelected
-                                    ? _selectedIDs.remove(item.id)
-                                    : _selectedIDs.add(item.id);
-                              }),
-                              borderRadius: BorderRadius.circular(8),
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: cs.card,
-                                  border: Border.all(
-                                    color: isSelected ? cs.primary : cs.border,
-                                  ),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 46,
-                                      height: 64,
-                                      decoration: BoxDecoration(
-                                        color: cs.muted,
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Icon(
-                                        Icons.movie_rounded,
-                                        color: cs.mutedForeground,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            item.title,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: cs.foreground,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            item.year.isEmpty
-                                                ? '年份未知'
-                                                : item.year,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: cs.mutedForeground,
-                                            ),
-                                          ),
-                                          Text(
-                                            item.file.cloudPath,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: cs.mutedForeground,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+      query: query,
+      onClose: onClose,
+      child: MediaLibraryPage(
+        showLibrarySidebar: false,
+        showBrowseHeader: false,
+        showHomePanel: false,
+        browseFilter: MediaLibraryBrowseFilter.all,
+        librarySection: MediaLibraryBrowseFilter.all,
+        searchTitle: query,
       ),
     );
   }

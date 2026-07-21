@@ -807,8 +807,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     final query = value.trim();
     if (query.isEmpty) return;
     if (_mode == WorkspaceMode.media) {
+      ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
       setState(() => _mediaSearchQuery = query);
-      ref.read(mediaLibraryProvider.notifier).setSearchQuery(query);
     } else {
       setState(() {
         _fileSearchQuery = query;
@@ -1031,11 +1031,13 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       return MediaSearchResultsPage(
         key: const PageStorageKey('media-search-results'),
         query: _mediaSearchQuery!,
-        onClose: () => setState(() {
-          _mediaSearchQuery = null;
-          _searchController.clear();
-          ref.read(mediaLibraryProvider.notifier).setSearchQuery('');
-        }),
+        onClose: () {
+          ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
+          setState(() {
+            _mediaSearchQuery = null;
+            _searchController.clear();
+          });
+        },
       );
     }
     return MediaLibraryPage(
