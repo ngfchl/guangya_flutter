@@ -1027,6 +1027,59 @@ class GuangyaAPI {
         .join();
   }
 
+  // ── Douban (Frodo API) ────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> doubanSearch(
+    String query, {
+    int count = 20,
+  }) async {
+    final params = {
+      'q': query,
+      'count': count.toString(),
+      'apikey': '0ac44ae016490db2204ce0a042db2916',
+    };
+    final uri = Uri.https(
+      'frodo.douban.com',
+      '/api/v2/search/movie',
+      params,
+    );
+    const maxAttempts = 2;
+    // Douban Frodo API does not need the app's auth token.
+    // Create a clean Dio instance without interceptors.
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 10),
+      ),
+    );
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final response = await dio.getUri(
+          uri,
+          options: Options(
+            headers: {
+              'Accept': 'application/json',
+              'Referer':
+                  'https://servicewechat.com/wx2f9b06c1de1ccfca/91/page-frame.html',
+              'User-Agent': 'MicroMessenger/',
+            },
+          ),
+        );
+        final statusCode = response.statusCode ?? 0;
+        if (statusCode < 200 || statusCode >= 300) {
+          throw Exception('Douban 请求失败 ($statusCode)');
+        }
+        return Map<String, dynamic>.from(response.data as Map);
+      } catch (error) {
+        if (attempt >= maxAttempts || !isRetryableNetworkError(error)) {
+          rethrow;
+        }
+        await Future<void>.delayed(Duration(milliseconds: 800 * attempt));
+      }
+    }
+    throw StateError('Douban 请求重试流程异常');
+  }
+
   void dispose() {
     // DioClient 的 Dio 实例是静态的，不需要手动关闭
   }
