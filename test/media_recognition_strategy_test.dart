@@ -88,6 +88,52 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'Black Cat White Cat' && year == null) {
+      return {
+        'results': [
+          {
+            'id': 200022,
+            'media_type': 'movie',
+            'title': '黑猫白猫',
+            'original_title': 'Crna mačka, beli mačor',
+            'release_date': '1998-06-01',
+          },
+        ],
+      };
+    }
+    if (query == 'Devils on the Doorstep' && year == null) {
+      return {
+        'results': [
+          {
+            'id': 200023,
+            'media_type': 'movie',
+            'title': '鬼子来了',
+            'original_title': '鬼子来了',
+            'release_date': '2000-05-12',
+          },
+        ],
+      };
+    }
+    if (query == '钢铁人 1') {
+      return {
+        'results': [
+          {
+            'id': 200024,
+            'media_type': 'movie',
+            'title': '钢铁侠',
+            'original_title': 'Iron Man',
+            'release_date': '2008-04-30',
+          },
+          {
+            'id': 200025,
+            'media_type': 'movie',
+            'title': '钢铁侠2',
+            'original_title': 'Iron Man 2',
+            'release_date': '2010-04-28',
+          },
+        ],
+      };
+    }
     if (query == 'Evangelion 3 0+1 0 Thrice Upon a Time') {
       return {
         'results': [
@@ -416,6 +462,60 @@ class _RecognitionAPI extends GuangyaAPI {
             {
               'data': {'title': 'Гарри Поттер и Кубок огня'},
             },
+          ],
+        },
+      };
+    }
+    if (id == 200022) {
+      return {
+        'id': id,
+        'title': '黑猫白猫',
+        'original_title': 'Crna mačka, beli mačor',
+        'release_date': '1998-06-01',
+        'alternative_titles': {
+          'titles': [
+            {'title': 'Black Cat, White Cat'},
+          ],
+        },
+      };
+    }
+    if (id == 200023) {
+      return {
+        'id': id,
+        'title': '鬼子来了',
+        'original_title': '鬼子来了',
+        'release_date': '2000-05-12',
+        'translations': {
+          'translations': [
+            {
+              'data': {'title': 'Devils on the Doorstep'},
+            },
+          ],
+        },
+      };
+    }
+    if (id == 200024) {
+      return {
+        'id': id,
+        'title': '钢铁侠',
+        'original_title': 'Iron Man',
+        'release_date': '2008-04-30',
+        'alternative_titles': {
+          'titles': [
+            {'title': '钢铁人 1'},
+          ],
+        },
+      };
+    }
+    if (id == 200025) {
+      return {
+        'id': id,
+        'title': '钢铁侠2',
+        'original_title': 'Iron Man 2',
+        'release_date': '2010-04-28',
+        'alternative_titles': {
+          'titles': [
+            {'title': '钢铁人 2'},
           ],
         },
       };
@@ -823,6 +923,97 @@ void main() {
 
       expect(recognized.tmdbID, 200019);
       expect(api.calls.first.query, 'Evangelion 3 0+1 0 Thrice Upon a Time');
+    },
+  );
+
+  test(
+    'recognition verifies a single no-year result through alternative titles',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'black-cat-white-cat',
+          name: 'Black.Cat.White.Cat.1998.SERBIAN.2160p.BluRay.REMUX.mkv',
+          isDirectory: false,
+          cloudPath:
+              '/电影/Black.Cat.White.Cat.1998.SERBIAN.2160p.BluRay.REMUX/'
+              'Black.Cat.White.Cat.1998.SERBIAN.2160p.BluRay.REMUX.mkv',
+        ),
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200022);
+      expect(recognized.title, '黑猫白猫');
+      expect(
+        api.calls,
+        contains((
+          query: 'Black Cat White Cat',
+          mediaKind: 'movie',
+          year: null,
+        )),
+      );
+    },
+  );
+
+  test(
+    'recognition verifies a no-year retry with the parsed release year',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'devils-on-the-doorstep',
+          name: 'Devils.on.the.Doorstep.2000.DVDrip.720p.x265.mkv',
+          isDirectory: false,
+          cloudPath:
+              '/电影/Devils.on.the.Doorstep.2000.DVDrip.720p.x265/'
+              'Devils.on.the.Doorstep.2000.DVDrip.720p.x265.mkv',
+        ),
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200023);
+      expect(recognized.title, '鬼子来了');
+    },
+  );
+
+  test(
+    'recognition verifies short numbered Chinese aliases through details',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'iron-man-tw-1',
+          name: '鋼鐵人 1.mkv',
+          isDirectory: false,
+          cloudPath: '/电影/鋼鐵人/鋼鐵人 1.mkv',
+        ),
+      ).copyWith(mediaKind: TMDBMediaKind.movie);
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200024);
+      expect(recognized.title, '钢铁侠');
+      expect(api.calls.map((call) => call.query), contains('钢铁人 1'));
     },
   );
 

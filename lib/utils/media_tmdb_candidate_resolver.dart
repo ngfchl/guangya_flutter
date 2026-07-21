@@ -64,7 +64,10 @@ class MediaTMDBCandidateResolver {
     required Future<Map<String, dynamic>> Function(int id, String mediaType)
     loadDetails,
   }) async {
-    if (candidates.length <= 1) {
+    final needsDetails = candidates.any(
+      (candidate) => candidate['_recognitionNeedsDetails'] == true,
+    );
+    if (candidates.length <= 1 && !needsDetails) {
       return TMDBCandidateResolution(candidates, const []);
     }
     final evidence = titleEvidence.toList(growable: false);
@@ -95,6 +98,15 @@ class MediaTMDBCandidateResolver {
       diagnostics.add(
         'id=$id 标题评分=$titleScore，年份=${date.isEmpty ? '-' : date}，总分=$score',
       );
+    }
+    if (candidates.length == 1 && needsDetails) {
+      if (ranked.isNotEmpty && ranked.first.titleScore >= 95) {
+        diagnostics.add('详情与多语言标题收敛到 id=${ranked.first.value['id']}');
+        return TMDBCandidateResolution([
+          {...ranked.first.value, '_recognitionResolvedByDetails': true},
+        ], diagnostics);
+      }
+      return TMDBCandidateResolution(candidates, diagnostics);
     }
     ranked.sort((a, b) => b.score.compareTo(a.score));
     if (ranked.isEmpty || ranked.first.titleScore < 95) {

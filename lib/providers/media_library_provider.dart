@@ -3428,6 +3428,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             }
           }
         }
+        final detailFallbackYear = attemptYear ?? year;
+        final detailFallbackCandidates = detailFallbackYear == null
+            ? typedCandidates
+            : typedCandidates
+                  .where((candidate) {
+                    final releaseDate =
+                        (candidate['release_date'] ??
+                                candidate['first_air_date'])
+                            ?.toString() ??
+                        '';
+                    return releaseDate.isEmpty ||
+                        releaseDate.startsWith('$detailFallbackYear');
+                  })
+                  .toList(growable: false);
 
         var relatedCount = 0;
         final related = <String, Map<String, dynamic>>{};
@@ -3511,14 +3525,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           '${values.length} 条，相关 $relatedCount 条$fallbackLabel',
         );
         if (relatedCount == 0 &&
-            attemptYear != null &&
-            yearCompatibleCandidates.isNotEmpty &&
-            yearCompatibleCandidates.length <= 6 &&
-            _allowsUniqueQueryFallback(variant.value)) {
-          for (final candidate in yearCompatibleCandidates) {
+            detailFallbackCandidates.isNotEmpty &&
+            detailFallbackCandidates.length <= 6 &&
+            _allowsDetailsQueryFallback(variant.value)) {
+          for (final candidate in detailFallbackCandidates) {
             candidate['_recognitionTitle'] = variant.value;
             candidate['_recognitionSource'] = variant.source;
-            candidate['_recognitionYear'] = attemptYear;
+            candidate['_recognitionYear'] = detailFallbackYear;
             candidate['_recognitionTitleScore'] = 0;
             candidate['_recognitionNeedsDetails'] = true;
             final type = candidate['media_type']?.toString() ?? mediaKind;
@@ -3529,7 +3542,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             allRelated.putIfAbsent(key, () => candidate);
           }
           attempts[attempts.length - 1] =
-              '${attempts.last}（保留 ${yearCompatibleCandidates.length} 条待详情翻译核验）';
+              '${attempts.last}（保留 ${detailFallbackCandidates.length} 条待详情翻译核验）';
         }
         if (relatedCount > 0) {
           for (final entry in related.entries) {
@@ -3593,6 +3606,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return normalized.length >= 15 && words.length >= 4;
   }
 
+  bool _allowsDetailsQueryFallback(String value) {
+    if (_allowsUniqueQueryFallback(value)) return true;
+    final normalized = _normalizeMediaTitle(value);
+    if (normalized.length < 4) return false;
+    if (RegExp(
+      r'\b(?:web[- ]?dl|webrip|bluray|remux|hdtv|kktv|aac\d*|ddp\d*|hevc|avc|x26[45]|h[ .]?26[45]|2160p|1080p|720p)\b',
+      caseSensitive: false,
+    ).hasMatch(value)) {
+      return false;
+    }
+    if (!RegExp(r'[\u4e00-\u9fff]').hasMatch(value)) return false;
+    return RegExp(r'\d').hasMatch(value) && normalized.length >= 4;
+  }
+
   Future<MediaLibraryItem> _recognizeMediaItem(
     MediaLibraryItem fallback,
     String apiKey, {
@@ -3647,7 +3674,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         return fallback;
       }
       var refinedValues = _refineTMDBCandidates(fallback, parsed, values);
-      if (refinedValues.length > 1) {
+      if (refinedValues.length > 1 ||
+          _tmdbCandidatesNeedDetails(refinedValues)) {
         final resolution = await _resolveAmbiguousTMDBCandidates(
           refinedValues,
           parsed,
@@ -3688,15 +3716,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           continue;
         }
         final recognitionTitle = map['_recognitionTitle']?.toString();
+        final expectedTitle = recognitionTitle?.trim().isNotEmpty == true
+            ? recognitionTitle!
+            : searchTitle;
         final titleMatch = _bestMediaTitleMatch(
-          recognitionTitle?.trim().isNotEmpty == true
-              ? recognitionTitle!
-              : searchTitle,
+          expectedTitle,
           title: (map['title'] ?? map['name'] ?? '').toString(),
           originalTitle: (map['original_title'] ?? map['original_name'] ?? '')
               .toString(),
         );
         var score = titleMatch.score;
+        final detailTitleScore = MediaTitleMatcher.bestCandidateScore([
+          expectedTitle,
+        ], map);
+        if (detailTitleScore > score) score = detailTitleScore;
         final uniqueExactYearFallback =
             map['_recognitionUniqueExactYear'] == true;
         final uniqueSpecificQueryFallback =
@@ -4070,13 +4103,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           candidate['_recognitionUniqueExactYear'] == true;
       final uniqueSpecificQueryFallback =
           candidate['_recognitionUniqueSpecificQuery'] == true;
+      final needsDetails = candidate['_recognitionNeedsDetails'] == true;
       if (score == 0 &&
           !uniqueExactYearFallback &&
-          !uniqueSpecificQueryFallback) {
+          !uniqueSpecificQueryFallback &&
+          !needsDetails) {
         diagnostics.add('${describe(candidate, type)} -> 跳过：标题不相关');
         continue;
       }
-      if (uniqueExactYearFallback || uniqueSpecificQueryFallback) score = 1;
+      if (uniqueExactYearFallback ||
+          uniqueSpecificQueryFallback ||
+          needsDetails) {
+        score = 1;
+      }
       if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
         score += 30;
       } else if (parsed.year != null && recognitionYear == null) {
@@ -4100,7 +4139,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       parsed,
       scored.map((entry) => entry.candidate),
     );
-    if (refined.length > 1) {
+    if (refined.length > 1 || _tmdbCandidatesNeedDetails(refined)) {
       final resolution = await _resolveAmbiguousTMDBCandidates(
         refined,
         parsed,
@@ -4121,17 +4160,36 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return refined;
   }
 
+  bool _tmdbCandidatesNeedDetails(Iterable<Map<String, dynamic>> candidates) {
+    return candidates.any(
+      (candidate) => candidate['_recognitionNeedsDetails'] == true,
+    );
+  }
+
   String _requestedTMDBMediaKind(
     MediaLibraryItem fallback,
     ParsedMediaName parsed,
   ) {
-    if (parsed.isEpisode || parsed.season != null) return 'tv';
+    final isExplicitMovie = fallback.mediaKind == TMDBMediaKind.movie;
+    final hasEpisodeMarker = _hasExplicitEpisodeMarker(fallback.file.name);
+    if ((parsed.isEpisode && (!isExplicitMovie || hasEpisodeMarker)) ||
+        (parsed.season != null && !isExplicitMovie)) {
+      return 'tv';
+    }
     return switch (fallback.mediaKind) {
       TMDBMediaKind.movie => 'movie',
       TMDBMediaKind.tv => 'tv',
       TMDBMediaKind.automatic => 'auto',
       null => 'auto',
     };
+  }
+
+  bool _hasExplicitEpisodeMarker(String value) {
+    return RegExp(
+          r'\bS\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,4}\b',
+          caseSensitive: false,
+        ).hasMatch(value) ||
+        RegExp(r'第\s*\d{1,4}\s*[集话話]').hasMatch(value);
   }
 
   List<Map<String, dynamic>> _refineTMDBCandidates(
