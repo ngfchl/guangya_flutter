@@ -259,6 +259,8 @@ class MediaLibraryItem {
   final String libraryID;
   final CloudFile file;
   final int? tmdbID;
+  final String? doubanID;
+  final String? imdbID;
   final String title;
   final String originalTitle;
   final TMDBMediaKind? mediaKind;
@@ -276,6 +278,8 @@ class MediaLibraryItem {
     required this.libraryID,
     required this.file,
     this.tmdbID,
+    this.doubanID,
+    this.imdbID,
     required this.title,
     required this.originalTitle,
     this.mediaKind,
@@ -292,12 +296,14 @@ class MediaLibraryItem {
 
   String get id => file.id;
   String get year => releaseDate.length >= 4 ? releaseDate.substring(0, 4) : '';
-  bool get isMatched => mediaKind != null && tmdbID != null;
+  bool get isMatched => mediaKind != null && (tmdbID != null || doubanID != null);
 
   MediaLibraryItem copyWith({
     CloudFile? file,
     int? tmdbID,
     bool clearTMDBID = false,
+    String? doubanID,
+    String? imdbID,
     String? title,
     String? originalTitle,
     TMDBMediaKind? mediaKind,
@@ -316,6 +322,8 @@ class MediaLibraryItem {
       libraryID: libraryID,
       file: file ?? this.file,
       tmdbID: clearTMDBID ? null : (tmdbID ?? this.tmdbID),
+      doubanID: doubanID ?? this.doubanID,
+      imdbID: imdbID ?? this.imdbID,
       title: title ?? this.title,
       originalTitle: originalTitle ?? this.originalTitle,
       mediaKind: clearMediaKind ? null : (mediaKind ?? this.mediaKind),
@@ -373,6 +381,8 @@ class MediaLibraryItem {
         fileType: _toInt(json['fileType']) ?? 2,
       ),
       tmdbID: _toInt(json['tmdbID']),
+      doubanID: json['doubanID']?.toString(),
+      imdbID: json['imdbID']?.toString(),
       title: json['title']?.toString() ?? '',
       originalTitle: json['originalTitle']?.toString() ?? '',
       mediaKind: TMDBMediaKind.values
@@ -402,6 +412,8 @@ class MediaLibraryItem {
     'parentID': file.parentID,
     'fullParentIDs': file.fullParentIDs,
     'tmdbID': tmdbID,
+    'doubanID': doubanID,
+    'imdbID': imdbID,
     'mediaKind': mediaKind?.name,
     'title': title,
     'originalTitle': originalTitle,
