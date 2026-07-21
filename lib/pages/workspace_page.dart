@@ -680,6 +680,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                             onSignOut: () =>
                                 ref.read(authProvider.notifier).signOut(),
                             onTool: _openTool,
+                            activeTool: _cloudActiveTool,
                           )
                         : _MediaSidebar(
                             onModeChanged: _changeMode,
@@ -2157,6 +2158,7 @@ class _CloudSidebar extends StatelessWidget {
   final VoidCallback onSettings;
   final VoidCallback onSignOut;
   final ValueChanged<WorkspaceTool> onTool;
+  final WorkspaceTool? activeTool;
 
   const _CloudSidebar({
     required this.state,
@@ -2167,6 +2169,7 @@ class _CloudSidebar extends StatelessWidget {
     required this.onSettings,
     required this.onSignOut,
     required this.onTool,
+    this.activeTool,
   });
 
   @override
@@ -2210,19 +2213,19 @@ class _CloudSidebar extends StatelessWidget {
                   _SidebarTile(
                     icon: Icons.manage_search_rounded,
                     label: '文件扫描与清理',
-                    selected: false,
+                    selected: activeTool == WorkspaceTool.scan,
                     onTap: () => onTool(WorkspaceTool.scan),
                   ),
                   _SidebarTile(
                     icon: Icons.text_fields_rounded,
                     label: '批量重命名',
-                    selected: false,
+                    selected: activeTool == WorkspaceTool.rename,
                     onTap: () => onTool(WorkspaceTool.rename),
                   ),
                   _SidebarTile(
                     icon: Icons.bolt_rounded,
                     label: '秒传工具',
-                    selected: false,
+                    selected: activeTool == WorkspaceTool.fastTransfer,
                     onTap: () => onTool(WorkspaceTool.fastTransfer),
                   ),
                 ],
