@@ -22,6 +22,7 @@ class FileListTile extends StatefulWidget {
   final VoidCallback? onShare;
   final VoidCallback? onCopyFastTransfer;
   final VoidCallback? onDelete;
+  final VoidCallback? onDetail;
   final bool isRecycleItem;
 
   const FileListTile({
@@ -41,6 +42,7 @@ class FileListTile extends StatefulWidget {
     this.onShare,
     this.onCopyFastTransfer,
     this.onDelete,
+    this.onDetail,
     this.isRecycleItem = false,
   });
 
@@ -158,41 +160,47 @@ class _FileListTileState extends State<FileListTile> {
             ),
           )
         else ...[
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.folderOpen, size: 16),
-            trailing: const Icon(LucideIcons.chevronRight),
-            onPressed: widget.onOpen,
-            child: Text(widget.openLabel),
-          ),
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.pencil, size: 16),
-            onPressed: _beginRename,
-            child: const Text('重命名'),
-          ),
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.copy, size: 16),
-            trailing: const Icon(LucideIcons.chevronRight),
-            onPressed: widget.onCopy,
-            child: const Text('复制'),
-          ),
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.scissors, size: 16),
-            trailing: const Icon(LucideIcons.chevronRight),
-            onPressed: widget.onCut,
-            child: const Text('剪切'),
-          ),
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.copyPlus, size: 16),
-            trailing: const Icon(LucideIcons.chevronRight),
-            onPressed: widget.onCopyTo,
-            child: const Text('复制到…'),
-          ),
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.folderInput, size: 16),
-            trailing: const Icon(LucideIcons.chevronRight),
-            onPressed: widget.onMoveTo,
-            child: const Text('移动到…'),
-          ),
+          if (widget.onOpen != null)
+            ShadContextMenuItem.inset(
+              leading: const Icon(LucideIcons.folderOpen, size: 16),
+              trailing: const Icon(LucideIcons.chevronRight),
+              onPressed: widget.onOpen,
+              child: Text(widget.openLabel),
+            ),
+          if (widget.onRename != null || widget.onRenameConfirm != null)
+            ShadContextMenuItem.inset(
+              leading: const Icon(LucideIcons.pencil, size: 16),
+              onPressed: _beginRename,
+              child: const Text('重命名'),
+            ),
+          if (widget.onCopy != null)
+            ShadContextMenuItem.inset(
+              leading: const Icon(LucideIcons.copy, size: 16),
+              trailing: const Icon(LucideIcons.chevronRight),
+              onPressed: widget.onCopy,
+              child: const Text('复制'),
+            ),
+          if (widget.onCut != null)
+            ShadContextMenuItem.inset(
+              leading: const Icon(LucideIcons.scissors, size: 16),
+              trailing: const Icon(LucideIcons.chevronRight),
+              onPressed: widget.onCut,
+              child: const Text('剪切'),
+            ),
+          if (widget.onCopyTo != null)
+            ShadContextMenuItem.inset(
+              leading: const Icon(LucideIcons.copyPlus, size: 16),
+              trailing: const Icon(LucideIcons.chevronRight),
+              onPressed: widget.onCopyTo,
+              child: const Text('复制到…'),
+            ),
+          if (widget.onMoveTo != null)
+            ShadContextMenuItem.inset(
+              leading: const Icon(LucideIcons.folderInput, size: 16),
+              trailing: const Icon(LucideIcons.chevronRight),
+              onPressed: widget.onMoveTo,
+              child: const Text('移动到…'),
+            ),
           const Divider(height: 8),
           ShadContextMenuItem.inset(
             leading: const Icon(LucideIcons.download, size: 16),
@@ -210,6 +218,12 @@ class _FileListTileState extends State<FileListTile> {
             leading: const Icon(LucideIcons.zap, size: 16),
             onPressed: widget.onCopyFastTransfer,
             child: const Text('复制秒传'),
+          ),
+          const Divider(height: 8),
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.info, size: 16),
+            onPressed: widget.onDetail,
+            child: const Text('详情'),
           ),
           const Divider(height: 8),
           ShadContextMenuItem.inset(

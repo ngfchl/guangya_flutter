@@ -23,6 +23,7 @@ import '../widgets/breadcrumb_bar.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/file_list_tile.dart';
+import '../widgets/file_detail_dialog.dart';
 import '../widgets/media_player_dialog.dart';
 import '../widgets/file_icon.dart';
 import '../widgets/share_link_dialog.dart';
@@ -41,6 +42,11 @@ enum _FileViewMode { list, columns, grid }
 
 enum _PaneIdentity { primary, secondary }
 
+bool get _isMobilePlatform => switch (defaultTargetPlatform) {
+  TargetPlatform.android || TargetPlatform.iOS => true,
+  _ => false,
+};
+
 class _DraggedCloudFiles {
   final List<CloudFile> files;
   final _PaneIdentity source;
@@ -53,24 +59,21 @@ class _CloudFileDraggable extends StatelessWidget {
   final Widget feedback;
   final Widget childWhenDragging;
   final Widget child;
+  final bool enabled;
 
   const _CloudFileDraggable({
     required this.data,
     required this.feedback,
     required this.childWhenDragging,
     required this.child,
+    this.enabled = true,
   });
 
   @override
   Widget build(BuildContext context) {
-    final touchPlatform = switch (defaultTargetPlatform) {
-      TargetPlatform.android || TargetPlatform.iOS => true,
-      _ => false,
-    };
-    return LongPressDraggable<_DraggedCloudFiles>(
+    if (!enabled || _isMobilePlatform) return child;
+    return Draggable<_DraggedCloudFiles>(
       data: data,
-      delay: Duration(milliseconds: touchPlatform ? 500 : 250),
-      hapticFeedbackOnStart: touchPlatform,
       feedback: feedback,
       childWhenDragging: childWhenDragging,
       child: child,
@@ -132,12 +135,14 @@ class _FolderMoveTarget extends StatefulWidget {
   final Future<void> Function(List<CloudFile> files, String? parentID) onMove;
   final VoidCallback? onOpen;
   final Widget child;
+  final bool enabled;
 
   const _FolderMoveTarget({
     required this.file,
     required this.onMove,
     this.onOpen,
     required this.child,
+    this.enabled = true,
   });
 
   @override
@@ -146,13 +151,10 @@ class _FolderMoveTarget extends StatefulWidget {
 
 class _FolderMoveTargetState extends State<_FolderMoveTarget> {
   Timer? _openTimer;
-  Timer? _dropReadyTimer;
-  bool _dropReady = false;
 
   @override
   void dispose() {
     _openTimer?.cancel();
-    _dropReadyTimer?.cancel();
     super.dispose();
   }
 
@@ -167,34 +169,38 @@ class _FolderMoveTargetState extends State<_FolderMoveTarget> {
   void _cancelOpen() {
     _openTimer?.cancel();
     _openTimer = null;
-    _dropReadyTimer?.cancel();
-    _dropReadyTimer = null;
-    if (_dropReady && mounted) setState(() => _dropReady = false);
   }
 
-  void _prepareDrop() {
-    if (_dropReady || _dropReadyTimer?.isActive == true) return;
-    _dropReadyTimer = Timer(const Duration(milliseconds: 350), () {
-      _dropReadyTimer = null;
-      if (mounted) setState(() => _dropReady = true);
+  bool _canMove(_DraggedCloudFiles data) {
+    final targetPath = widget.file.cloudPath
+        .replaceAll('\\', '/')
+        .replaceAll(RegExp(r'/+$'), '');
+    return !data.files.any((source) {
+      if (source.id == widget.file.id ||
+          _sameCloudParentID(source.parentID, widget.file.id)) {
+        return true;
+      }
+      if (!source.isDirectory) return false;
+      final sourcePath = source.cloudPath
+          .replaceAll('\\', '/')
+          .replaceAll(RegExp(r'/+$'), '');
+      return sourcePath.isNotEmpty && targetPath.startsWith('$sourcePath/');
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.file.isDirectory) return widget.child;
+    if (!widget.enabled || _isMobilePlatform || !widget.file.isDirectory) {
+      return widget.child;
+    }
     return DragTarget<_DraggedCloudFiles>(
-      onWillAcceptWithDetails: (details) =>
-          !details.data.files.any((source) => source.id == widget.file.id),
+      onWillAcceptWithDetails: (details) => _canMove(details.data),
       onMove: (_) {
-        _prepareDrop();
         _scheduleOpen();
       },
       onLeave: (_) => _cancelOpen(),
       onAcceptWithDetails: (details) async {
-        final canMove = _dropReady;
         _cancelOpen();
-        if (!canMove) return;
         await widget.onMove(details.data.files, widget.file.id);
       },
       builder: (context, candidates, _) => DecoratedBox(
@@ -202,9 +208,7 @@ class _FolderMoveTargetState extends State<_FolderMoveTarget> {
           border: candidates.isEmpty
               ? null
               : Border.all(
-                  color: _dropReady
-                      ? ShadTheme.of(context).colorScheme.primary
-                      : ShadTheme.of(context).colorScheme.mutedForeground,
+                  color: ShadTheme.of(context).colorScheme.primary,
                   width: 2,
                 ),
           borderRadius: BorderRadius.circular(6),
@@ -276,15 +280,34 @@ class _CloudFolderDestinationPicker extends ConsumerStatefulWidget {
 class _CloudFolderDestinationPickerState
     extends ConsumerState<_CloudFolderDestinationPicker> {
   final _path = <CloudFile>[];
+  final _filterController = TextEditingController();
   var _folders = <CloudFile>[];
   CloudFile? _selectedFolder;
   var _loading = false;
   String? _error;
+  String _filterQuery = '';
+
+  List<CloudFile> get _filteredFolders {
+    if (_filterQuery.isEmpty) return _folders;
+    final q = _filterQuery.toLowerCase();
+    return _folders.where((f) => f.name.toLowerCase().contains(q)).toList();
+  }
 
   @override
   void initState() {
     super.initState();
     unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _filterController.dispose();
+    super.dispose();
+  }
+
+  void _clearFilter() {
+    _filterController.clear();
+    _filterQuery = '';
   }
 
   Future<void> _load() async {
@@ -322,6 +345,7 @@ class _CloudFolderDestinationPickerState
     setState(() {
       _path.add(folder);
       _selectedFolder = null;
+      _clearFilter();
     });
     unawaited(_load());
   }
@@ -366,6 +390,7 @@ class _CloudFolderDestinationPickerState
                           setState(() {
                             _path.clear();
                             _selectedFolder = null;
+                            _clearFilter();
                           });
                           unawaited(_load());
                         },
@@ -378,6 +403,7 @@ class _CloudFolderDestinationPickerState
                       setState(() {
                         _path.removeRange(index + 1, _path.length);
                         _selectedFolder = null;
+                        _clearFilter();
                       });
                       unawaited(_load());
                     },
@@ -386,6 +412,16 @@ class _CloudFolderDestinationPickerState
               ],
             ),
             const SizedBox(height: 8),
+            if (!_loading && _error == null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ShadInput(
+                  placeholder: const Text('筛选文件夹…'),
+                  controller: _filterController,
+                  onChanged: (value) => setState(() => _filterQuery = value),
+                  leading: const Icon(Icons.search, size: 16),
+                ),
+              ),
             Expanded(
               child: _loading
                   ? const Center(
@@ -401,10 +437,17 @@ class _CloudFolderDestinationPickerState
                         style: TextStyle(color: cs.destructive),
                       ),
                     )
+                  : _filteredFolders.isEmpty
+                  ? Center(
+                      child: Text(
+                        _folders.isEmpty ? '当前目录没有文件夹' : '没有匹配的文件夹',
+                        style: TextStyle(color: cs.mutedForeground),
+                      ),
+                    )
                   : ListView.builder(
-                      itemCount: _folders.length,
+                      itemCount: _filteredFolders.length,
                       itemBuilder: (context, index) {
-                        final folder = _folders[index];
+                        final folder = _filteredFolders[index];
                         final selected = _selectedFolder?.id == folder.id;
                         return InkWell(
                           onTap: () => setState(() => _selectedFolder = folder),
@@ -2711,6 +2754,11 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 720;
         final paneMode = compact ? _PaneLayoutMode.single : _paneMode;
+        final enableCloudDrag =
+            !compact &&
+            !_isMobilePlatform &&
+            (_primaryViewMode == _FileViewMode.columns ||
+                paneMode == _PaneLayoutMode.dual);
         final workspace = OS26Glass(
           radius: compact ? 8 : 18,
           opacity: 0.42,
@@ -2742,6 +2790,7 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                                     title: '左侧面板',
                                     state: state,
                                     viewMode: _primaryViewMode,
+                                    enableCloudDrag: enableCloudDrag,
                                     onViewModeChanged: (mode) =>
                                         setState(() => _primaryViewMode = mode),
                                   ),
@@ -2754,6 +2803,7 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                               title: compact ? '文件' : '文件列表',
                               state: state,
                               viewMode: _primaryViewMode,
+                              enableCloudDrag: enableCloudDrag,
                               onViewModeChanged: (mode) =>
                                   setState(() => _primaryViewMode = mode),
                             )
@@ -2761,6 +2811,7 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                         title: state.section.label,
                         state: state,
                         viewMode: _primaryViewMode,
+                        enableCloudDrag: enableCloudDrag,
                         onViewModeChanged: (mode) =>
                             setState(() => _primaryViewMode = mode),
                       ),
@@ -3271,12 +3322,14 @@ class _PrimaryFilePane extends ConsumerWidget {
   final String title;
   final FileState state;
   final _FileViewMode viewMode;
+  final bool enableCloudDrag;
   final ValueChanged<_FileViewMode> onViewModeChanged;
 
   const _PrimaryFilePane({
     required this.title,
     required this.state,
     required this.viewMode,
+    required this.enableCloudDrag,
     required this.onViewModeChanged,
   });
 
@@ -3289,6 +3342,7 @@ class _PrimaryFilePane extends ConsumerWidget {
         initialFiles: state.files,
         onViewModeChanged: onViewModeChanged,
         allowDelete: state.section != WorkspaceSection.recycle,
+        enableCloudDrag: enableCloudDrag,
       );
     }
     final notifier = ref.read(fileProvider.notifier);
@@ -3372,8 +3426,12 @@ class _PrimaryFilePane extends ConsumerWidget {
                       .synchronizeRenamedFiles([file.copyWith(name: name)]);
                 }
               },
-              onCopy: () => notifier.copyToClipboard([file]),
-              onCut: () => notifier.cutToClipboard([file]),
+              onCopy: _isMobilePlatform
+                  ? null
+                  : () => notifier.copyToClipboard([file]),
+              onCut: _isMobilePlatform
+                  ? null
+                  : () => notifier.cutToClipboard([file]),
               onCopyTo: () => unawaited(
                 _copyOrMoveFilesToDestination(context, ref, [
                   file,
@@ -3390,6 +3448,7 @@ class _PrimaryFilePane extends ConsumerWidget {
                 ),
               ),
               onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
+              onDetail: () => showFileDetailDialog(context, file),
               isRecycleItem: state.section == WorkspaceSection.recycle,
               onDelete: () => state.section == WorkspaceSection.recycle
                   ? notifier.restoreFiles([file])
@@ -3400,6 +3459,7 @@ class _PrimaryFilePane extends ConsumerWidget {
                     ),
             );
             final item = _CloudFileDraggable(
+              enabled: enableCloudDrag,
               data: _DraggedCloudFiles(
                 selected
                     ? files
@@ -3411,6 +3471,7 @@ class _PrimaryFilePane extends ConsumerWidget {
               feedback: _DragFeedback(label: file.name),
               childWhenDragging: Opacity(opacity: 0.35, child: tile),
               child: _FolderMoveTarget(
+                enabled: enableCloudDrag,
                 file: file,
                 onMove: (sources, parentID) =>
                     notifier.moveFilesTo(sources, parentID: parentID),
@@ -3420,6 +3481,7 @@ class _PrimaryFilePane extends ConsumerWidget {
             );
             if (viewMode == _FileViewMode.list) return item;
             return _CloudFileDraggable(
+              enabled: enableCloudDrag,
               data: _DraggedCloudFiles(
                 selected
                     ? files
@@ -3441,6 +3503,7 @@ class _PrimaryFilePane extends ConsumerWidget {
                 ),
               ),
               child: _FolderMoveTarget(
+                enabled: enableCloudDrag,
                 file: file,
                 onMove: (sources, parentID) =>
                     notifier.moveFilesTo(sources, parentID: parentID),
@@ -3448,8 +3511,12 @@ class _PrimaryFilePane extends ConsumerWidget {
                 child: _FastTransferContextMenu(
                   file: file,
                   onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
-                  onCopy: () => notifier.copyToClipboard([file]),
-                  onCut: () => notifier.cutToClipboard([file]),
+                  onCopy: _isMobilePlatform
+                      ? null
+                      : () => notifier.copyToClipboard([file]),
+                  onCut: _isMobilePlatform
+                      ? null
+                      : () => notifier.cutToClipboard([file]),
                   onCopyTo: () => unawaited(
                     _copyOrMoveFilesToDestination(context, ref, [
                       file,
@@ -3840,6 +3907,7 @@ class _ColumnFileBrowser extends ConsumerStatefulWidget {
   final Future<void> Function(List<File> files, String? parentID)?
   onUploadLocalFiles;
   final bool allowDelete;
+  final bool enableCloudDrag;
   final ValueChanged<List<CloudFile>>? onPathChanged;
 
   const _ColumnFileBrowser({
@@ -3851,6 +3919,7 @@ class _ColumnFileBrowser extends ConsumerStatefulWidget {
     this.onMoveCloudFiles,
     this.onUploadLocalFiles,
     this.allowDelete = true,
+    this.enableCloudDrag = true,
     this.onPathChanged,
   });
 
@@ -4306,6 +4375,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
                         key: ValueKey('${_columns[index].parentID}-$index'),
                         column: _columns[index],
                         source: widget.source,
+                        enableCloudDrag: widget.enableCloudDrag,
                         onActivate: () => _collapseToColumn(index),
                         onSelect: (file) => _selectColumnFile(index, file),
                         onSelectAll: () => _selectAllColumn(index),
@@ -4373,6 +4443,7 @@ class _ColumnPaneHeader extends StatelessWidget {
 class _FinderColumn extends StatefulWidget {
   final _ColumnListing column;
   final _PaneIdentity source;
+  final bool enableCloudDrag;
   final VoidCallback onActivate;
   final ValueChanged<CloudFile> onSelect;
   final VoidCallback onSelectAll;
@@ -4394,6 +4465,7 @@ class _FinderColumn extends StatefulWidget {
     super.key,
     required this.column,
     required this.source,
+    required this.enableCloudDrag,
     required this.onActivate,
     required this.onSelect,
     required this.onSelectAll,
@@ -4480,7 +4552,12 @@ class _FinderColumnState extends State<_FinderColumn> {
               }
             },
             child: DragTarget<_DraggedCloudFiles>(
-              onWillAcceptWithDetails: (_) => true,
+              onWillAcceptWithDetails: (details) =>
+                  widget.enableCloudDrag &&
+                  !details.data.files.every(
+                    (file) =>
+                        _sameCloudParentID(file.parentID, column.parentID),
+                  ),
               onAcceptWithDetails: (details) async {
                 setState(() => _dragActive = false);
                 await widget.onMoveCloudFiles(
@@ -4599,6 +4676,7 @@ class _FinderColumnState extends State<_FinderColumn> {
                                   ),
                                 );
                                 return _CloudFileDraggable(
+                                  enabled: widget.enableCloudDrag,
                                   data: _DraggedCloudFiles(
                                     selected
                                         ? column.files
@@ -4616,6 +4694,7 @@ class _FinderColumnState extends State<_FinderColumn> {
                                     child: row,
                                   ),
                                   child: _FolderMoveTarget(
+                                    enabled: widget.enableCloudDrag,
                                     file: file,
                                     onMove: widget.onMoveCloudFiles,
                                     onOpen: () => widget.onOpenFolder(file),
@@ -4706,6 +4785,12 @@ class _FinderColumnContextMenu extends StatelessWidget {
           leading: const Icon(LucideIcons.zap, size: 16),
           onPressed: onCopyFastTransfer,
           child: Text(file.isDirectory ? '复制目录秒传' : '复制秒传'),
+        ),
+        const Divider(height: 8),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.info, size: 16),
+          onPressed: () => showFileDetailDialog(context, file),
+          child: const Text('详情'),
         ),
         const Divider(height: 8),
         ShadContextMenuItem.inset(
@@ -4884,31 +4969,41 @@ class _FastTransferContextMenu extends StatelessWidget {
     return ShadContextMenuRegion(
       tapEnabled: false,
       items: [
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.copy, size: 16),
-          onPressed: onCopy,
-          child: const Text('复制'),
-        ),
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.scissors, size: 16),
-          onPressed: onCut,
-          child: const Text('剪切'),
-        ),
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.copyPlus, size: 16),
-          onPressed: onCopyTo,
-          child: const Text('复制到…'),
-        ),
-        ShadContextMenuItem.inset(
-          leading: const Icon(LucideIcons.folderInput, size: 16),
-          onPressed: onMoveTo,
-          child: const Text('移动到…'),
-        ),
+        if (onCopy != null)
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.copy, size: 16),
+            onPressed: onCopy,
+            child: const Text('复制'),
+          ),
+        if (onCut != null)
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.scissors, size: 16),
+            onPressed: onCut,
+            child: const Text('剪切'),
+          ),
+        if (onCopyTo != null)
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.copyPlus, size: 16),
+            onPressed: onCopyTo,
+            child: const Text('复制到…'),
+          ),
+        if (onMoveTo != null)
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.folderInput, size: 16),
+            onPressed: onMoveTo,
+            child: const Text('移动到…'),
+          ),
         const Divider(height: 8),
         ShadContextMenuItem.inset(
           leading: const Icon(Icons.bolt_rounded, size: 16),
           onPressed: onCopyFastTransfer,
           child: Text(file.isDirectory ? '复制目录秒传' : '复制秒传'),
+        ),
+        const Divider(height: 8),
+        ShadContextMenuItem.inset(
+          leading: const Icon(LucideIcons.info, size: 16),
+          onPressed: () => showFileDetailDialog(context, file),
+          child: const Text('详情'),
         ),
       ],
       child: child,
