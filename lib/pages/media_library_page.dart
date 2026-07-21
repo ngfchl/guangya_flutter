@@ -63,6 +63,38 @@ String _parentCloudPath(String cloudPath) {
 
 String _mediaRecordKey(MediaLibraryItem item) => '${item.libraryID}:${item.id}';
 
+Future<bool> _confirmCloudBackupRestore(
+  BuildContext context,
+  CloudFile backup,
+) async {
+  final confirmed = await showShadDialog<bool>(
+    context: context,
+    builder: (dialogContext) => ShadDialog(
+      title: const Text('确认覆盖？'),
+      description: Text(backup.name),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('取消'),
+        ),
+        ShadButton.destructive(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          leading: const Icon(LucideIcons.download, size: 16),
+          child: const Text('覆盖'),
+        ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(
+          '恢复会先清空本地媒体库数据，再导入所选备份。'
+          '备份大小 ${backup.formattedSize}，时间 ${backup.modifiedAt}。',
+        ),
+      ),
+    ),
+  );
+  return confirmed == true;
+}
+
 Widget _tmdbDirectFallback({
   required String path,
   required String size,
@@ -1706,6 +1738,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       ),
     );
     if (selected == null || !mounted) return;
+    final confirmed = await _confirmCloudBackupRestore(context, selected);
+    if (!confirmed || !mounted) return;
     setState(() => _backupBusy = true);
     try {
       await notifier.importScrapedDataFromCloud(selected);
@@ -2864,6 +2898,8 @@ class _MediaLibraryManagementDialogState
       ),
     );
     if (selected == null || !mounted) return;
+    final confirmed = await _confirmCloudBackupRestore(context, selected);
+    if (!confirmed || !mounted) return;
     setState(() => _backupBusy = true);
     try {
       await notifier.importScrapedDataFromCloud(selected);
