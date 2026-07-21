@@ -1,7 +1,7 @@
 name: guangya_flutter
 description: 光鸭云盘客户端 - 支持文件管理、云下载、分享、TMDB刮削等功能
 publish_to: 'none'
-version: 1.0.2+3
+version: 1.0.3+4
 
 environment:
   sdk: ^3.9.1
