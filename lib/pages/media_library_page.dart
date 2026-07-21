@@ -1070,6 +1070,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 episodeCandidates: selectedWork.resources
                     .map((resource) => resource.file)
                     .toList(),
+                mediaKind: selectedWork.primary.mediaKind,
               ),
             ),
             onExternalPlay: (item) => showShadDialog(
@@ -1242,6 +1243,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                   episodeCandidates: value.work.resources
                       .map((item) => item.file)
                       .toList(),
+                  mediaKind: value.work.primary.mediaKind,
                 ),
               ),
             );
