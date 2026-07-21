@@ -3788,7 +3788,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
     });
     try {
       final libraryItems = <String, MediaLibraryItem>{
-        for (final item in state.allItems)
+        for (final item in state.items)
           if (item.libraryID == library.id) item.id: item,
       }.values.toList(growable: false);
       final items = libraryItems
