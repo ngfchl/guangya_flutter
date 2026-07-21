@@ -442,10 +442,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final removedDiscStreams = await _removeDiscInternalItems();
       final libraries = await _loadLibraries();
       final selectedID = libraries.isEmpty ? null : libraries.first.id;
+      final allItems = await _loadAllItems();
       final items = selectedID == null
           ? <MediaLibraryItem>[]
-          : await _loadItems(selectedID);
-      final allItems = await _loadAllItems();
+          : allItems
+                .where((item) => item.libraryID == selectedID)
+                .toList(growable: false);
       final logs = _loadScanHistory();
       final scanTasks = _loadScanTaskHistory();
       state = state.copyWith(

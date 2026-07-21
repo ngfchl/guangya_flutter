@@ -128,14 +128,22 @@ class MediaLibraryStore {
   Future<List<MediaLibraryItem>> items({String? libraryID}) async {
     final db = await _db;
     await _ensureMediaItemLocationColumns(db);
-    final rows = await db.query(
-      'media_items',
-      columns: _itemMetadataColumns,
-      where: libraryID == null ? null : 'library_id = ?',
-      whereArgs: libraryID == null ? null : [libraryID],
-      orderBy: 'title COLLATE NOCASE',
-    );
-    return rows.map(_itemFromRow).toList();
+    const pageSize = 200;
+    final items = <MediaLibraryItem>[];
+    for (var offset = 0; ; offset += pageSize) {
+      final rows = await db.query(
+        'media_items',
+        columns: _itemMetadataColumns,
+        where: libraryID == null ? null : 'library_id = ?',
+        whereArgs: libraryID == null ? null : [libraryID],
+        orderBy: 'title COLLATE NOCASE, library_id, file_id',
+        limit: pageSize,
+        offset: offset,
+      );
+      items.addAll(rows.map(_itemFromRow));
+      if (rows.length < pageSize) break;
+    }
+    return items;
   }
 
   Future<void> saveLibraries(List<MediaLibraryDefinition> libraries) async {
