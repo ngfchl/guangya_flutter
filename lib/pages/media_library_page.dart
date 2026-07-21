@@ -2047,11 +2047,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 _wallFilter == MediaLibraryBrowseFilter.series ||
                 _wallFilter == MediaLibraryBrowseFilter.unmatched));
     final visibleItems = hasExternalSearch
-        ? state.allItems.where((item) {
-            return item.title.toLowerCase().contains(externalSearchQuery) ||
-                item.file.name.toLowerCase().contains(externalSearchQuery) ||
-                item.file.cloudPath.toLowerCase().contains(externalSearchQuery);
-          }).toList()
+        ? state.allItems
+              .where((item) => item.matchesSearch(externalSearchQuery))
+              .toList()
         : useGlobalBrowse
         ? state.globalVisibleItems
         : state.visibleItems;

@@ -339,11 +339,7 @@ class MediaLibraryState {
   List<MediaLibraryItem> get visibleItems {
     final query = searchQuery.trim().toLowerCase();
     if (query.isEmpty) return items;
-    return items.where((item) {
-      return item.title.toLowerCase().contains(query) ||
-          item.file.name.toLowerCase().contains(query) ||
-          item.file.cloudPath.toLowerCase().contains(query);
-    }).toList();
+    return items.where((item) => item.matchesSearch(query)).toList();
   }
 
   MediaLibraryStatistics get statistics =>
@@ -352,11 +348,7 @@ class MediaLibraryState {
   List<MediaLibraryItem> get globalVisibleItems {
     final query = searchQuery.trim().toLowerCase();
     if (query.isEmpty) return allItems;
-    return allItems.where((item) {
-      return item.title.toLowerCase().contains(query) ||
-          item.file.name.toLowerCase().contains(query) ||
-          item.file.cloudPath.toLowerCase().contains(query);
-    }).toList();
+    return allItems.where((item) => item.matchesSearch(query)).toList();
   }
 
   MediaLibraryStatistics get globalStatistics =>
@@ -2560,29 +2552,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     if (cached != null) return cached;
     final allItems = await _loadAllItems();
     final results =
-        allItems.where((item) {
-          if (item.title.toLowerCase().contains(normalized) ||
-              item.file.name.toLowerCase().contains(normalized) ||
-              item.file.cloudPath.toLowerCase().contains(normalized)) {
-            return true;
-          }
-          if (item.tmdbID != null) {
-            final tmdbQuery = normalized.replaceAll(RegExp(r'^tmdb[:\s]+'), '');
-            if (item.tmdbID.toString() == tmdbQuery) return true;
-          }
-          if (item.imdbID != null && item.imdbID!.isNotEmpty) {
-            final imdbQuery = normalized.replaceAll(RegExp(r'^imdb[:\s]+'), '');
-            if (item.imdbID!.toLowerCase() == imdbQuery) return true;
-          }
-          if (item.doubanID != null && item.doubanID!.isNotEmpty) {
-            final doubanQuery = normalized.replaceAll(
-              RegExp(r'^douban[:\s]+'),
-              '',
-            );
-            if (item.doubanID == doubanQuery) return true;
-          }
-          return false;
-        }).toList()..sort(
+        allItems.where((item) => item.matchesSearch(normalized)).toList()..sort(
           (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
         );
     _searchResultsCache[normalized] = results;

@@ -299,6 +299,33 @@ class MediaLibraryItem {
   bool get isMatched =>
       mediaKind != null && (tmdbID != null || doubanID != null);
 
+  bool matchesSearch(String value) {
+    final query = value.trim().toLowerCase();
+    if (query.isEmpty) return true;
+    if (title.toLowerCase().contains(query) ||
+        originalTitle.toLowerCase().contains(query) ||
+        file.name.toLowerCase().contains(query) ||
+        file.cloudPath.toLowerCase().contains(query)) {
+      return true;
+    }
+    final prefixed = RegExp(
+      r'^(tmdb|imdb|douban|豆瓣)\s*[:：]?\s*(.+)$',
+    ).firstMatch(query);
+    final source = prefixed?.group(1);
+    final idQuery = prefixed?.group(2)?.trim() ?? query;
+    if (idQuery.isEmpty) return false;
+    if ((source == null || source == 'tmdb') &&
+        tmdbID?.toString().contains(idQuery) == true) {
+      return true;
+    }
+    if ((source == null || source == 'imdb') &&
+        imdbID?.toLowerCase().contains(idQuery) == true) {
+      return true;
+    }
+    return (source == null || source == 'douban' || source == '豆瓣') &&
+        doubanID?.toLowerCase().contains(idQuery) == true;
+  }
+
   MediaLibraryItem copyWith({
     String? libraryID,
     CloudFile? file,
