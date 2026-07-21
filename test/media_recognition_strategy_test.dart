@@ -166,6 +166,45 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'Smaylik' && year == null) {
+      return {
+        'results': [
+          {
+            'id': 200033,
+            'media_type': 'movie',
+            'title': 'Смайлик',
+            'original_title': 'Смайлик',
+            'release_date': '2014-09-12',
+          },
+        ],
+      };
+    }
+    if (query == 'Nomis' && year == null) {
+      return {
+        'results': [
+          {
+            'id': 200035,
+            'media_type': 'movie',
+            'title': 'Night Hunter',
+            'original_title': 'Night Hunter',
+            'release_date': '2019-08-29',
+          },
+        ],
+      };
+    }
+    if (query == 'Pretty Cure All Stars: Spring Carnival') {
+      return {
+        'results': [
+          {
+            'id': 200034,
+            'media_type': 'movie',
+            'title': '光之美少女 All Stars 春之嘉年华♪',
+            'original_title': '映画 プリキュアオールスターズ 春のカーニバル♪',
+            'release_date': '2015-03-14',
+          },
+        ],
+      };
+    }
     if (query == 'Black Cat White Cat' && year == null) {
       return {
         'results': [
@@ -593,6 +632,42 @@ class _RecognitionAPI extends GuangyaAPI {
         'title': '龙珠Z：神与神',
         'original_title': 'ドラゴンボールZ 神と神',
         'release_date': '2013-03-30',
+      };
+    }
+    if (id == 200033) {
+      return {
+        'id': id,
+        'title': 'Смайлик',
+        'original_title': 'Смайлик',
+        'release_date': '2014-09-12',
+        'alternative_titles': {
+          'titles': [
+            {'title': 'Smaylik'},
+          ],
+        },
+      };
+    }
+    if (id == 200034) {
+      return {
+        'id': id,
+        'title': '光之美少女 All Stars 春之嘉年华♪',
+        'original_title': '映画 プリキュアオールスターズ 春のカーニバル♪',
+        'release_date': '2015-03-14',
+        'translations': {
+          'translations': [
+            {
+              'data': {'title': 'Pretty Cure All Stars: Spring Carnival'},
+            },
+          ],
+        },
+      };
+    }
+    if (id == 200035) {
+      return {
+        'id': id,
+        'title': 'Night Hunter',
+        'original_title': 'Night Hunter',
+        'release_date': '2019-08-29',
       };
     }
     if (id == 200022) {
@@ -1223,6 +1298,91 @@ void main() {
       expect(api.calls.map((call) => call.query), contains('龙珠Z：神与神'));
     },
   );
+
+  test(
+    'recognition verifies a unique short Latin result through details',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'smaylik-2014',
+          name: 'Smaylik.2014.RUSSIAN.1080p.WEBRip.x265-VXT.mp4',
+          isDirectory: false,
+          cloudPath:
+              '/电影/Smaylik.2014.RUSSIAN.1080p.WEBRip.x265-VXT/'
+              'Smaylik.2014.RUSSIAN.1080p.WEBRip.x265-VXT.mp4',
+        ),
+      ).copyWith(mediaKind: TMDBMediaKind.movie);
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200033);
+      expect(recognized.title, 'Смайлик');
+      expect(
+        api.calls,
+        contains((query: 'Smaylik', mediaKind: 'movie', year: null)),
+      );
+    },
+  );
+
+  test('recognition rejects an unrelated unique short result', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'nomis-2018',
+        name: 'Nomis.2018.1080p.BluRay.AVC.TrueHD.5.1-TAPAS',
+        isDirectory: false,
+        cloudPath:
+            '/电影/Nomis.2018.1080p.BluRay.AVC.TrueHD.5.1-TAPAS/'
+            'Nomis.2018.1080p.BluRay.AVC.TrueHD.5.1-TAPAS',
+      ),
+    ).copyWith(mediaKind: TMDBMediaKind.movie);
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, isNull);
+    expect(recognized.title, 'Nomis');
+  });
+
+  test('recognition treats an internal The as a subtitle connector', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'pretty-cure-spring-carnival',
+        name: 'Pretty.Cure.All.Stars.The.Spring.Carnival.2015.1080p.BluRay.mkv',
+        isDirectory: false,
+        cloudPath:
+            '/电影/光之美少女.春日嘉年华/'
+            'Pretty.Cure.All.Stars.The.Spring.Carnival.2015.1080p.BluRay.mkv',
+      ),
+    ).copyWith(mediaKind: TMDBMediaKind.movie);
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200034);
+    expect(
+      api.calls.map((call) => call.query),
+      contains('Pretty Cure All Stars: Spring Carnival'),
+    );
+  });
 
   test(
     'recognition verifies a no-year retry with the parsed release year',

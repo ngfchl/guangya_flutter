@@ -3527,7 +3527,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         if (relatedCount == 0 &&
             detailFallbackCandidates.isNotEmpty &&
             detailFallbackCandidates.length <= 6 &&
-            _allowsDetailsQueryFallback(variant.value)) {
+            (_allowsDetailsQueryFallback(variant.value) ||
+                (detailFallbackCandidates.length == 1 &&
+                    _allowsSingleCandidateDetailsFallback(variant.value)))) {
           for (final candidate in detailFallbackCandidates) {
             candidate['_recognitionTitle'] = variant.value;
             candidate['_recognitionSource'] = variant.source;
@@ -3626,6 +3628,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
     if (!RegExp(r'[\u4e00-\u9fff]').hasMatch(value)) return false;
     return RegExp(r'\d').hasMatch(value) && normalized.length >= 4;
+  }
+
+  bool _allowsSingleCandidateDetailsFallback(String value) {
+    if (RegExp(
+      r'\b(?:web[- ]?dl|webrip|bluray|remux|hdtv|kktv|aac\d*|ddp\d*|hevc|avc|x26[45]|h[ .]?26[45]|2160p|1080p|720p)\b',
+      caseSensitive: false,
+    ).hasMatch(value)) {
+      return false;
+    }
+    final normalized = _normalizeMediaTitle(value);
+    final withoutDigits = normalized.replaceAll(RegExp(r'\d'), '');
+    if (RegExp(r'[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]').hasMatch(value)) {
+      return withoutDigits.length >= 2;
+    }
+    return withoutDigits.length >= 4;
   }
 
   bool _allowsSpecificRelatedResultFallback(String value) {
@@ -4704,6 +4721,23 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
     }
 
+    void addEnglishSubtitleArticleVariants(String? raw, String source) {
+      final value = raw?.trim() ?? '';
+      final match = RegExp(
+        r'^(.{4,}?)\s+the\s+(.{3,})$',
+        caseSensitive: false,
+      ).firstMatch(value);
+      if (match == null) return;
+      final franchise = match.group(1)!.trim();
+      final subtitle = match.group(2)!.trim();
+      if (!RegExp(r'[A-Za-z]').hasMatch(franchise) ||
+          !RegExp(r'[A-Za-z]').hasMatch(subtitle)) {
+        return;
+      }
+      add('$franchise: $subtitle', '$source英文副标题');
+      add('$franchise $subtitle', '$source去副标题冠词');
+    }
+
     void addAliasTitleVariants(String? raw, String source) {
       final value = raw?.trim() ?? '';
       final parts = value
@@ -4884,6 +4918,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       // broader franchise name.
       addBilingualTitleVariant(raw, source);
       addEnglishSpellingVariants(raw, source);
+      addEnglishSubtitleArticleVariants(raw, source);
       addChineseSubtitleVariants(raw, source);
       addSimplifiedChineseVariants(raw, source);
     }
