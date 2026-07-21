@@ -18,6 +18,7 @@ import '../core/utils/format_bytes.dart';
 import '../core/utils/json_deep.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
+import '../models/media_navigation.dart';
 import '../utils/media_known_match_index.dart';
 import '../utils/media_artwork.dart';
 import '../utils/media_title_matcher.dart';
@@ -270,6 +271,12 @@ class MediaLibraryState {
   final String? selectedLibraryID;
   final List<MediaLibraryItem> items;
   final List<MediaLibraryItem> allItems;
+  final Map<String, MediaLibraryStatistics> libraryStatistics;
+  final MediaLibraryStatistics storedGlobalStatistics;
+  final String? loadedLibraryID;
+  final bool allItemsLoaded;
+  final bool hasMoreContent;
+  final bool isLoadingMore;
   final bool isLoading;
   final List<MediaLibraryScanTask> scanTasks;
   final bool isRefreshingCloudIndex;
@@ -284,6 +291,12 @@ class MediaLibraryState {
     this.selectedLibraryID,
     this.items = const [],
     this.allItems = const [],
+    this.libraryStatistics = const {},
+    this.storedGlobalStatistics = const MediaLibraryStatistics(),
+    this.loadedLibraryID,
+    this.allItemsLoaded = false,
+    this.hasMoreContent = false,
+    this.isLoadingMore = false,
     this.isLoading = false,
     this.scanTasks = const [],
     this.isRefreshingCloudIndex = false,
@@ -343,7 +356,7 @@ class MediaLibraryState {
   }
 
   MediaLibraryStatistics get statistics =>
-      MediaLibraryStatistics.fromItems(items);
+      libraryStatistics[selectedLibraryID] ?? const MediaLibraryStatistics();
 
   List<MediaLibraryItem> get globalVisibleItems {
     final query = searchQuery.trim().toLowerCase();
@@ -351,8 +364,7 @@ class MediaLibraryState {
     return allItems.where((item) => item.matchesSearch(query)).toList();
   }
 
-  MediaLibraryStatistics get globalStatistics =>
-      MediaLibraryStatistics.fromItems(allItems);
+  MediaLibraryStatistics get globalStatistics => storedGlobalStatistics;
 
   MediaLibraryState copyWith({
     List<MediaLibraryDefinition>? libraries,
@@ -360,6 +372,13 @@ class MediaLibraryState {
     bool clearSelectedLibrary = false,
     List<MediaLibraryItem>? items,
     List<MediaLibraryItem>? allItems,
+    Map<String, MediaLibraryStatistics>? libraryStatistics,
+    MediaLibraryStatistics? storedGlobalStatistics,
+    String? loadedLibraryID,
+    bool clearLoadedLibrary = false,
+    bool? allItemsLoaded,
+    bool? hasMoreContent,
+    bool? isLoadingMore,
     bool? isLoading,
     List<MediaLibraryScanTask>? scanTasks,
     bool? isRefreshingCloudIndex,
@@ -379,6 +398,15 @@ class MediaLibraryState {
           : (selectedLibraryID ?? this.selectedLibraryID),
       items: items ?? this.items,
       allItems: allItems ?? this.allItems,
+      libraryStatistics: libraryStatistics ?? this.libraryStatistics,
+      storedGlobalStatistics:
+          storedGlobalStatistics ?? this.storedGlobalStatistics,
+      loadedLibraryID: clearLoadedLibrary
+          ? null
+          : (loadedLibraryID ?? this.loadedLibraryID),
+      allItemsLoaded: allItemsLoaded ?? this.allItemsLoaded,
+      hasMoreContent: hasMoreContent ?? this.hasMoreContent,
+      isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       isLoading: isLoading ?? this.isLoading,
       scanTasks: scanTasks ?? this.scanTasks,
       isRefreshingCloudIndex:
@@ -417,6 +445,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   bool _reconcilingMediaGCIDs = false;
   Future<void> _mediaRemovalQueue = Future.value();
   int _pendingMediaRemovals = 0;
+  String? _contentKey;
+  MediaLibraryBrowseFilter _contentFilter = MediaLibraryBrowseFilter.all;
+  String _contentSearch = '';
+  bool _contentHome = false;
+  int _contentOffset = 0;
   Timer? _cloudIndexTimer;
   Completer<bool>? _cloudIndexRefreshCompleter;
 
@@ -430,40 +463,30 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   set api(GuangyaAPI value) => _api = value;
 
   Future<void> load() async {
-    if (_loaded) {
-      if (state.allItems.isEmpty) unawaited(_refreshAllItemsState());
-      return;
-    }
+    if (_loaded) return;
     _loaded = true;
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       await _store.initialize();
       await _migrateLegacyHiveIfNeeded();
-      final removedDiscStreams = await _removeDiscInternalItems();
       final libraries = await _loadLibraries();
       final selectedID = libraries.isEmpty ? null : libraries.first.id;
-      final allItems = await _loadAllItems();
-      final items = selectedID == null
-          ? <MediaLibraryItem>[]
-          : allItems
-                .where((item) => item.libraryID == selectedID)
-                .toList(growable: false);
+      final statistics = await _store.statistics();
       final logs = _loadScanHistory();
       final scanTasks = _loadScanTaskHistory();
       state = state.copyWith(
         libraries: libraries,
         selectedLibraryID: selectedID,
-        items: items,
-        allItems: allItems,
+        items: const [],
+        allItems: const [],
+        libraryStatistics: statistics.libraries,
+        storedGlobalStatistics: statistics.global,
+        clearLoadedLibrary: true,
+        allItemsLoaded: false,
         scanLogs: logs,
         scanTasks: scanTasks,
-        statusMessage: removedDiscStreams == 0
-            ? null
-            : '已清理 $removedDiscStreams 个光盘目录内部文件',
+        clearStatus: true,
       );
-      if (selectedID != null) {
-        unawaited(_hydrateMissingArtwork(selectedID, items));
-      }
       unawaited(refreshGlobalCloudIndex());
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
@@ -471,6 +494,105 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       state = state.copyWith(isLoading: false);
     }
   }
+
+  Future<void> loadContent({
+    bool home = false,
+    MediaLibraryBrowseFilter filter = MediaLibraryBrowseFilter.all,
+    String search = '',
+    bool reset = true,
+  }) async {
+    await load();
+    final selectedID = state.selectedLibraryID;
+    final normalizedSearch = search.trim().toLowerCase();
+    final global = home ||
+        normalizedSearch.isNotEmpty ||
+        filter == MediaLibraryBrowseFilter.movies ||
+        filter == MediaLibraryBrowseFilter.series ||
+        filter == MediaLibraryBrowseFilter.unmatched;
+    final key = '$selectedID|$home|${filter.name}|$normalizedSearch';
+    if (!reset && (_contentKey != key || !state.hasMoreContent)) return;
+    if (reset && _contentKey == key &&
+        (global ? state.allItems : state.items).isNotEmpty) {
+      return;
+    }
+    if (state.isLoadingMore) return;
+    if (reset) {
+      _contentKey = key;
+      _contentFilter = filter;
+      _contentSearch = normalizedSearch;
+      _contentHome = home;
+      _contentOffset = 0;
+      state = state.copyWith(
+        isLoading: true,
+        isLoadingMore: false,
+        hasMoreContent: false,
+        items: global ? state.items : const [],
+        allItems: global ? const [] : state.allItems,
+        clearError: true,
+      );
+    } else {
+      state = state.copyWith(isLoadingMore: true, clearError: true);
+    }
+    try {
+      if (home) {
+        final pages = await Future.wait(
+          state.libraries.map(
+            (library) => _store.itemsPage(libraryID: library.id, limit: 15),
+          ),
+        );
+        if (_contentKey != key) return;
+        final values = pages.expand((page) => page).toList(growable: false);
+        state = state.copyWith(
+          allItems: values,
+          allItemsLoaded: false,
+          hasMoreContent: false,
+        );
+      } else {
+        const pageSize = 100;
+        final page = await _store.itemsPage(
+          libraryID: global ? null : selectedID,
+          mediaKind: filter == MediaLibraryBrowseFilter.movies
+              ? 'movie'
+              : filter == MediaLibraryBrowseFilter.series
+              ? 'tv'
+              : null,
+          unmatchedOnly: filter == MediaLibraryBrowseFilter.unmatched,
+          search: normalizedSearch,
+          limit: pageSize,
+          offset: _contentOffset,
+        );
+        if (_contentKey != key) return;
+        _contentOffset += page.length;
+        if (global) {
+          state = state.copyWith(
+            allItems: [...state.allItems, ...page],
+            allItemsLoaded: false,
+            hasMoreContent: page.length == pageSize,
+          );
+        } else {
+          state = state.copyWith(
+            items: [...state.items, ...page],
+            loadedLibraryID: selectedID,
+            hasMoreContent: page.length == pageSize,
+          );
+          if (selectedID != null) {
+            unawaited(_hydrateMissingArtwork(selectedID, page));
+          }
+        }
+      }
+    } catch (error) {
+      state = state.copyWith(errorMessage: error.toString());
+    } finally {
+      state = state.copyWith(isLoading: false, isLoadingMore: false);
+    }
+  }
+
+  Future<void> loadNextContentPage() => loadContent(
+    home: _contentHome,
+    filter: _contentFilter,
+    search: _contentSearch,
+    reset: false,
+  );
 
   Future<void> _refreshAllItemsState() async {
     try {
@@ -487,18 +609,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> selectLibrary(String id) async {
     final serial = ++_librarySelectionSerial;
-    final items = await _loadItems(id);
-    if (serial != _librarySelectionSerial ||
-        !state.libraries.any((library) => library.id == id)) {
-      return;
-    }
+    if (!state.libraries.any((library) => library.id == id)) return;
     state = state.copyWith(
       selectedLibraryID: id,
-      items: items,
+      items: const [],
+      clearLoadedLibrary: true,
+      allItems: const [],
+      allItemsLoaded: false,
       searchQuery: '',
       clearError: true,
     );
-    unawaited(_hydrateMissingArtwork(id, items));
+    await loadContent(reset: true);
+    if (serial != _librarySelectionSerial) return;
   }
 
   Future<void> createLibrary({
@@ -731,14 +853,39 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<void> importScrapedData(String backupPath) async {
     if (state.isLoading || state.hasActiveScans) return;
     state = state.copyWith(
-      isLoading: true,
       clearError: true,
       clearStatus: true,
+      cloudBackupSync: const CloudBackupSyncProgress(
+        phase: '导入中',
+        destination: '',
+        transferredBytes: 0,
+        totalBytes: 0,
+        isActive: true,
+      ),
     );
     try {
       await _applyImportedBackup(backupPath);
+      final fileName = backupPath.split('/').last;
+      state = state.copyWith(
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '导入完成',
+          destination: fileName,
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+        ),
+      );
     } catch (error) {
-      state = state.copyWith(errorMessage: '导入失败：$error');
+      state = state.copyWith(
+        errorMessage: '导入失败：$error',
+        cloudBackupSync: const CloudBackupSyncProgress(
+          phase: '导入失败',
+          destination: '',
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+        ),
+      );
     } finally {
       state = state.copyWith(isLoading: false);
     }
@@ -747,15 +894,40 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<void> exportScrapedData(String destinationPath) async {
     if (state.isLoading || state.hasActiveScans) return;
     state = state.copyWith(
-      isLoading: true,
       clearError: true,
       clearStatus: true,
+      cloudBackupSync: const CloudBackupSyncProgress(
+        phase: '导出中',
+        destination: '',
+        transferredBytes: 0,
+        totalBytes: 0,
+        isActive: true,
+      ),
     );
     try {
       await _store.exportBackupTo(destinationPath);
-      state = state.copyWith(statusMessage: '刮削数据已导出');
+      final fileName = destinationPath.split('/').last;
+      state = state.copyWith(
+        statusMessage: '刮削数据已导出',
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '导出完成',
+          destination: fileName,
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+        ),
+      );
     } catch (error) {
-      state = state.copyWith(errorMessage: '导出失败：$error');
+      state = state.copyWith(
+        errorMessage: '导出失败：$error',
+        cloudBackupSync: const CloudBackupSyncProgress(
+          phase: '导出失败',
+          destination: '',
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+        ),
+      );
     } finally {
       state = state.copyWith(isLoading: false);
     }
@@ -798,38 +970,55 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       _appendBackupLog('上传到 ${destination.path}');
       final uploadRate = _BackupTransferRate();
-      await _api!.fileUpload(
-        backup,
-        parentID: destination.id,
-        contentType: 'application/vnd.sqlite3',
-        onProgress: (sent, total) {
-          state = state.copyWith(
-            cloudBackupSync: CloudBackupSyncProgress(
-              phase: '备份中',
-              destination:
-                  '${destination.path}/${backup.uri.pathSegments.last}',
-              transferredBytes: sent,
-              totalBytes: total,
-              isActive: true,
-              bytesPerSecond: uploadRate.update(sent),
-            ),
-          );
-        },
-        onProcessing: () {
-          final current = state.cloudBackupSync;
-          state = state.copyWith(
-            cloudBackupSync: CloudBackupSyncProgress(
-              phase: '处理中',
-              destination:
-                  '${destination.path}/${backup.uri.pathSegments.last}',
-              transferredBytes: size,
-              totalBytes: size,
-              isActive: true,
-              bytesPerSecond: current?.bytesPerSecond ?? 0,
-            ),
-          );
-        },
-      );
+      String? uploadedTaskID;
+      try {
+        await _api!.fileUpload(
+          backup,
+          parentID: destination.id,
+          contentType: 'application/vnd.sqlite3',
+          onTaskCreated: (taskID) {
+            uploadedTaskID = taskID;
+          },
+          onProgress: (sent, total) {
+            state = state.copyWith(
+              cloudBackupSync: CloudBackupSyncProgress(
+                phase: '备份中',
+                destination:
+                    '${destination.path}/${backup.uri.pathSegments.last}',
+                transferredBytes: sent,
+                totalBytes: total,
+                isActive: true,
+                bytesPerSecond: uploadRate.update(sent),
+              ),
+            );
+          },
+          onProcessing: () {
+            final current = state.cloudBackupSync;
+            state = state.copyWith(
+              cloudBackupSync: CloudBackupSyncProgress(
+                phase: '处理中',
+                destination:
+                    '${destination.path}/${backup.uri.pathSegments.last}',
+                transferredBytes: size,
+                totalBytes: size,
+                isActive: true,
+                bytesPerSecond: current?.bytesPerSecond ?? 0,
+              ),
+            );
+          },
+        );
+      } catch (uploadError) {
+        // Delete the partially uploaded file on failure
+        if (uploadedTaskID != null) {
+          try {
+            await _api!.deleteUploadTask([uploadedTaskID!]);
+            _appendBackupLog('已清理上传残留');
+          } catch (_) {
+            // Best-effort cleanup; ignore errors
+          }
+        }
+        rethrow;
+      }
       final uploadedPath =
           '${destination.path}/${backup.uri.pathSegments.last}';
       state = state.copyWith(
@@ -1023,22 +1212,45 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       _appendBackupLog('下载备份：${backup.name}');
       final downloadRate = _BackupTransferRate();
-      await Dio().download(
-        url,
-        localBackup.path,
-        onReceiveProgress: (received, total) {
-          state = state.copyWith(
-            cloudBackupSync: CloudBackupSyncProgress(
-              phase: '恢复中',
-              destination: backup.name,
-              transferredBytes: received,
-              totalBytes: total > 0 ? total : (backup.size ?? 0),
-              isActive: true,
-              bytesPerSecond: downloadRate.update(received),
-            ),
-          );
-        },
-      );
+      final fileSize = backup.size ?? 0;
+      if (fileSize > 4 * 1024 * 1024) {
+        // Parallel chunk download for files > 4 MB
+        await _parallelDownload(
+          url: url,
+          destination: localBackup.path,
+          totalBytes: fileSize,
+          onProgress: (received) {
+            state = state.copyWith(
+              cloudBackupSync: CloudBackupSyncProgress(
+                phase: '恢复中',
+                destination: backup.name,
+                transferredBytes: received,
+                totalBytes: fileSize > 0 ? fileSize : (backup.size ?? 0),
+                isActive: true,
+                bytesPerSecond: downloadRate.update(received),
+              ),
+            );
+          },
+          logPrefix: '备份下载',
+        );
+      } else {
+        await Dio().download(
+          url,
+          localBackup.path,
+          onReceiveProgress: (received, total) {
+            state = state.copyWith(
+              cloudBackupSync: CloudBackupSyncProgress(
+                phase: '恢复中',
+                destination: backup.name,
+                transferredBytes: received,
+                totalBytes: total > 0 ? total : (backup.size ?? 0),
+                isActive: true,
+                bytesPerSecond: downloadRate.update(received),
+              ),
+            );
+          },
+        );
+      }
       _appendBackupLog('下载完成，覆盖本地数据库');
       state = state.copyWith(
         cloudBackupSync: CloudBackupSyncProgress(
@@ -1099,6 +1311,126 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     if (selectedID != null) {
       unawaited(_hydrateMissingArtwork(selectedID, state.items));
     }
+  }
+
+  /// Parallel chunk download — splits [totalBytes] into [concurrency] chunks
+  /// and downloads them concurrently, then merges into [destination].
+  /// Falls back to single connection if the server doesn't support Range.
+  static const int _chunkSize = 4 * 1024 * 1024; // 4 MB per chunk
+  static const int _concurrency = 8;
+
+  Future<void> _parallelDownload({
+    required String url,
+    required String destination,
+    required int totalBytes,
+    required void Function(int receivedBytes) onProgress,
+    String logPrefix = '下载',
+  }) async {
+    final chunkCount = (totalBytes / _chunkSize).ceil();
+    final actualConcurrency = chunkCount.clamp(1, _concurrency);
+    _appendBackupLog(
+      '$logPrefix：${FormatBytes.format(totalBytes)}，'
+      '$actualConcurrency 路并发',
+    );
+
+    // Probe: try a small Range request to see if the server supports it.
+    final dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 30),
+      headers: {'Range': 'bytes=0-0'},
+    ));
+    try {
+      final probe = await dio.get<Uint8List>(url);
+      if (probe.statusCode != 206) {
+        // Server doesn't support Range — fall back to single connection.
+        _appendBackupLog('$logPrefix：服务器不支持分片，退回单连接');
+        await _singleDownload(url: url, destination: destination, onProgress: onProgress);
+        return;
+      }
+    } on DioException {
+      // Range not supported or network issue — fall back to single.
+      _appendBackupLog('$logPrefix：Range 探测失败，退回单连接');
+      await _singleDownload(url: url, destination: destination, onProgress: onProgress);
+      return;
+    }
+
+    // Split into chunks and download concurrently.
+    final tempDir = await Directory.systemTemp.createTemp('guangya-dl-');
+    final chunkPaths = <String>[];
+    // Per-chunk received counters for accurate progress tracking.
+    final chunkReceived = List<int>.filled(chunkCount, 0);
+    int totalReceived = 0;
+
+    Future<void> downloadChunk(int index) async {
+      final start = index * _chunkSize;
+      final end = (start + _chunkSize - 1).clamp(0, totalBytes - 1);
+      final chunkPath = '${tempDir.path}/chunk_$index';
+      chunkPaths.add(chunkPath);
+      final chunkDio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(minutes: 10),
+      ));
+      await chunkDio.download(
+        url,
+        chunkPath,
+        options: Options(headers: {'Range': 'bytes=$start-$end'}),
+        onReceiveProgress: (received, _) {
+          final prev = chunkReceived[index];
+          chunkReceived[index] = received;
+          totalReceived += received - prev;
+          onProgress(totalReceived);
+        },
+      );
+    }
+
+    try {
+      // Launch chunks in batches of [_concurrency].
+      for (var i = 0; i < chunkCount; i += actualConcurrency) {
+        final batch = <Future<void>>[];
+        for (var j = i; j < (i + actualConcurrency) && j < chunkCount; j++) {
+          batch.add(downloadChunk(j));
+        }
+        await Future.wait(batch);
+        // Report overall progress after each batch completes.
+        onProgress(totalBytes);
+      }
+
+      // Merge chunks into final file.
+      final sink = File(destination).openSync(mode: FileMode.write);
+      try {
+        for (var i = 0; i < chunkCount; i++) {
+          final chunkFile = File(chunkPaths[i]);
+          if (await chunkFile.exists()) {
+            sink.writeFromSync(await chunkFile.readAsBytes());
+          }
+        }
+      } finally {
+        await sink.close();
+      }
+    } finally {
+      // Clean up temp chunks.
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+    }
+
+    _appendBackupLog('$logPrefix完成：${FormatBytes.format(totalBytes)}');
+  }
+
+  Future<void> _singleDownload({
+    required String url,
+    required String destination,
+    required void Function(int receivedBytes) onProgress,
+  }) async {
+    int received = 0;
+    await Dio().download(
+      url,
+      destination,
+      onReceiveProgress: (got, _) {
+        received += got;
+        onProgress(received);
+      },
+    );
   }
 
   Future<void> optimizeLocalStorage() async {
@@ -2545,6 +2877,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   void setSearchQuery(String query) {
     state = state.copyWith(searchQuery: query);
+    unawaited(
+      loadContent(
+        home: _contentHome,
+        filter: _contentFilter,
+        search: query,
+      ),
+    );
   }
 
   Future<List<MediaLibraryItem>> searchAllItems(String query) async {
@@ -2552,11 +2891,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     if (normalized.isEmpty) return const [];
     final cached = _searchResultsCache[normalized];
     if (cached != null) return cached;
-    final allItems = await _loadAllItems();
-    final results =
-        allItems.where((item) => item.matchesSearch(normalized)).toList()..sort(
-          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
-        );
+    final results = await _store.itemsPage(search: normalized, limit: 500);
+    results.sort(
+      (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+    );
     _searchResultsCache[normalized] = results;
     return results;
   }
