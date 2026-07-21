@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 import '../providers/theme_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/app_log_dialog.dart';
 import '../core/http/dio_client.dart';
 import '../core/storage/storage_manager.dart';
+import '../pages/app_upgrade_page.dart';
 import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
 
@@ -272,13 +274,42 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
               _SettingsSection(
                 icon: Icons.info_outline_rounded,
                 title: '应用信息',
-                child: _SettingsRow(
-                  icon: Icons.cloud_outlined,
-                  label: '版本',
-                  child: Text(
-                    'v1.0.0',
-                    style: TextStyle(fontSize: 13, color: cs.mutedForeground),
-                  ),
+                child: Column(
+                  children: [
+                    _SettingsRow(
+                      icon: Icons.cloud_outlined,
+                      label: '版本',
+                      child: FutureBuilder<PackageInfo>(
+                        future: PackageInfo.fromPlatform(),
+                        builder: (ctx, snap) {
+                          final v = snap.hasData
+                              ? 'v${snap.data!.version}'
+                              : 'v-';
+                          return Text(
+                            v,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: cs.mutedForeground,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.system_update_rounded,
+                      label: '应用更新',
+                      child: ShadButton.outline(
+                        size: ShadButtonSize.sm,
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const AppUpgradePage(),
+                          ),
+                        ),
+                        leading: const Icon(Icons.open_in_new_rounded, size: 15),
+                        child: const Text('检查更新'),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
