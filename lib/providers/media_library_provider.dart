@@ -4479,77 +4479,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             item.file.copyWith(name: targetName),
           ) ??
           item.file.copyWith(name: targetName);
-      final updated = item.copyWith(file: renamedFile);
-      await _writeNfoForRenamedMedia(updated, parsed);
-      return updated;
+      return item.copyWith(file: renamedFile);
     } catch (error) {
       AppLogger.warning('Media', '识别成功但云盘重命名失败：fileId=${item.file.id}，$error');
       return item;
-    }
-  }
-
-  Future<void> _writeNfoForRenamedMedia(
-    MediaLibraryItem item,
-    ParsedMediaName parsed,
-  ) async {
-    try {
-      final detail = await _api!.fsDetail(item.file.id);
-      final parentID = JsonDeep.findString(detail, const [
-        'parentId',
-        'parent_id',
-        'parentFileId',
-      ]);
-      if (parentID == null || parentID.isEmpty) return;
-      final isEpisode = item.mediaKind == TMDBMediaKind.tv && parsed.isEpisode;
-      final nfoName = isEpisode
-          ? '${_safeCloudName(item.title)}.S${parsed.season!.toString().padLeft(2, '0')}E${parsed.episode!.toString().padLeft(2, '0')}.nfo'
-          : item.mediaKind == TMDBMediaKind.tv
-          ? 'tvshow.nfo'
-          : 'movie.nfo';
-      final root = isEpisode
-          ? 'episodedetails'
-          : item.mediaKind == TMDBMediaKind.tv
-          ? 'tvshow'
-          : 'movie';
-      final technical = <String>[
-        if (parsed.resolution != null)
-          '<resolution>${_xml(parsed.resolution!)}</resolution>',
-        if (parsed.source != null) '<source>${_xml(parsed.source!)}</source>',
-        if (parsed.videoCodec != null)
-          '<codec>${_xml(parsed.videoCodec!)}</codec>',
-        if (parsed.dynamicRange != null)
-          '<hdr>${_xml(parsed.dynamicRange!)}</hdr>',
-        if (parsed.audio != null) '<audio>${_xml(parsed.audio!)}</audio>',
-      ].join();
-      final episodeFields = isEpisode
-          ? '<season>${parsed.season}</season><episode>${parsed.episode}</episode>'
-          : '';
-      final xml =
-          '<?xml version="1.0" encoding="UTF-8"?>'
-          '<$root><uniqueid type="tmdb" default="true">${item.tmdbID}</uniqueid>'
-          '<title>${_xml(item.title)}</title>'
-          '<originaltitle>${_xml(item.originalTitle)}</originaltitle>'
-          '<year>${_xml(item.year)}</year>'
-          '<plot>${_xml(item.overview)}</plot>$episodeFields'
-          '<fileinfo><streamdetails><video>$technical</video></streamdetails></fileinfo>'
-          '</$root>';
-      final temp = File('${Directory.systemTemp.path}/$nfoName');
-      await temp.writeAsString(xml, flush: true);
-      try {
-        await _api!.fileUpload(
-          temp,
-          parentID: parentID,
-          contentType: 'application/xml',
-        );
-      } finally {
-        if (await temp.exists()) await temp.delete();
-      }
-    } catch (error) {
-      // File renaming remains successful if sidecar upload is unavailable.
-      AppLogger.warning(
-        'Media',
-        'NFO 旁车文件写入失败：tmdbId=${item.tmdbID}，fileId=${item.file.id}，$error',
-      );
     }
   }
 
@@ -5030,13 +4963,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   String _safeCloudName(String value) {
     return safeMediaCloudName(value);
   }
-
-  String _xml(String value) => value
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&apos;');
 
   MediaLibraryItem _itemFromTMDBCandidate(
     MediaLibraryItem fallback,
