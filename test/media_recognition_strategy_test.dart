@@ -88,6 +88,58 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == 'The Fifth Element') {
+      return {
+        'results': [
+          {
+            'id': 200026,
+            'media_type': 'movie',
+            'title': '第五元素',
+            'original_title': 'Le Cinquième Élément',
+            'release_date': '1997-05-07',
+          },
+        ],
+      };
+    }
+    if (query == 'Horton Hears A Who' && year == null) {
+      return {
+        'results': [
+          {
+            'id': 200027,
+            'media_type': 'movie',
+            'title': '霍顿与无名氏',
+            'original_title': 'Horton Hears a Who!',
+            'release_date': '2008-03-03',
+          },
+          {
+            'id': 200028,
+            'media_type': 'movie',
+            'title': '霍顿孵蛋',
+            'original_title': 'Horton Hatches the Egg',
+            'release_date': '1970-03-18',
+          },
+        ],
+      };
+    }
+    if (query == '向阳花开') {
+      if (year == 2025) return const {'results': <Map<String, dynamic>>[]};
+      return {
+        'results': [
+          {
+            'id': 200029,
+            'media_type': 'movie',
+            'title': '向阳花开',
+            'original_title': '向阳花开',
+          },
+          {
+            'id': 200030,
+            'media_type': 'movie',
+            'title': '向阳花开',
+            'original_title': '向阳花开',
+          },
+        ],
+      };
+    }
     if (query == 'Black Cat White Cat' && year == null) {
       return {
         'results': [
@@ -465,6 +517,41 @@ class _RecognitionAPI extends GuangyaAPI {
           ],
         },
       };
+    }
+    if (id == 200026) {
+      return {
+        'id': id,
+        'title': '第五元素',
+        'original_title': 'Le Cinquième Élément',
+        'release_date': '1997-05-07',
+        'alternative_titles': {
+          'titles': [
+            {'title': 'The Fifth Element'},
+          ],
+        },
+      };
+    }
+    if (id == 200027) {
+      return {
+        'id': id,
+        'title': '霍顿与无名氏',
+        'original_title': 'Horton Hears a Who!',
+        'release_date': '2008-03-03',
+      };
+    }
+    if (id == 200028) {
+      return {
+        'id': id,
+        'title': '霍顿孵蛋',
+        'original_title': 'Horton Hatches the Egg',
+        'release_date': '1970-03-18',
+      };
+    }
+    if (id == 200029) {
+      return {'id': id, 'title': '向阳花开', 'original_title': '向阳花开'};
+    }
+    if (id == 200030) {
+      return {'id': id, 'title': '另一朵花', 'original_title': 'Another Flower'};
     }
     if (id == 200022) {
       return {
@@ -959,6 +1046,88 @@ void main() {
           year: null,
         )),
       );
+    },
+  );
+
+  test(
+    'recognition verifies a localized unique year result through details',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'fifth-element-1997',
+          name: 'The.Fifth.Element.1997.2160p.BluRay.REMUX.mkv',
+          isDirectory: false,
+          cloudPath:
+              '/电影/The.Fifth.Element.1997.2160p.BluRay.REMUX/'
+              'The.Fifth.Element.1997.2160p.BluRay.REMUX.mkv',
+        ),
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200026);
+      expect(recognized.title, '第五元素');
+    },
+  );
+
+  test(
+    'recognition accepts a one-year release date drift for exact titles',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'horton-2007',
+          name: '[霍顿与无名氏].Horton.Hears.A.Who.2007.BluRay.mkv',
+          isDirectory: false,
+          cloudPath: '/电影/[霍顿与无名氏].Horton.Hears.A.Who.2007.BluRay.mkv',
+        ),
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200027);
+      expect(recognized.title, '霍顿与无名氏');
+    },
+  );
+
+  test(
+    'recognition keeps a details-resolved candidate without release date',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'xiang-yang-hua-kai',
+          name: '向阳花开.Xiang.Yang.Hua.Kai.2025.2160p.WEB-DL.mkv',
+          isDirectory: false,
+          cloudPath:
+              '/电影/向阳花开.Xiang.Yang.Hua.Kai.2025.2160p.WEB-DL/'
+              '向阳花开.Xiang.Yang.Hua.Kai.2025.2160p.WEB-DL.mkv',
+        ),
+      );
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200029);
+      expect(recognized.title, '向阳花开');
     },
   );
 

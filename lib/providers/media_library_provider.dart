@@ -3429,17 +3429,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           }
         }
         final detailFallbackYear = attemptYear ?? year;
-        final detailFallbackCandidates = detailFallbackYear == null
+        final detailFallbackCandidates =
+            typedCandidates.length == 1 &&
+                _allowsUniqueQueryFallback(variant.value)
+            ? typedCandidates
+            : detailFallbackYear == null
             ? typedCandidates
             : typedCandidates
                   .where((candidate) {
-                    final releaseDate =
-                        (candidate['release_date'] ??
-                                candidate['first_air_date'])
-                            ?.toString() ??
-                        '';
-                    return releaseDate.isEmpty ||
-                        releaseDate.startsWith('$detailFallbackYear');
+                    final candidateYear = _tmdbCandidateYear(candidate);
+                    return candidateYear == null ||
+                        _tmdbYearDelta(candidateYear, detailFallbackYear) <= 1;
                   })
                   .toList(growable: false);
 
@@ -3571,6 +3571,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               attempts: attempts,
             );
           }
+          if (related.length == 1 &&
+              typedCandidates.length == 1 &&
+              _allowsSpecificRelatedResultFallback(variant.value)) {
+            return _TMDBRecognitionSearchResult(
+              candidates: related.values.toList(growable: false),
+              attempts: attempts,
+            );
+          }
         }
       }
     }
@@ -3618,6 +3626,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
     if (!RegExp(r'[\u4e00-\u9fff]').hasMatch(value)) return false;
     return RegExp(r'\d').hasMatch(value) && normalized.length >= 4;
+  }
+
+  bool _allowsSpecificRelatedResultFallback(String value) {
+    if (_allowsUniqueQueryFallback(value)) return true;
+    final normalized = _normalizeMediaTitle(value);
+    if (normalized.length < 4) return false;
+    return RegExp(r'[\u4e00-\u9fff]').hasMatch(value) &&
+        RegExp(r'\d').hasMatch(value);
   }
 
   Future<MediaLibraryItem> _recognizeMediaItem(
@@ -3710,9 +3726,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         final releaseDate =
             (map['release_date'] ?? map['first_air_date'])?.toString() ?? '';
         final recognitionYear = _toInt(map['_recognitionYear']);
-        if (recognitionYear != null &&
-            releaseDate.isNotEmpty &&
-            !releaseDate.startsWith('$recognitionYear')) {
+        final resolvedByDetails = map['_recognitionResolvedByDetails'] == true;
+        final candidateYear = _releaseYearFromDate(releaseDate);
+        if (!resolvedByDetails &&
+            recognitionYear != null &&
+            candidateYear != null &&
+            _tmdbYearDelta(candidateYear, recognitionYear) > 1) {
           continue;
         }
         final recognitionTitle = map['_recognitionTitle']?.toString();
@@ -3734,21 +3753,29 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             map['_recognitionUniqueExactYear'] == true;
         final uniqueSpecificQueryFallback =
             map['_recognitionUniqueSpecificQuery'] == true;
-        final resolvedByDetails = map['_recognitionResolvedByDetails'] == true;
         if (score == 0 &&
             !uniqueExactYearFallback &&
             !uniqueSpecificQueryFallback &&
             !resolvedByDetails) {
           continue;
         }
-        if (uniqueExactYearFallback ||
-            uniqueSpecificQueryFallback ||
-            resolvedByDetails) {
+        if (resolvedByDetails) {
+          score = score < 95 ? 95 : score;
+        } else if (uniqueExactYearFallback || uniqueSpecificQueryFallback) {
           score = 1;
         }
-        if (parsed.year != null && releaseDate.startsWith('${parsed.year}')) {
-          score += 30;
-        } else if (parsed.year != null && recognitionYear == null) {
+        if (parsed.year != null && candidateYear != null) {
+          final delta = _tmdbYearDelta(candidateYear, parsed.year!);
+          if (delta == 0) {
+            score += 30;
+          } else if (delta == 1) {
+            score += 20;
+          } else {
+            score -= 40;
+          }
+        } else if (parsed.year != null &&
+            recognitionYear == null &&
+            !resolvedByDetails) {
           // A no-year fallback is deliberately less trusted, but an exact
           // title can still recover metadata whose release year is absent or
           // differs from a release/package year embedded in the file name.
@@ -4165,6 +4192,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       (candidate) => candidate['_recognitionNeedsDetails'] == true,
     );
   }
+
+  int? _tmdbCandidateYear(Map<String, dynamic> candidate) {
+    final releaseDate =
+        (candidate['release_date'] ?? candidate['first_air_date'])
+            ?.toString() ??
+        '';
+    return _releaseYearFromDate(releaseDate);
+  }
+
+  int? _releaseYearFromDate(String value) {
+    if (value.length < 4) return null;
+    return int.tryParse(value.substring(0, 4));
+  }
+
+  int _tmdbYearDelta(int first, int second) => (first - second).abs();
 
   String _requestedTMDBMediaKind(
     MediaLibraryItem fallback,

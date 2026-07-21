@@ -90,9 +90,16 @@ class MediaTMDBCandidateResolver {
           (merged['release_date'] ?? merged['first_air_date'])?.toString() ??
           '';
       var score = titleScore;
-      if (year != null && date.startsWith('$year')) score += 30;
-      if (year != null && date.isNotEmpty && !date.startsWith('$year')) {
-        score -= 40;
+      final candidateYear = _releaseYear(date);
+      if (year != null && candidateYear != null) {
+        final delta = (candidateYear - year).abs();
+        if (delta == 0) {
+          score += 30;
+        } else if (delta == 1) {
+          score += 20;
+        } else {
+          score -= 40;
+        }
       }
       ranked.add((score: score, titleScore: titleScore, value: merged));
       diagnostics.add(
@@ -123,5 +130,10 @@ class MediaTMDBCandidateResolver {
     return TMDBCandidateResolution([
       {...ranked.first.value, '_recognitionResolvedByDetails': true},
     ], diagnostics);
+  }
+
+  static int? _releaseYear(String date) {
+    if (date.length < 4) return null;
+    return int.tryParse(date.substring(0, 4));
   }
 }
