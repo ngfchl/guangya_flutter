@@ -327,6 +327,9 @@ class MediaLibraryStore {
     await db.execute('ATTACH DATABASE ? AS imported_backup', [backupPath]);
     try {
       await db.transaction((txn) async {
+        await txn.delete('media_items');
+        await txn.delete('media_library_sources');
+        await txn.delete('media_libraries');
         await txn.execute(
           'INSERT OR REPLACE INTO media_libraries SELECT * FROM imported_backup.media_libraries',
         );

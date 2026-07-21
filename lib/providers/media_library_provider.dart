@@ -1000,10 +1000,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           );
         },
       );
-      _appendBackupLog('备份下载完成，正在导入本地数据库');
+      _appendBackupLog('备份下载完成，正在覆盖本地数据库');
       state = state.copyWith(
         cloudBackupSync: CloudBackupSyncProgress(
-          phase: '正在导入刮削数据',
+          phase: '正在覆盖刮削数据',
           destination: backup.name,
           transferredBytes: backup.size ?? 0,
           totalBytes: backup.size ?? 0,
@@ -1054,7 +1054,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       clearSelectedLibrary: selectedID == null,
       items: selectedID == null ? const [] : await _loadItems(selectedID),
       allItems: allItems,
-      statusMessage: '刮削数据已导入，已回收 ${FormatBytes.format(stats.reclaimedBytes)}',
+      statusMessage: '刮削数据已覆盖，已回收 ${FormatBytes.format(stats.reclaimedBytes)}',
     );
     if (selectedID != null) {
       unawaited(_hydrateMissingArtwork(selectedID, state.items));
