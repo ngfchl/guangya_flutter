@@ -203,6 +203,18 @@ class FileNotifier extends StateNotifier<FileState> {
 
   FileNotifier() : super(const FileState());
 
+  bool _sameParentID(String? left, String? right) {
+    final normalizedLeft = left?.trim();
+    final normalizedRight = right?.trim();
+    final effectiveLeft = normalizedLeft == null || normalizedLeft.isEmpty
+        ? null
+        : normalizedLeft;
+    final effectiveRight = normalizedRight == null || normalizedRight.isEmpty
+        ? null
+        : normalizedRight;
+    return effectiveLeft == effectiveRight;
+  }
+
   set api(GuangyaAPI value) => _api = value;
 
   String? get _currentParentID =>
@@ -804,17 +816,38 @@ class FileNotifier extends StateNotifier<FileState> {
     if (_api == null || state.clipboard == null || state.clipboard!.isEmpty) {
       return;
     }
+    final clipboard = state.clipboard!;
+    if (state.clipboardIsMove) {
+      final movable = clipboard
+          .where((file) => !_sameParentID(file.parentID, parentID))
+          .toList(growable: false);
+      if (movable.isEmpty) {
+        state = state.copyWith(statusMessage: '不能移动至相同目录', clearError: true);
+        return;
+      }
+      if (movable.length != clipboard.length) {
+        state = state.copyWith(
+          statusMessage: '已跳过 ${clipboard.length - movable.length} 个同目录项目',
+          clearError: true,
+        );
+      }
+    }
     state = state.copyWith(
       statusMessage: state.clipboardIsMove ? '正在移动…' : '正在复制…',
     );
     try {
-      final ids = state.clipboard!.map((f) => f.id).toList();
+      final moveFiles = state.clipboardIsMove
+          ? clipboard
+                .where((file) => !_sameParentID(file.parentID, parentID))
+                .toList(growable: false)
+          : clipboard;
+      final ids = moveFiles.map((f) => f.id).toList();
       if (state.clipboardIsMove) {
         await _api!.fsMove(ids, parentID: parentID);
         await FileMetadataCache.removeFilesFromAllFolders(ids);
         await FileMetadataCache.updateFolderChildren(
           parentID,
-          addOrReplace: state.clipboard!,
+          addOrReplace: moveFiles,
         );
       } else {
         await _api!.fsCopy(ids, parentID: parentID);
@@ -1271,26 +1304,42 @@ class FileNotifier extends StateNotifier<FileState> {
 
   Future<void> moveFilesTo(List<CloudFile> files, {String? parentID}) async {
     if (_api == null || files.isEmpty) return;
-    state = state.copyWith(statusMessage: '正在移动 ${files.length} 个项目…');
+    final movable = files
+        .where((file) => !_sameParentID(file.parentID, parentID))
+        .toList(growable: false);
+    if (movable.isEmpty) {
+      state = state.copyWith(statusMessage: '不能移动至相同目录', clearError: true);
+      return;
+    }
+    final skipped = files.length - movable.length;
+    state = state.copyWith(
+      statusMessage: skipped == 0
+          ? '正在移动 ${movable.length} 个项目…'
+          : '已跳过 $skipped 个同目录项目，正在移动 ${movable.length} 个项目…',
+      clearError: true,
+    );
     try {
       await _api!.fsMove(
-        files.map((file) => file.id).toList(),
+        movable.map((file) => file.id).toList(),
         parentID: parentID,
       );
       await FileMetadataCache.removeFilesFromAllFolders(
-        files.map((file) => file.id),
+        movable.map((file) => file.id),
       );
       await FileMetadataCache.updateFolderChildren(
         _currentParentID,
-        removeIDs: files.map((file) => file.id),
+        removeIDs: movable.map((file) => file.id),
       );
       await FileMetadataCache.updateFolderChildren(
         parentID,
-        addOrReplace: files,
+        addOrReplace: movable,
       );
       await _invalidateListCache(_currentParentID);
       if (parentID != _currentParentID) await _invalidateListCache(parentID);
-      state = state.copyWith(statusMessage: '移动完成', selectedIDs: {});
+      state = state.copyWith(
+        statusMessage: skipped == 0 ? '移动完成' : '移动完成，已跳过 $skipped 个',
+        selectedIDs: {},
+      );
       await loadFiles(parentID: _currentParentID);
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());

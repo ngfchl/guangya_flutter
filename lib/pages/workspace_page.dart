@@ -80,6 +80,18 @@ class _CloudFileDraggable extends StatelessWidget {
 bool _hasPressedKey(LogicalKeyboardKey key) =>
     HardwareKeyboard.instance.logicalKeysPressed.contains(key);
 
+bool _sameCloudParentID(String? left, String? right) {
+  final normalizedLeft = left?.trim();
+  final normalizedRight = right?.trim();
+  final effectiveLeft = normalizedLeft == null || normalizedLeft.isEmpty
+      ? null
+      : normalizedLeft;
+  final effectiveRight = normalizedRight == null || normalizedRight.isEmpty
+      ? null
+      : normalizedRight;
+  return effectiveLeft == effectiveRight;
+}
+
 const _desktopSelectAllShortcuts = <ShortcutActivator, Intent>{
   SingleActivator(LogicalKeyboardKey.keyA, meta: true): _SelectAllFilesIntent(),
   SingleActivator(LogicalKeyboardKey.keyA, control: true):
@@ -228,6 +240,19 @@ Future<bool> _copyOrMoveFilesToDestination(
     builder: (_) => _CloudFolderDestinationPicker(move: move),
   );
   if (destination == null || !context.mounted) return false;
+  if (move &&
+      files.every(
+        (file) => _sameCloudParentID(file.parentID, destination.parentID),
+      )) {
+    ShadSonner.maybeOf(context)?.show(
+      const ShadToast(
+        title: Text('移动'),
+        description: Text('不能移动至相同目录'),
+        showCloseIconOnlyWhenHovered: false,
+      ),
+    );
+    return false;
+  }
   final notifier = ref.read(fileProvider.notifier);
   if (move) {
     await notifier.moveFilesTo(files, parentID: destination.parentID);
@@ -251,6 +276,7 @@ class _CloudFolderDestinationPickerState
     extends ConsumerState<_CloudFolderDestinationPicker> {
   final _path = <CloudFile>[];
   var _folders = <CloudFile>[];
+  CloudFile? _selectedFolder;
   var _loading = false;
   String? _error;
 
@@ -291,22 +317,33 @@ class _CloudFolderDestinationPickerState
     }
   }
 
+  void _enterFolder(CloudFile folder) {
+    setState(() {
+      _path.add(folder);
+      _selectedFolder = null;
+    });
+    unawaited(_load());
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final currentName = _path.isEmpty ? '云盘根目录' : _path.last.name;
+    final destinationName = _selectedFolder?.name ?? currentName;
     return ShadDialog(
       title: Text(widget.move ? '移动到' : '复制到'),
-      description: Text('选择目标文件夹：$currentName'),
+      description: Text('目标文件夹：$destinationName'),
       actions: [
         ShadButton.outline(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
         ShadButton(
-          onPressed: () => Navigator.of(
-            context,
-          ).pop(_CloudFolderDestination(_path.isEmpty ? null : _path.last.id)),
+          onPressed: () => Navigator.of(context).pop(
+            _CloudFolderDestination(
+              _selectedFolder?.id ?? (_path.isEmpty ? null : _path.last.id),
+            ),
+          ),
           child: const Text('选择'),
         ),
       ],
@@ -325,7 +362,10 @@ class _CloudFolderDestinationPickerState
                   onPressed: _path.isEmpty
                       ? null
                       : () {
-                          setState(() => _path.clear());
+                          setState(() {
+                            _path.clear();
+                            _selectedFolder = null;
+                          });
                           unawaited(_load());
                         },
                   child: const Text('根目录'),
@@ -334,9 +374,10 @@ class _CloudFolderDestinationPickerState
                   ShadButton.ghost(
                     size: ShadButtonSize.sm,
                     onPressed: () {
-                      setState(
-                        () => _path.removeRange(index + 1, _path.length),
-                      );
+                      setState(() {
+                        _path.removeRange(index + 1, _path.length);
+                        _selectedFolder = null;
+                      });
                       unawaited(_load());
                     },
                     child: Text(_path[index].name),
@@ -363,19 +404,49 @@ class _CloudFolderDestinationPickerState
                       itemCount: _folders.length,
                       itemBuilder: (context, index) {
                         final folder = _folders[index];
-                        return ShadButton.ghost(
-                          width: double.infinity,
-                          mainAxisAlignment: MainAxisAlignment.start,
-                          leading: const Icon(Icons.folder_rounded, size: 18),
-                          trailing: const Icon(
-                            Icons.chevron_right_rounded,
-                            size: 18,
+                        final selected = _selectedFolder?.id == folder.id;
+                        return InkWell(
+                          onTap: () => setState(() => _selectedFolder = folder),
+                          onDoubleTap: () => _enterFolder(folder),
+                          borderRadius: BorderRadius.circular(6),
+                          child: Container(
+                            height: 38,
+                            padding: const EdgeInsets.only(left: 10, right: 4),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? cs.primary.withValues(alpha: 0.14)
+                                  : null,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.folder_rounded,
+                                  size: 18,
+                                  color: selected ? cs.primary : cs.foreground,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    folder.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                ShadTooltip(
+                                  builder: (_) => const Text('进入目录'),
+                                  child: ShadButton.ghost(
+                                    size: ShadButtonSize.sm,
+                                    onPressed: () => _enterFolder(folder),
+                                    child: const Icon(
+                                      Icons.chevron_right_rounded,
+                                      size: 18,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                          onPressed: () {
-                            setState(() => _path.add(folder));
-                            unawaited(_load());
-                          },
-                          child: Text(folder.name),
                         );
                       },
                     ),
@@ -518,6 +589,34 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     final fp = ref.watch(fileProvider);
     final media = ref.watch(mediaLibraryProvider);
     final mediaDetail = ref.watch(activeMediaDetailHeaderProvider);
+    ref.listen<FileState>(fileProvider, (previous, next) {
+      final message = next.errorMessage ?? next.statusMessage;
+      final previousMessage = previous?.errorMessage ?? previous?.statusMessage;
+      final isProgressMessage =
+          next.errorMessage == null && message?.startsWith('正在') == true;
+      if (message == null ||
+          message.isEmpty ||
+          message == previousMessage ||
+          isProgressMessage) {
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ShadSonner.maybeOf(context)?.show(
+          next.errorMessage == null
+              ? ShadToast(
+                  title: const Text('云盘'),
+                  description: Text(message),
+                  showCloseIconOnlyWhenHovered: false,
+                )
+              : ShadToast.destructive(
+                  title: const Text('云盘操作失败'),
+                  description: Text(message),
+                  showCloseIconOnlyWhenHovered: false,
+                ),
+        );
+      });
+    });
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -5062,6 +5161,19 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
 
   Future<void> _moveCloudFiles(List<CloudFile> files, String? parentID) async {
     if (files.isEmpty) return;
+    final movable = files
+        .where((file) => !_sameCloudParentID(file.parentID, parentID))
+        .toList(growable: false);
+    if (movable.isEmpty) {
+      ShadSonner.maybeOf(context)?.show(
+        const ShadToast(
+          title: Text('移动'),
+          description: Text('不能移动至相同目录'),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -5069,7 +5181,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
     try {
       final api = ref.read(authProvider.notifier).api;
       await api.fsMove(
-        files.map((file) => file.id).toList(),
+        movable.map((file) => file.id).toList(),
         parentID: parentID,
       );
       await _load(parentID: _currentParentID);
