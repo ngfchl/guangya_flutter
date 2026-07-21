@@ -43,9 +43,10 @@ class MediaLibraryStore {
         }
       },
     );
-    await _createSchema(_database!);
+      await _createSchema(_database!);
     try {
       final migration = await _migrateArtworkBlobSchema(_database!);
+      await _createSchema(_database!);
       if (migration == null) {
         AppLogger.info('Storage', '刮削数据库检查完成，未发现旧图片二进制缓存');
       } else {
@@ -144,6 +145,245 @@ class MediaLibraryStore {
       if (rows.length < pageSize) break;
     }
     return items;
+  }
+
+  Future<List<MediaLibraryItem>> itemsPage({
+    String? libraryID,
+    String? mediaKind,
+    bool unmatchedOnly = false,
+    String search = '',
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    final db = await _db;
+    await _ensureMediaItemLocationColumns(db);
+    final where = <String>[];
+    final args = <Object?>[];
+    if (libraryID != null) {
+      where.add('library_id = ?');
+      args.add(libraryID);
+    }
+    if (mediaKind != null) {
+      where.add('media_kind = ?');
+      args.add(mediaKind);
+    }
+    if (unmatchedOnly) {
+      where.add('(media_kind IS NULL OR (tmdb_id IS NULL AND douban_id IS NULL))');
+    }
+    final query = search.trim().toLowerCase();
+    if (query.isNotEmpty) {
+      final prefixed = RegExp(
+        r'^(tmdb|imdb|douban|豆瓣)\s*[:：]?\s*(.+)$',
+      ).firstMatch(query);
+      final source = prefixed?.group(1);
+      final id = prefixed?.group(2)?.trim() ?? query;
+      if (source == 'tmdb') {
+        where.add('CAST(tmdb_id AS TEXT) LIKE ?');
+        args.add('%$id%');
+      } else if (source == 'imdb') {
+        where.add('LOWER(imdb_id) LIKE ?');
+        args.add('%$id%');
+      } else if (source == 'douban' || source == '豆瓣') {
+        where.add('LOWER(douban_id) LIKE ?');
+        args.add('%$id%');
+      } else {
+        where.add('''(
+          LOWER(title) LIKE ? OR LOWER(original_title) LIKE ? OR
+          LOWER(cloud_name) LIKE ? OR LOWER(resource_path) LIKE ? OR
+          CAST(tmdb_id AS TEXT) LIKE ? OR LOWER(imdb_id) LIKE ? OR
+          LOWER(douban_id) LIKE ?
+        )''');
+        args.addAll(List<Object?>.filled(7, '%$query%'));
+      }
+    }
+    final rows = await db.query(
+      'media_items',
+      columns: _itemMetadataColumns,
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'title COLLATE NOCASE, library_id, file_id',
+      limit: limit.clamp(1, 500),
+      offset: offset.clamp(0, 1 << 31),
+    );
+    return rows.map(_itemFromRow).toList(growable: false);
+  }
+
+  Future<
+    ({
+      Map<String, MediaLibraryStatistics> libraries,
+      MediaLibraryStatistics global,
+    })
+  > statistics() async {
+    final db = await _db;
+    final byLibrary = <String, MediaLibraryStatistics>{};
+
+    // Each "work" is identified by: tmdb_id (if set), else douban_id (if set),
+    // else lowercased title+year.  We count distinct works per kind per library.
+    //
+    // SQL approach: use a subquery that assigns a work_key per row, then count
+    // distinct work_keys grouped by library_id and media_kind.
+
+    // 1. Per-library statistics
+    final libRows = await db.rawQuery('''
+      SELECT
+        library_id,
+        media_kind,
+        COUNT(DISTINCT work_key) AS work_count
+      FROM (
+        SELECT
+          library_id,
+          media_kind,
+          CASE
+            WHEN tmdb_id IS NOT NULL THEN 'tmdb:' || tmdb_id
+            WHEN douban_id IS NOT NULL AND douban_id != '' THEN 'douban:' || douban_id
+            ELSE 'title:' || LOWER(REPLACE(REPLACE(title, ' ', ''), ',', '')) ||
+                 ':' || SUBSTR(COALESCE(release_date, ''), 1, 4)
+          END AS work_key
+        FROM media_items
+      )
+      GROUP BY library_id, media_kind
+    ''');
+
+    // 2. Unmatched per library (no tmdb_id AND no douban_id)
+    final unmatchedRows = await db.rawQuery('''
+      SELECT
+        library_id,
+        COUNT(DISTINCT work_key) AS unmatched_count
+      FROM (
+        SELECT
+          library_id,
+          CASE
+            WHEN tmdb_id IS NOT NULL THEN 'tmdb:' || tmdb_id
+            WHEN douban_id IS NOT NULL AND douban_id != '' THEN 'douban:' || douban_id
+            ELSE 'title:' || LOWER(REPLACE(REPLACE(title, ' ', ''), ',', '')) ||
+                 ':' || SUBSTR(COALESCE(release_date, ''), 1, 4)
+          END AS work_key
+        FROM media_items
+        WHERE tmdb_id IS NULL
+          AND (douban_id IS NULL OR douban_id = '')
+      )
+      GROUP BY library_id
+    ''');
+
+    // 3. Collections per library
+    final collectionRows = await db.rawQuery('''
+      SELECT
+        library_id,
+        COUNT(DISTINCT CASE
+          WHEN collection_id IS NOT NULL AND collection_id != '' THEN collection_id
+          WHEN collection_name IS NOT NULL AND collection_name != '' THEN collection_name
+        END) AS collection_count
+      FROM media_items
+      WHERE (collection_id IS NOT NULL AND collection_id != '')
+         OR (collection_name IS NOT NULL AND collection_name != '')
+      GROUP BY library_id
+    ''');
+
+    // Merge per-library results
+    final unmatchedMap = <String, int>{};
+    for (final row in unmatchedRows) {
+      unmatchedMap[row['library_id']?.toString() ?? ''] =
+          row['unmatched_count'] as int? ?? 0;
+    }
+    final collectionMap = <String, int>{};
+    for (final row in collectionRows) {
+      collectionMap[row['library_id']?.toString() ?? ''] =
+          row['collection_count'] as int? ?? 0;
+    }
+
+    // Accumulate per-library stats
+    for (final row in libRows) {
+      final libID = row['library_id']?.toString() ?? '';
+      final kind = row['media_kind']?.toString() ?? '';
+      final count = row['work_count'] as int? ?? 0;
+      final existing = byLibrary[libID] ?? const MediaLibraryStatistics();
+      byLibrary[libID] = MediaLibraryStatistics(
+        total: existing.total + count,
+        movies: existing.movies + (kind == 'movie' ? count : 0),
+        series: existing.series + (kind == 'tv' ? count : 0),
+        unmatched: unmatchedMap[libID] ?? existing.unmatched,
+        collections: collectionMap[libID] ?? existing.collections,
+      );
+    }
+
+    // Ensure all libraries have an entry (pull IDs directly from DB)
+    final allLibIDs = await db.rawQuery('SELECT id FROM media_libraries');
+    for (final row in allLibIDs) {
+      byLibrary.putIfAbsent(
+        row['id']?.toString() ?? '',
+        () => const MediaLibraryStatistics(),
+      );
+    }
+
+    // 4. Global statistics (same queries without library_id filter)
+    final globalWorkRows = await db.rawQuery('''
+      SELECT
+        media_kind,
+        COUNT(DISTINCT work_key) AS work_count
+      FROM (
+        SELECT
+          media_kind,
+          CASE
+            WHEN tmdb_id IS NOT NULL THEN 'tmdb:' || tmdb_id
+            WHEN douban_id IS NOT NULL AND douban_id != '' THEN 'douban:' || douban_id
+            ELSE 'title:' || LOWER(REPLACE(REPLACE(title, ' ', ''), ',', '')) ||
+                 ':' || SUBSTR(COALESCE(release_date, ''), 1, 4)
+          END AS work_key
+        FROM media_items
+      )
+      GROUP BY media_kind
+    ''');
+
+    final globalUnmatched = await db.rawQuery('''
+      SELECT COUNT(DISTINCT work_key) AS cnt
+      FROM (
+        SELECT
+          CASE
+            WHEN tmdb_id IS NOT NULL THEN 'tmdb:' || tmdb_id
+            WHEN douban_id IS NOT NULL AND douban_id != '' THEN 'douban:' || douban_id
+            ELSE 'title:' || LOWER(REPLACE(REPLACE(title, ' ', ''), ',', '')) ||
+                 ':' || SUBSTR(COALESCE(release_date, ''), 1, 4)
+          END AS work_key
+        FROM media_items
+        WHERE tmdb_id IS NULL
+          AND (douban_id IS NULL OR douban_id = '')
+      )
+    ''');
+
+    final globalCollections = await db.rawQuery('''
+      SELECT COUNT(DISTINCT CASE
+        WHEN collection_id IS NOT NULL AND collection_id != '' THEN collection_id
+        WHEN collection_name IS NOT NULL AND collection_name != '' THEN collection_name
+      END) AS cnt
+      FROM media_items
+      WHERE (collection_id IS NOT NULL AND collection_id != '')
+         OR (collection_name IS NOT NULL AND collection_name != '')
+    ''');
+
+    var gMovies = 0;
+    var gSeries = 0;
+    var gTotal = 0;
+    for (final row in globalWorkRows) {
+      final kind = row['media_kind']?.toString() ?? '';
+      final count = row['work_count'] as int? ?? 0;
+      gTotal += count;
+      if (kind == 'movie') gMovies += count;
+      if (kind == 'tv') gSeries += count;
+    }
+
+    final global = MediaLibraryStatistics(
+      total: gTotal,
+      movies: gMovies,
+      series: gSeries,
+      unmatched: globalUnmatched.isNotEmpty
+          ? (globalUnmatched.first['cnt'] as int? ?? 0)
+          : 0,
+      collections: globalCollections.isNotEmpty
+          ? (globalCollections.first['cnt'] as int? ?? 0)
+          : 0,
+    );
+
+    return (libraries: byLibrary, global: global);
   }
 
   Future<void> saveLibraries(List<MediaLibraryDefinition> libraries) async {
@@ -362,10 +602,17 @@ class MediaLibraryStore {
             importedColumns.contains('full_parent_ids')
             ? 'full_parent_ids'
             : 'NULL';
+        final importedDoubanID = importedColumns.contains('douban_id')
+            ? 'douban_id'
+            : 'NULL';
+        final importedImdbID = importedColumns.contains('imdb_id')
+            ? 'imdb_id'
+            : 'NULL';
         await txn.execute('''
           INSERT OR REPLACE INTO media_items (
             library_id, file_id, resource_path, cloud_name, file_size, gcid,
-            file_type, parent_id, full_parent_ids, tmdb_id, media_kind,
+            file_type, parent_id, full_parent_ids, tmdb_id, douban_id, imdb_id,
+            media_kind,
             title, original_title,
             release_date, overview, poster_path, backdrop_path,
             has_chinese_audio, has_chinese_subtitle, collection_id,
@@ -374,7 +621,8 @@ class MediaLibraryStore {
           SELECT
             library_id, file_id, resource_path, cloud_name, file_size, gcid,
             file_type, $importedParentID, $importedFullParentIDs,
-            tmdb_id, media_kind, title, original_title,
+            tmdb_id, $importedDoubanID, $importedImdbID,
+            media_kind, title, original_title,
             release_date, overview, $importedPosterPath, $importedBackdropPath,
             has_chinese_audio, has_chinese_subtitle, collection_id,
             collection_name, updated_at
@@ -857,6 +1105,8 @@ class MediaLibraryStore {
         parent_id TEXT,
         full_parent_ids TEXT,
         tmdb_id INTEGER,
+        douban_id TEXT,
+        imdb_id TEXT,
         media_kind TEXT,
         title TEXT NOT NULL,
         original_title TEXT NOT NULL,
@@ -906,6 +1156,8 @@ class MediaLibraryStore {
     await _ensureColumn(db, 'media_items', 'backdrop_path', 'TEXT');
     await _ensureColumn(db, 'media_items', 'parent_id', 'TEXT');
     await _ensureColumn(db, 'media_items', 'full_parent_ids', 'TEXT');
+    await _ensureColumn(db, 'media_items', 'douban_id', 'TEXT');
+    await _ensureColumn(db, 'media_items', 'imdb_id', 'TEXT');
   }
 
   Future<({int rows, int artworkBytes})?> _migrateArtworkBlobSchema(
@@ -940,6 +1192,8 @@ class MediaLibraryStore {
     final fullParentIDsSource = columns.contains('full_parent_ids')
         ? 'full_parent_ids'
         : 'NULL';
+    final doubanIDSource = columns.contains('douban_id') ? 'douban_id' : 'NULL';
+    final imdbIDSource = columns.contains('imdb_id') ? 'imdb_id' : 'NULL';
     AppLogger.info(
       'Storage',
       '发现旧图片二进制缓存：$rows 条记录，${FormatBytes.format(artworkBytes)}，正在重建精简表',
@@ -957,6 +1211,8 @@ class MediaLibraryStore {
           parent_id TEXT,
           full_parent_ids TEXT,
           tmdb_id INTEGER,
+          douban_id TEXT,
+          imdb_id TEXT,
           media_kind TEXT,
           title TEXT NOT NULL,
           original_title TEXT NOT NULL,
@@ -976,7 +1232,8 @@ class MediaLibraryStore {
       await txn.execute('''
         INSERT INTO media_items_compact (
           library_id, file_id, resource_path, cloud_name, file_size, gcid,
-          file_type, parent_id, full_parent_ids, tmdb_id, media_kind, title,
+          file_type, parent_id, full_parent_ids, tmdb_id, douban_id, imdb_id,
+          media_kind, title,
           original_title, release_date, overview, poster_path, backdrop_path,
           has_chinese_audio, has_chinese_subtitle, collection_id,
           collection_name, updated_at
@@ -984,6 +1241,7 @@ class MediaLibraryStore {
         SELECT
           library_id, file_id, resource_path, cloud_name, file_size, gcid,
           file_type, $parentIDSource, $fullParentIDsSource, tmdb_id,
+          $doubanIDSource, $imdbIDSource,
           media_kind, title, original_title, release_date, overview,
           $posterPathSource, $backdropPathSource, has_chinese_audio,
           has_chinese_subtitle, collection_id, collection_name, updated_at
@@ -1055,6 +1313,8 @@ class MediaLibraryStore {
       'parentID': row['parent_id'],
       'fullParentIDs': row['full_parent_ids'],
       'tmdbID': row['tmdb_id'],
+      'doubanID': row['douban_id'],
+      'imdbID': row['imdb_id'],
       'mediaKind': row['media_kind'],
       'title': row['title'],
       'originalTitle': row['original_title'],
@@ -1081,6 +1341,8 @@ class MediaLibraryStore {
     'parent_id': item.file.parentID,
     'full_parent_ids': item.file.fullParentIDs,
     'tmdb_id': item.tmdbID,
+    'douban_id': item.doubanID,
+    'imdb_id': item.imdbID,
     'media_kind': item.mediaKind?.name,
     'title': item.title,
     'original_title': item.originalTitle,
@@ -1133,6 +1395,8 @@ class MediaLibraryStore {
     'parent_id',
     'full_parent_ids',
     'tmdb_id',
+    'douban_id',
+    'imdb_id',
     'media_kind',
     'title',
     'original_title',
@@ -1200,6 +1464,46 @@ class MediaLibraryStore {
       _mediaItemLocationColumnsCheck = null;
     }
   }
+}
+
+class _MediaStatisticsAccumulator {
+  final _works = <String, String?>{};
+  final _unmatched = <String>{};
+  final _collections = <String>{};
+
+  void add(Map<String, Object?> row) {
+    final kind = row['media_kind']?.toString();
+    final tmdbID = row['tmdb_id'];
+    final doubanID = row['douban_id']?.toString();
+    final title = (row['title']?.toString() ?? '').toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9\u4e00-\u9fff]'),
+      '',
+    );
+    final releaseDate = row['release_date']?.toString() ?? '';
+    final year = releaseDate.length >= 4 ? releaseDate.substring(0, 4) : '';
+    final workKey = tmdbID != null
+        ? '${kind ?? 'unknown'}:tmdb:$tmdbID'
+        : doubanID != null && doubanID.isNotEmpty
+        ? '${kind ?? 'unknown'}:douban:$doubanID'
+        : '${kind ?? 'unknown'}:$title:$year';
+    _works[workKey] = kind;
+    if (kind == null || (tmdbID == null && (doubanID?.isEmpty ?? true))) {
+      _unmatched.add(workKey);
+    }
+    final collection = row['collection_id']?.toString() ??
+        row['collection_name']?.toString();
+    if (collection != null && collection.isNotEmpty) {
+      _collections.add(collection);
+    }
+  }
+
+  MediaLibraryStatistics get result => MediaLibraryStatistics(
+    total: _works.length,
+    movies: _works.values.where((kind) => kind == 'movie').length,
+    series: _works.values.where((kind) => kind == 'tv').length,
+    unmatched: _unmatched.length,
+    collections: _collections.length,
+  );
 }
 
 class MediaLibraryStorageStats {
