@@ -27,7 +27,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final auth = ref.watch(authProvider);
     final compact = MediaQuery.sizeOf(context).width < 480;
 
     return Scaffold(
@@ -82,7 +81,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   ),
                   const SizedBox(height: 32),
 
-                  // Login card
+                  // Login card — fixed height prevents layout shift
                   ShadCard(
                     child: Padding(
                       padding: EdgeInsets.all(compact ? 18 : 24),
@@ -91,10 +90,17 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                         children: [
                           _buildTabs(context),
                           const SizedBox(height: 24),
-                          if (_activeTab == 'sms')
-                            _buildSMSLogin(context, auth)
-                          else
-                            _buildQRLogin(context, auth),
+                          SizedBox(
+                            height: 310,
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              switchInCurve: Curves.easeOut,
+                              switchOutCurve: Curves.easeIn,
+                              child: _activeTab == 'sms'
+                                  ? _buildSMSLogin(key: const ValueKey('sms'))
+                                  : _buildQRLogin(key: const ValueKey('qr')),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -131,8 +137,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               label: '扫码登录',
               isActive: _activeTab == 'qr',
               onTap: () {
-                setState(() => _activeTab = 'qr');
-                if (_activeTab == 'qr') {
+                if (_activeTab != 'qr') {
+                  setState(() => _activeTab = 'qr');
                   ref.read(authProvider.notifier).initQRLogin();
                 }
               },
@@ -143,10 +149,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     );
   }
 
-  Widget _buildSMSLogin(BuildContext context, AuthState auth) {
+  Widget _buildSMSLogin({Key? key}) {
     final theme = ShadTheme.of(context);
+    final auth = ref.watch(authProvider);
 
     return Column(
+      key: key,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ShadInput(
@@ -210,7 +218,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           ),
         ],
 
-        const SizedBox(height: 24),
+        const Spacer(),
         ShadButton(
           onPressed: () {
             ref
@@ -227,10 +235,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     );
   }
 
-  Widget _buildQRLogin(BuildContext context, AuthState auth) {
+  Widget _buildQRLogin({Key? key}) {
     final theme = ShadTheme.of(context);
+    final auth = ref.watch(authProvider);
 
     return Column(
+      key: key,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         if (auth.qrPayload.isNotEmpty)
@@ -238,7 +248,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             width: 200,
             height: 200,
             decoration: BoxDecoration(
-              color: theme.colorScheme.background,
+              color: Colors.white,
               border: Border.all(color: theme.colorScheme.border),
               borderRadius: BorderRadius.circular(12),
             ),
@@ -246,7 +256,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               data: auth.qrPayload,
               version: QrVersions.auto,
               size: 180,
-              backgroundColor: Colors.transparent,
+              backgroundColor: Colors.white,
+              eyeStyle: QrEyeStyle(
+                eyeShape: QrEyeShape.square,
+                color: Colors.black,
+              ),
+              dataModuleStyle: QrDataModuleStyle(
+                dataModuleShape: QrDataModuleShape.square,
+                color: Colors.black,
+              ),
             ),
           )
         else
