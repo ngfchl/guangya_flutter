@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
@@ -1827,7 +1828,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
 
   Future<void> _searchTMDB(String query) async {
     final text = query.trim();
-    if (text.isEmpty || _tmdbApiKey.isEmpty) return;
+    if (text.isEmpty) return;
     final serial = ++_tmdbSearchSerial;
 
     setState(() {
@@ -1838,22 +1839,61 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
 
     try {
       final api = ref.read(authProvider.notifier).api;
-      final result = await api.tmdbSearch(
-        text,
-        apiKey: _tmdbApiKey,
-        proxyHost: StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
-        proxyPort: StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
-      );
-      final results =
-          (result['results'] as List?)
-              ?.whereType<Map>()
-              .where(
-                (item) =>
-                    item['media_type'] == 'movie' || item['media_type'] == 'tv',
-              )
-              .map((item) => Map<String, dynamic>.from(item))
-              .toList() ??
-          [];
+      var results = <Map<String, dynamic>>[];
+      if (_tmdbApiKey.isNotEmpty) {
+        final result = await api.tmdbSearch(
+          text,
+          apiKey: _tmdbApiKey,
+          proxyHost:
+              StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+          proxyPort:
+              StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+        );
+        results =
+            (result['results'] as List?)
+                ?.whereType<Map>()
+                .where(
+                  (item) =>
+                      item['media_type'] == 'movie' ||
+                      item['media_type'] == 'tv',
+                )
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList() ??
+            [];
+      }
+      if (results.isEmpty) {
+        final doubanResult = await api.doubanSearch(text);
+        final items = doubanResult['items'];
+        if (items is List) {
+          results = items
+              .whereType<Map>()
+              .map((raw) {
+                final target = raw['target'];
+                if (target is! Map) return null;
+                final candidate = Map<String, dynamic>.from(target);
+                final cardSubtitle =
+                    (candidate['card_subtitle'] ?? '').toString();
+                final type = cardSubtitle.contains('集') ? 'tv' : 'movie';
+                candidate['media_type'] = type;
+                candidate['id'] = candidate['id']?.toString();
+                final yearStr = candidate['year']?.toString() ?? '';
+                if (yearStr.length >= 4) {
+                  candidate['release_date'] = '$yearStr-01-01';
+                }
+                candidate['poster_path'] =
+                    candidate['cover_url']?.toString();
+                candidate['overview'] = cardSubtitle;
+                final rating = candidate['rating'];
+                if (rating is Map) {
+                  candidate['vote_average'] = rating['value'];
+                  candidate['vote_count'] = rating['count'];
+                }
+                return candidate;
+              })
+              .whereType<Map<String, dynamic>>()
+              .toList();
+        }
+      }
       if (!mounted || serial != _tmdbSearchSerial) return;
       setState(() {
         _tmdbResults = results;
@@ -2065,8 +2105,18 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           !mounted ||
           _detailSession != detailSession ||
           _detailWork == null) {
+        AppLogger.info('Media', '[手动匹配] 用户取消：${target.file.name}');
         return;
       }
+      final source = candidate['_source']?.toString() ?? 'tmdb';
+      final candidateTitle =
+          (candidate['title'] ?? candidate['name'] ?? '').toString();
+      final candidateID = candidate['id']?.toString() ?? '';
+      AppLogger.info(
+        'Media',
+        '[手动匹配] 用户选中：${target.file.name} -> '
+        '"$candidateTitle" (id=$candidateID, 来源=$source)',
+      );
       setState(() => _manualMatchApplyingResourceKeys.add(targetKey));
       if (candidate['media_type'] == 'tv') {
         await notifier.applyTMDBMatch(queryResource, candidate);
@@ -4278,9 +4328,18 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final item = widget.work.primary;
     final tmdbID = item.tmdbID;
     final kind = item.mediaKind;
+    if (tmdbID == null) {
+      if (_tmdbDetails != null) {
+        setState(() {
+          _tmdbDetails = null;
+          _loadedTMDBID = null;
+          _loadedTMDBKind = null;
+        });
+      }
+      return;
+    }
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
-    if (tmdbID == null ||
-        kind == null ||
+    if (kind == null ||
         apiKey.isEmpty ||
         (!force && _loadedTMDBID == tmdbID && _loadedTMDBKind == kind)) {
       return;
@@ -4595,6 +4654,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                               ),
                             ),
                             const SizedBox(height: 14),
+                            _detailLinks(item, cs),
+                            const SizedBox(height: 14),
                             _mediaActions(),
                           ],
                         ),
@@ -4607,6 +4668,39 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           ),
         );
       },
+    );
+  }
+
+  Widget _detailLinks(MediaLibraryItem item, ShadColorScheme cs) {
+    final links = <(String, String, IconData)>[];
+    if (item.tmdbID != null) {
+      final kind = item.mediaKind == TMDBMediaKind.tv ? 'tv' : 'movie';
+      links.add((
+        'TMDB',
+        'https://www.themoviedb.org/$kind/${item.tmdbID}',
+        Icons.movie_filter_rounded,
+      ));
+    }
+    if (item.doubanID != null) {
+      links.add((
+        '豆瓣',
+        'https://movie.douban.com/subject/${item.doubanID}/',
+        Icons.rate_review_rounded,
+      ));
+    }
+    if (links.isEmpty) return const SizedBox.shrink();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: [
+        for (final (label, url, icon) in links)
+          ShadButton.outline(
+            size: ShadButtonSize.sm,
+            onPressed: () => launchUrl(Uri.parse(url)),
+            leading: Icon(icon, size: 14),
+            child: Text(label, style: const TextStyle(fontSize: 12)),
+          ),
+      ],
     );
   }
 
@@ -5740,10 +5834,10 @@ class _ManualTMDBMatchDialogState
     final year = int.tryParse(_yearController.text.trim());
     final mediaKind = _mediaKind;
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
-    if (query.isEmpty || apiKey.isEmpty) {
+    if (query.isEmpty) {
       setState(() {
         _results = const [];
-        _error = apiKey.isEmpty ? '请先在设置中配置 TMDB API Key。' : null;
+        _error = null;
       });
       return;
     }
@@ -5751,55 +5845,112 @@ class _ManualTMDBMatchDialogState
       _searching = true;
       _error = null;
     });
+    var tmdbResults = const <Map<String, dynamic>>[];
+    var doubanResults = const <Map<String, dynamic>>[];
+    if (apiKey.isNotEmpty) {
+      try {
+        final result = await ref
+            .read(authProvider.notifier)
+            .api
+            .tmdbSearch(
+              query,
+              apiKey: apiKey,
+              mediaKind: mediaKind,
+              year: year,
+              proxyHost:
+                  StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+              proxyPort:
+                  StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+            );
+        tmdbResults =
+            (result['results'] as List?)
+                ?.whereType<Map>()
+                .map(Map<String, dynamic>.from)
+                .map((item) {
+                  final type =
+                      item['media_type']?.toString() ??
+                      (mediaKind == 'movie' || mediaKind == 'tv'
+                          ? mediaKind
+                          : null);
+                  if (type == null) return item;
+                  return {...item, 'media_type': type, '_source': 'tmdb'};
+                })
+                .where(
+                  (item) =>
+                      item['id'] != null &&
+                      (item['media_type'] == 'movie' ||
+                          item['media_type'] == 'tv'),
+                )
+                .toList() ??
+            const <Map<String, dynamic>>[];
+      } catch (error) {
+        if (mounted && requestSerial == _searchRequestSerial) {
+          _error = 'TMDB: $error';
+        }
+      }
+    }
     try {
-      final result = await ref
-          .read(authProvider.notifier)
-          .api
-          .tmdbSearch(
-            query,
-            apiKey: apiKey,
-            mediaKind: mediaKind,
-            year: year,
-            proxyHost:
-                StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
-            proxyPort:
-                StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
-          );
-      final values =
-          (result['results'] as List?)
-              ?.whereType<Map>()
-              .map(Map<String, dynamic>.from)
-              .map((item) {
-                // TMDB 的 movie/tv 专用搜索接口不会返回 media_type；
-                // 只有 multi 搜索才有该字段。补上用户选择的类型后再用
-                // 同一份候选渲染逻辑，避免把所有专用搜索结果过滤为空。
-                final type =
-                    item['media_type']?.toString() ??
-                    (mediaKind == 'movie' || mediaKind == 'tv'
-                        ? mediaKind
-                        : null);
-                if (type == null) return item;
-                return {...item, 'media_type': type};
-              })
-              .where(
-                (item) =>
-                    item['id'] != null &&
-                    (item['media_type'] == 'movie' ||
-                        item['media_type'] == 'tv'),
-              )
-              .toList() ??
-          const <Map<String, dynamic>>[];
-      if (mounted && requestSerial == _searchRequestSerial) {
-        setState(() => _results = values);
-      }
-    } catch (error) {
-      if (mounted && requestSerial == _searchRequestSerial) {
-        setState(() => _error = error.toString());
-      }
-    } finally {
-      if (mounted && requestSerial == _searchRequestSerial) {
-        setState(() => _searching = false);
-      }
+      doubanResults = await _doubanSearchFallback(query, mediaKind);
+    } catch (_) {}
+    final merged = <Map<String, dynamic>>[];
+    final seenIDs = <String>{};
+    for (final item in tmdbResults) {
+      final id = item['id']?.toString() ?? '';
+      if (id.isNotEmpty) seenIDs.add('tmdb:$id');
+      merged.add(item);
+    }
+    for (final item in doubanResults) {
+      final id = item['id']?.toString() ?? '';
+      if (id.isNotEmpty && seenIDs.contains('douban:$id')) continue;
+      merged.add(item);
+    }
+    if (mounted && requestSerial == _searchRequestSerial) {
+      setState(() {
+        _results = merged;
+        _searching = false;
+      });
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _doubanSearchFallback(
+    String query,
+    String mediaKind,
+  ) async {
+    try {
+      final api = ref.read(authProvider.notifier).api;
+      final result = await api.doubanSearch(query);
+      final items = result['items'];
+      if (items is! List || items.isEmpty) return const [];
+      return items
+          .whereType<Map>()
+          .map((raw) {
+            final target = raw['target'];
+            if (target is! Map) return null;
+            final candidate = Map<String, dynamic>.from(target);
+            final cardSubtitle =
+                (candidate['card_subtitle'] ?? '').toString();
+            final type = cardSubtitle.contains('集') ? 'tv' : 'movie';
+            if (mediaKind != 'auto' && type != mediaKind) return null;
+            candidate['media_type'] = type;
+            candidate['id'] = candidate['id']?.toString();
+            candidate['_source'] = 'douban';
+            final yearStr = candidate['year']?.toString() ?? '';
+            if (yearStr.length >= 4) {
+              candidate['release_date'] = '$yearStr-01-01';
+            }
+            candidate['poster_path'] = candidate['cover_url']?.toString();
+            candidate['overview'] = cardSubtitle;
+            final rating = candidate['rating'];
+            if (rating is Map) {
+              candidate['vote_average'] = rating['value'];
+              candidate['vote_count'] = rating['count'];
+            }
+            return candidate;
+          })
+          .whereType<Map<String, dynamic>>()
+          .toList();
+    } catch (_) {
+      return const [];
     }
   }
 
@@ -6021,7 +6172,19 @@ class _ManualTMDBMatchDialogState
                                 : '未知年份',
                           ),
                         ),
-                        if (tmdbID.isNotEmpty)
+                        if (candidate['_source'] == 'douban')
+                          ShadBadge(
+                            backgroundColor: const Color(0xFF22A559)
+                                .withValues(alpha: 0.12),
+                            child: const Text(
+                              '豆瓣',
+                              style: TextStyle(
+                                color: Color(0xFF22A559),
+                                fontSize: 11,
+                              ),
+                            ),
+                          )
+                        else if (tmdbID.isNotEmpty)
                           ShadBadge.outline(child: Text('TMDB $tmdbID')),
                       ],
                     ),
@@ -6067,6 +6230,11 @@ class _ManualTMDBMatchDialogState
 
   Future<void> _viewDetails(Map<String, dynamic> candidate) async {
     if (!mounted) return;
+    final source = candidate['_source']?.toString();
+    if (source == 'douban') {
+      setState(() => _detailCandidate = candidate);
+      return;
+    }
     final id = int.tryParse(candidate['id']?.toString() ?? '');
     final type = candidate['media_type']?.toString();
     final mediaKind = type == 'tv'
@@ -6076,7 +6244,7 @@ class _ManualTMDBMatchDialogState
         : null;
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
     if (id == null || mediaKind == null || apiKey.isEmpty) {
-      setState(() => _error = '无法获取该 TMDB 条目的详细信息');
+      setState(() => _detailCandidate = candidate);
       return;
     }
     final requestSerial = ++_detailRequestSerial;
