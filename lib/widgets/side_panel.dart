@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
@@ -5,6 +7,7 @@ import '../providers/file_provider.dart';
 import '../providers/auth_provider.dart';
 import '../models/cloud_file.dart';
 import 'app_dialog.dart';
+import 'confirm_dialog.dart';
 import 'share_link_dialog.dart';
 
 class SidePanel extends ConsumerWidget {
@@ -167,7 +170,7 @@ class SidePanel extends ConsumerWidget {
           const SizedBox(height: 24),
           _sectionTitle(context, '操作'),
           const SizedBox(height: 12),
-          _buildActionButtons(context, file, ref),
+          _buildActionButtons(context, [file], ref),
         ],
       ),
     );
@@ -207,7 +210,7 @@ class SidePanel extends ConsumerWidget {
           const SizedBox(height: 24),
           _sectionTitle(context, '批量操作'),
           const SizedBox(height: 12),
-          _buildActionButtons(context, files.first, ref),
+          _buildActionButtons(context, files, ref),
         ],
       ),
     );
@@ -215,16 +218,18 @@ class SidePanel extends ConsumerWidget {
 
   Widget _buildActionButtons(
     BuildContext context,
-    CloudFile file,
+    List<CloudFile> files,
     WidgetRef ref,
   ) {
     final theme = ShadTheme.of(context);
     final fp = ref.read(fileProvider.notifier);
+    final file = files.first;
+    final isSingle = files.length == 1;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
-        if (file.isDirectory)
+        if (isSingle && file.isDirectory)
           _actionChip(
             context,
             icon: LucideIcons.folderOpen,
@@ -235,38 +240,50 @@ class SidePanel extends ConsumerWidget {
           context,
           icon: LucideIcons.copy,
           label: '复制',
-          onTap: () => fp.copyToClipboard([file]),
+          onTap: () => fp.copyToClipboard(files),
         ),
         _actionChip(
           context,
           icon: LucideIcons.scissors,
           label: '剪切',
-          onTap: () => fp.cutToClipboard([file]),
+          onTap: () => fp.cutToClipboard(files),
         ),
-        _actionChip(
-          context,
-          icon: LucideIcons.download,
-          label: '下载',
-          onTap: () => fp.downloadFile(file),
-        ),
-        _actionChip(
-          context,
-          icon: LucideIcons.share2,
-          label: '分享',
-          onTap: () => showShareLinkDialog(
+        if (isSingle) ...[
+          _actionChip(
             context,
-            createLink: () => fp.createShare(file),
+            icon: LucideIcons.download,
+            label: '下载',
+            onTap: () => fp.downloadFile(file),
           ),
-        ),
+          _actionChip(
+            context,
+            icon: LucideIcons.share2,
+            label: '分享',
+            onTap: () => showShareLinkDialog(
+              context,
+              createLink: () => fp.createShare(file),
+            ),
+          ),
+        ],
         _actionChip(
           context,
           icon: LucideIcons.trash2,
           label: '删除',
           color: theme.colorScheme.destructive,
-          onTap: () => fp.deleteFiles([file]),
+          onTap: () => unawaited(_deleteFiles(context, ref, files)),
         ),
       ],
     );
+  }
+
+  Future<void> _deleteFiles(
+    BuildContext context,
+    WidgetRef ref,
+    List<CloudFile> files,
+  ) async {
+    final confirmed = await showDeleteFilesConfirmDialog(context, files);
+    if (!confirmed) return;
+    await ref.read(fileProvider.notifier).deleteFiles(files);
   }
 
   Widget _actionChip(

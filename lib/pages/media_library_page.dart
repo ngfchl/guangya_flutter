@@ -4789,29 +4789,15 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   Future<void> _deleteResourceFile(MediaLibraryItem resource) async {
     if (_removalBlocked) return;
     _removeMenuController.hide();
-    final confirmed = await showShadDialog<bool>(
-      context: context,
-      builder: (dialogContext) => ShadDialog(
-        title: const Text('删除云盘文件？'),
-        description: Text(resource.file.name),
-        actions: [
-          ShadButton.outline(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('取消'),
-          ),
-          ShadButton.destructive(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            leading: const Icon(LucideIcons.trash2, size: 16),
-            child: const Text('删除文件'),
-          ),
-        ],
-        child: const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text('将删除云盘中的实际文件，并清理引用该文件的媒体库条目。此操作无法通过重新扫描恢复。'),
-        ),
-      ),
+    final confirmed = await showDeleteFilesConfirmDialog(
+      context,
+      [resource.file],
+      title: '删除云盘文件？',
+      description: resource.file.name,
+      confirmText: '删除文件',
+      warning: '将删除云盘中的实际文件，并清理引用该文件的媒体库条目。此操作无法通过重新扫描恢复。',
     );
-    if (confirmed != true || !mounted || _removalBlocked) return;
+    if (!confirmed || !mounted || _removalBlocked) return;
 
     final removedKey = _mediaRecordKey(resource);
     final nextResource = _nextResourceAfterRemoving({removedKey});

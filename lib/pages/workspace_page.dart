@@ -21,6 +21,7 @@ import '../providers/media_library_provider.dart';
 import '../widgets/app_dialog.dart';
 import '../widgets/breadcrumb_bar.dart';
 import '../widgets/app_loading_indicator.dart';
+import '../widgets/confirm_dialog.dart';
 import '../widgets/file_list_tile.dart';
 import '../widgets/media_player_dialog.dart';
 import '../widgets/file_icon.dart';
@@ -492,32 +493,12 @@ Future<void> _confirmDeleteCloudFiles(
   Future<void> Function() onConfirm,
 ) async {
   if (files.isEmpty) return;
-  final confirmed = await showShadDialog<bool>(
-    context: context,
-    builder: (dialogContext) => ShadDialog(
-      title: Text('删除 ${files.length} 项？'),
-      description: Text(
-        files.length == 1
-            ? files.first.name
-            : '将删除所选的 ${files.length} 个文件或文件夹。',
-      ),
-      actions: [
-        ShadButton.outline(
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('取消'),
-        ),
-        ShadButton.destructive(
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('删除'),
-        ),
-      ],
-      child: const Padding(
-        padding: EdgeInsets.only(top: 8),
-        child: Text('此操作会将项目移入回收站。'),
-      ),
-    ),
+  final confirmed = await showDeleteFilesConfirmDialog(
+    context,
+    files,
+    warning: '此操作会将项目移入回收站。',
   );
-  if (confirmed == true) await onConfirm();
+  if (confirmed) await onConfirm();
 }
 
 class WorkspacePage extends ConsumerStatefulWidget {
@@ -2907,7 +2888,7 @@ class _CloudToolbar extends ConsumerWidget {
               icon: Icons.refresh_rounded,
               label: '刷新',
               compact: compact,
-              onTap: () => notifier.loadFiles(),
+              onTap: () => notifier.loadFiles(forceRefresh: true),
               grouped: true,
             ),
             _ToolbarButton(
@@ -3348,7 +3329,7 @@ class _PrimaryFilePane extends ConsumerWidget {
         child: _CurrentFolderFileSearch(value: state.currentListSearchQuery),
       ),
       child: RefreshIndicator(
-        onRefresh: () => notifier.loadFiles(),
+        onRefresh: () => notifier.loadFiles(forceRefresh: true),
         child: _FilePaneCollection(
           viewMode: viewMode,
           itemCount: files.length,
@@ -3409,7 +3390,11 @@ class _PrimaryFilePane extends ConsumerWidget {
               isRecycleItem: state.section == WorkspaceSection.recycle,
               onDelete: () => state.section == WorkspaceSection.recycle
                   ? notifier.restoreFiles([file])
-                  : notifier.deleteFiles([file]),
+                  : unawaited(
+                      _confirmDeleteCloudFiles(context, [
+                        file,
+                      ], () => notifier.deleteFiles([file])),
+                    ),
             );
             final item = _CloudFileDraggable(
               data: _DraggedCloudFiles(
@@ -3893,6 +3878,8 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     super.didUpdateWidget(oldWidget);
     if (!_samePath(_path, widget.initialPath)) {
       _restorePath(widget.initialPath, initialFiles: widget.initialFiles);
+    } else if (!_sameFiles(oldWidget.initialFiles, widget.initialFiles)) {
+      _applyInitialFiles(widget.initialFiles);
     }
   }
 
@@ -3901,6 +3888,35 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
         Iterable.generate(
           a.length,
         ).every((index) => a[index].id == b[index].id);
+  }
+
+  bool _sameFiles(List<CloudFile> a, List<CloudFile> b) {
+    return a.length == b.length &&
+        Iterable.generate(a.length).every((index) {
+          final left = a[index];
+          final right = b[index];
+          return left.id == right.id &&
+              left.name == right.name &&
+              left.isDirectory == right.isDirectory &&
+              left.size == right.size &&
+              left.modifiedAt == right.modifiedAt;
+        });
+  }
+
+  void _applyInitialFiles(List<CloudFile> files) {
+    if (_columns.isEmpty) return;
+    final targetIndex = _path.isEmpty ? 0 : _path.length;
+    if (targetIndex >= _columns.length) return;
+    ++_generation;
+    setState(() {
+      final columns = _columns.toList();
+      columns[targetIndex] = columns[targetIndex].copyWith(
+        files: files,
+        isLoading: false,
+        clearError: true,
+      );
+      _columns = columns;
+    });
   }
 
   Future<void> _restorePath(
@@ -5352,8 +5368,12 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               ),
               onCopyFastTransfer: () =>
                   ref.read(fileProvider.notifier).copyFastTransferJSON(file),
-              onDelete: () =>
-                  ref.read(fileProvider.notifier).deleteFiles([file]),
+              onDelete: () => unawaited(
+                _confirmDeleteCloudFiles(context, [file], () async {
+                  await ref.read(fileProvider.notifier).deleteFiles([file]);
+                  if (mounted) await _load(parentID: _currentParentID);
+                }),
+              ),
             );
             if (_viewMode == _FileViewMode.list) {
               return _CloudFileDraggable(

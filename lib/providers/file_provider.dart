@@ -241,17 +241,19 @@ class FileNotifier extends StateNotifier<FileState> {
     state = state.copyWith(currentListSearchQuery: normalized, selectedIDs: {});
   }
 
-  Future<void> loadFiles({String? parentID}) async {
+  Future<void> loadFiles({String? parentID, bool forceRefresh = false}) async {
     if (_api == null) return;
     final generation = ++_detailGeneration;
     final resolvedParentID = parentID ?? _currentParentID;
     final cacheKey =
         'v2|${state.section.name}|${resolvedParentID ?? 'root'}|${state.currentPage}|${state.pageSize}|${state.serverSort.name}|${state.serverSortDirection.name}';
-    final cached = _readCachedFiles(cacheKey);
-    if (cached != null) {
-      state = state.copyWith(files: cached, clearError: true);
-      unawaited(_enrichFolderSizes(cached, generation));
-      return;
+    if (!forceRefresh) {
+      final cached = _readCachedFiles(cacheKey);
+      if (cached != null) {
+        state = state.copyWith(files: cached, clearError: true);
+        unawaited(_enrichFolderSizes(cached, generation));
+        return;
+      }
     }
     state = state.copyWith(isLoading: true, clearError: true);
 

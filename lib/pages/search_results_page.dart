@@ -9,7 +9,7 @@ import '../models/cloud_file.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
-import '../widgets/app_dialog.dart';
+import '../widgets/confirm_dialog.dart';
 import '../widgets/file_list_tile.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/share_link_dialog.dart';
@@ -195,30 +195,8 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
 
   Future<void> _deleteFiles(List<CloudFile> files) async {
     if (files.isEmpty) return;
-    final confirmed = await showShadDialog<bool>(
-      context: context,
-      builder: (dialogContext) => ShadDialog(
-        title: Text('删除 ${files.length} 项？'),
-        description: Text(
-          files.length == 1 ? files.first.name : '将删除所选的 ${files.length} 个项目。',
-        ),
-        actions: [
-          ShadButton.outline(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('取消'),
-          ),
-          ShadButton.destructive(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('删除'),
-          ),
-        ],
-        child: const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text('项目会被移入回收站。'),
-        ),
-      ),
-    );
-    if (confirmed != true) return;
+    final confirmed = await showDeleteFilesConfirmDialog(context, files);
+    if (!confirmed) return;
     await ref.read(fileProvider.notifier).deleteFiles(files);
     if (!mounted) return;
     setState(() {
