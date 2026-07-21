@@ -671,6 +671,7 @@ class GuangyaAPI {
     int chunkSize = 5 * 1024 * 1024,
     void Function(int sent, int total)? onProgress,
     void Function()? onProcessing,
+    void Function(String taskID)? onTaskCreated,
     CancelToken? cancelToken,
   }) async {
     final name = file.uri.pathSegments.isEmpty
@@ -694,6 +695,7 @@ class GuangyaAPI {
         onProgress?.call(size, size);
         return token;
       }
+      onTaskCreated?.call(taskID);
       onProgress?.call(size, size);
       onProcessing?.call();
       return _waitForUploadCompletion(taskID, cancelToken: cancelToken);
@@ -702,6 +704,7 @@ class GuangyaAPI {
     token = await uploadToken(name: name, fileSize: size, parentID: parentID);
     final taskID = JsonDeep.findString(token, ['taskId', 'task_id']);
     if (taskID == null) throw Exception('响应缺少字段：taskId');
+    onTaskCreated?.call(taskID);
 
     final gcid = await _calculateFileGCID(file, size);
     final canFlash = await checkCanFlashUpload(taskID, gcid);
