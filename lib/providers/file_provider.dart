@@ -1114,6 +1114,68 @@ class FileNotifier extends StateNotifier<FileState> {
     return siblings.where((candidate) => candidate.isVideo).toList();
   }
 
+  /// For a disc root folder (BDMV/VIDEO_TS), list its children and return
+  /// the largest video file (typically the main feature .m2ts) that can be
+  /// streamed by the built-in player.  Returns `null` when the folder is
+  /// not a disc structure or no suitable file is found.
+  Future<CloudFile?> discMainVideoFile(CloudFile file) async {
+    if (!file.isDirectory) return null;
+    try {
+      final response = await _api!.fsFiles(
+        parentID: file.id,
+        page: 0,
+        pageSize: 200,
+        orderBy: 0,
+        sortType: 0,
+      );
+      final children = _extractFiles(response);
+      // Check if this is a disc root by looking for BDMV/VIDEO_TS among
+      // immediate children.
+      final childNames = children
+          .where((f) => f.isDirectory)
+          .map((f) => f.name.toUpperCase())
+          .toSet();
+      final isDiscRoot =
+          childNames.contains('BDMV') || childNames.contains('VIDEO_TS');
+      if (!isDiscRoot) return null;
+      // Recursively list BDMV/STREAM or VIDEO_TS children to find the
+      // largest transport stream.
+      final videoFiles = <CloudFile>[];
+      for (final child in children) {
+        if (!child.isDirectory) {
+          if (child.isVideo) videoFiles.add(child);
+          continue;
+        }
+        final upper = child.name.toUpperCase();
+        if (upper == 'STREAM' || upper == 'VIDEO_TS') {
+          try {
+            final subResponse = await _api!.fsFiles(
+              parentID: child.id,
+              page: 0,
+              pageSize: 500,
+              orderBy: 0,
+              sortType: 0,
+            );
+            final subChildren = _extractFiles(subResponse);
+            for (final sub in subChildren) {
+              if (sub.isVideo) videoFiles.add(sub);
+            }
+          } catch (_) {
+            // Ignore sub-directory listing failures.
+          }
+        }
+      }
+      if (videoFiles.isEmpty) return null;
+      // Return the largest file (main feature).
+      videoFiles.sort(
+        (a, b) => (b.size ?? 0).compareTo(a.size ?? 0),
+      );
+      return videoFiles.first;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _openRemoteFile(
     CloudFile file, {
     required String preparingMessage,

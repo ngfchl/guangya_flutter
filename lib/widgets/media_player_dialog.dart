@@ -168,9 +168,25 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
       // NativeVideoController applies mpv output configuration asynchronously.
       // Opening only after it is ready avoids racing the render context setup.
       await _controller.platform.future;
+      // For disc root folders (BDMV/VIDEO_TS), find the largest transport
+      // stream inside and play that instead of the directory itself.
+      var playFile = _currentFile;
+      if (playFile.isDirectory) {
+        final mainFile = await ref
+            .read(fileProvider.notifier)
+            .discMainVideoFile(playFile);
+        if (mainFile == null) {
+          _handlePlaybackFailure(
+            Exception('未找到可播放的光盘文件'),
+            '无法在光盘目录中找到可播放的视频文件',
+          );
+          return;
+        }
+        playFile = mainFile;
+      }
       final url = await ref
           .read(fileProvider.notifier)
-          .playbackUrl(_currentFile);
+          .playbackUrl(playFile);
       await _player.open(Media(url.toString()), play: true);
       _restorePlaybackPosition();
       final initialSubtitle = widget.initialSubtitle;
