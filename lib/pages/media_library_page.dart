@@ -82,6 +82,15 @@ String _mediaRecordKey(MediaLibraryItem item) => '${item.libraryID}:${item.id}';
 
 enum _MediaMetadataSource { tmdb, douban }
 
+enum _CloudBackupActionKind { restore, rename, delete }
+
+class _CloudBackupAction {
+  final _CloudBackupActionKind kind;
+  final CloudFile backup;
+
+  const _CloudBackupAction(this.kind, this.backup);
+}
+
 extension on _MediaMetadataSource {
   String get title => this == _MediaMetadataSource.tmdb ? 'TMDB' : '豆瓣';
 }
@@ -748,12 +757,17 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
     final active = progress?.isActive == true;
     final percentage = ((progress?.fraction ?? 0) * 100).round();
     final label = active
-        ? '${progress!.phase} $percentage%'
+        ? progress!.totalBytes > 0
+              ? '「$percentage%」${progress.phase}'
+                    '${progress.bytesPerSecond > 0 ? ' ${_formatRate(progress.bytesPerSecond)}' : ''}'
+              : progress.phase
         : progress?.error != null
-        ? progress!.phase.contains('恢复')
-              ? '数据恢复失败'
-              : '数据备份失败'
-        : '数据备份';
+        ? '❌ ${progress!.error!.length > 20 ? '${progress.error!.substring(0, 20)}…' : progress.error}'
+        : progress?.phase == '同步完成'
+        ? '✅ 备份完成'
+        : progress?.phase == '恢复完成'
+        ? '✅ 恢复完成'
+        : '备份设置';
     return ShadPopover(
       controller: _controller,
       popover: (_) => SizedBox(
@@ -780,7 +794,7 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${progress!.phase}原因',
+                      '失败原因',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -792,7 +806,7 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
                       constraints: const BoxConstraints(maxHeight: 96),
                       child: SingleChildScrollView(
                         child: SelectableText(
-                          progress.error!,
+                          progress?.error ?? '',
                           style: TextStyle(
                             fontSize: 11,
                             height: 1.35,
@@ -841,9 +855,19 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
               )
             : const Icon(Icons.storage_rounded, size: 16),
         trailing: const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
-        child: Text(label),
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     );
+  }
+
+  String _formatRate(double bytesPerSecond) {
+    if (bytesPerSecond >= 1024 * 1024) {
+      return '${(bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)}MB/s';
+    }
+    if (bytesPerSecond >= 1024) {
+      return '${(bytesPerSecond / 1024).toStringAsFixed(1)}KB/s';
+    }
+    return '${bytesPerSecond.round()}B/s';
   }
 
   Widget _item({
@@ -2747,35 +2771,54 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       }
       return;
     }
-    final selected = await showShadDialog<CloudFile>(
-      context: context,
-      builder: (dialogContext) => ShadDialog(
-        title: const Text('从云盘恢复刮削数据'),
-        description: const Text('选择一个 SQLite 备份，恢复会覆盖当前本地媒体库。'),
-        scrollable: false,
-        actions: [
-          ShadButton.outline(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('取消'),
-          ),
-        ],
-        child: SizedBox(
-          width: (MediaQuery.sizeOf(dialogContext).width - 32)
-              .clamp(300.0, 520.0)
-              .toDouble(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (var index = 0; index < backups.length; index++) ...[
-                _cloudBackupRestoreRow(dialogContext, backup: backups[index]),
-                if (index < backups.length - 1)
-                  const ShadSeparator.horizontal(),
+    CloudFile? selected;
+    while (mounted && selected == null) {
+      final action = await showShadDialog<_CloudBackupAction>(
+        context: context,
+        builder: (dialogContext) => ShadDialog(
+          title: Text('从云盘恢复（${backups.length} 个备份）'),
+          description: const Text('选择备份恢复，也可重命名或删除。'),
+          scrollable: false,
+          actions: [
+            ShadButton.outline(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+          ],
+          child: SizedBox(
+            width: (MediaQuery.sizeOf(dialogContext).width - 32)
+                .clamp(300.0, 560.0)
+                .toDouble(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var index = 0; index < backups.length; index++) ...[
+                  _cloudBackupRestoreRow(
+                    dialogContext,
+                    backup: backups[index],
+                    index: index + 1,
+                  ),
+                  if (index < backups.length - 1)
+                    const ShadSeparator.horizontal(),
+                ],
               ],
-            ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+      if (action == null || !mounted) return;
+      switch (action.kind) {
+        case _CloudBackupActionKind.restore:
+          selected = action.backup;
+        case _CloudBackupActionKind.rename:
+          await _renameCloudBackup(action.backup);
+          backups = await notifier.cloudScrapedBackups();
+        case _CloudBackupActionKind.delete:
+          await _deleteCloudBackup(action.backup);
+          backups = await notifier.cloudScrapedBackups();
+      }
+      if (backups.isEmpty && selected == null) return;
+    }
     if (selected == null || !mounted) return;
     final confirmed = await _confirmCloudBackupRestore(context, selected);
     if (!confirmed || !mounted) return;
@@ -2790,56 +2833,201 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   Widget _cloudBackupRestoreRow(
     BuildContext context, {
     required CloudFile backup,
+    int? index,
   }) {
     final cs = ShadTheme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) => Container(
         decoration: BoxDecoration(
-          color: cs.muted.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: cs.border),
+          color: cs.muted.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: cs.border.withValues(alpha: 0.6)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            ShadButton.ghost(
-              width: constraints.maxWidth,
-              expands: false,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              leading: Icon(
-                Icons.storage_rounded,
-                size: 18,
-                color: cs.mutedForeground,
-              ),
-              trailing: Icon(
-                Icons.chevron_right_rounded,
-                color: cs.mutedForeground,
-              ),
-              onPressed: () => Navigator.of(context).pop(backup),
-              child: Text(
-                backup.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: cs.foreground,
+            Row(
+              children: [
+                const SizedBox(width: 6),
+                if (index != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, right: 2),
+                    child: Text(
+                      '$index',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: cs.mutedForeground,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                Expanded(
+                  child: ShadButton.ghost(
+                    expands: false,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
+                    leading: Icon(
+                      Icons.dataset_rounded,
+                      size: 18,
+                      color: cs.primary,
+                    ),
+                    onPressed: () => Navigator.of(context).pop(
+                      _CloudBackupAction(
+                        _CloudBackupActionKind.restore,
+                        backup,
+                      ),
+                    ),
+                    child: Text(
+                      backup.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: cs.foreground,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+                ShadTooltip(
+                  builder: (_) => const Text('重命名'),
+                  child: ShadButton.ghost(
+                    width: 32,
+                    height: 32,
+                    padding: EdgeInsets.zero,
+                    onPressed: () => Navigator.of(context).pop(
+                      _CloudBackupAction(_CloudBackupActionKind.rename, backup),
+                    ),
+                    child: Icon(
+                      LucideIcons.pencil,
+                      size: 14,
+                      color: cs.mutedForeground,
+                    ),
+                  ),
+                ),
+                ShadTooltip(
+                  builder: (_) => const Text('删除'),
+                  child: ShadButton.ghost(
+                    width: 32,
+                    height: 32,
+                    padding: EdgeInsets.zero,
+                    foregroundColor: cs.destructive,
+                    onPressed: () => Navigator.of(context).pop(
+                      _CloudBackupAction(_CloudBackupActionKind.delete, backup),
+                    ),
+                    child: const Icon(LucideIcons.trash2, size: 14),
+                  ),
+                ),
+                const SizedBox(width: 4),
+              ],
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(38, 0, 10, 9),
-              child: Text(
-                '${backup.formattedSize} · ${backup.modifiedAt}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+              padding: EdgeInsets.fromLTRB(index != null ? 42 : 32, 0, 12, 8),
+              child: Row(
+                children: [
+                  Text(
+                    backup.formattedSize,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: cs.mutedForeground,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      backup.modifiedAt,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _renameCloudBackup(CloudFile backup) async {
+    final controller = TextEditingController(text: backup.name);
+    final value = await showShadDialog<String>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('重命名备份'),
+        description: Text(backup.formattedSize),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          ShadButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+        child: ShadInput(controller: controller, autofocus: true),
+      ),
+    );
+    controller.dispose();
+    if (!mounted || value == null || value == backup.name) return;
+    var name = value.trim();
+    if (name.isEmpty || name.contains('/') || name.contains('\\')) return;
+    if (!name.toLowerCase().endsWith('.sqlite3')) name = '$name.sqlite3';
+    try {
+      await ref
+          .read(mediaLibraryProvider.notifier)
+          .renameCloudScrapedBackup(backup, name);
+    } catch (error) {
+      if (!mounted) return;
+      ShadSonner.maybeOf(context)?.show(
+        ShadToast.destructive(
+          title: const Text('重命名失败'),
+          description: Text(error.toString()),
+        ),
+      );
+    }
+  }
+
+  Future<void> _deleteCloudBackup(CloudFile backup) async {
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('删除云盘备份？'),
+        description: Text(backup.name),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton.destructive(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            leading: const Icon(LucideIcons.trash2, size: 16),
+            child: const Text('删除'),
+          ),
+        ],
+        child: const Text('删除后无法通过该备份恢复。'),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await ref
+          .read(mediaLibraryProvider.notifier)
+          .deleteCloudScrapedBackup(backup);
+    } catch (error) {
+      if (!mounted) return;
+      ShadSonner.maybeOf(context)?.show(
+        ShadToast.destructive(
+          title: const Text('删除失败'),
+          description: Text(error.toString()),
+        ),
+      );
+    }
   }
 
   Future<void> _searchTMDB(String query) async {

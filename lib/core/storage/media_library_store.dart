@@ -386,17 +386,8 @@ class MediaLibraryStore {
     final before = await _databaseBytes(db.path);
     final migration = await _migrateArtworkBlobSchema(db);
     final removedArtwork = migration?.rows ?? 0;
-    try {
-      await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
-    } on DatabaseException catch (error) {
-      // sqflite_darwin can report the successful checkpoint result as
-      // "Code=0 not an error". It is not a failed database optimization.
-      final text = error.toString();
-      if (!text.contains('Code=0') || !text.contains('not an error')) {
-        rethrow;
-      }
-    }
-    await db.execute('PRAGMA optimize');
+    await _safePragma(db, 'PRAGMA wal_checkpoint(TRUNCATE)');
+    await _safePragma(db, 'PRAGMA optimize');
     await db.execute('VACUUM');
     final after = await _databaseBytes(db.path);
     return MediaLibraryStorageStats(
@@ -408,14 +399,25 @@ class MediaLibraryStore {
 
   Future<void> exportBackupTo(String destinationPath) async {
     final db = await _db;
-    try {
-      await db.execute('PRAGMA wal_checkpoint(FULL)');
-    } on DatabaseException catch (error) {
-      // sqflite_darwin may report a successful WAL checkpoint as code 0
-      // "not an error". The checkpoint has already completed in that case.
-      if (!error.toString().contains('not an error')) rethrow;
-    }
+    await _safePragma(db, 'PRAGMA wal_checkpoint(FULL)');
     await File(db.path).copy(destinationPath);
+  }
+
+  /// Execute a PRAGMA statement, swallowing sqflite_darwin errors that report
+  /// a successful operation as "Code=0 SQLITE_OK" / "not an error".
+  Future<void> _safePragma(Database db, String pragma) async {
+    try {
+      await db.rawQuery(pragma);
+    } on DatabaseException catch (error) {
+      final text = error.toString();
+      if (text.contains('SQLITE_OK') ||
+          text.contains('Code=0') ||
+          text.contains('not an error')) {
+        AppLogger.info('Storage', 'PRAGMA 成功（平台静默报告）：$pragma');
+        return;
+      }
+      rethrow;
+    }
   }
 
   Future<void> cacheFolderChildren(
@@ -1003,18 +1005,7 @@ class MediaLibraryStore {
       '开始压缩刮削数据库：共 $pages 页，空闲 $free 页，当前 ${FormatBytes.format(before)}',
     );
     try {
-      try {
-        await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
-      } on DatabaseException catch (error) {
-        // sqflite_darwin reports a completed checkpoint as Code=0 / "not an
-        // error" on some macOS and iOS versions. Continue to VACUUM.
-        final description = error.toString();
-        if (!description.contains('Code=0') ||
-            !description.contains('not an error')) {
-          rethrow;
-        }
-        AppLogger.info('Storage', '数据库日志已整理，继续压缩主数据库');
-      }
+      await _safePragma(db, 'PRAGMA wal_checkpoint(TRUNCATE)');
       await db.execute('VACUUM');
       final after = await _databaseBytes(db.path);
       AppLogger.info(

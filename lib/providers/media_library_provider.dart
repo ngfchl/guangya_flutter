@@ -231,6 +231,7 @@ class CloudBackupSyncProgress {
   final int transferredBytes;
   final int totalBytes;
   final bool isActive;
+  final double bytesPerSecond;
   final String? error;
 
   const CloudBackupSyncProgress({
@@ -239,11 +240,29 @@ class CloudBackupSyncProgress {
     required this.transferredBytes,
     required this.totalBytes,
     required this.isActive,
+    this.bytesPerSecond = 0,
     this.error,
   });
 
   double get fraction =>
       totalBytes <= 0 ? 0 : (transferredBytes / totalBytes).clamp(0.0, 1.0);
+}
+
+class _BackupTransferRate {
+  DateTime _lastTime = DateTime.now();
+  int _lastBytes = 0;
+  double _smoothed = 0;
+
+  double update(int bytes) {
+    final now = DateTime.now();
+    final seconds = now.difference(_lastTime).inMicroseconds / 1000000;
+    if (seconds < 0.2 || bytes < _lastBytes) return _smoothed;
+    final current = (bytes - _lastBytes) / seconds;
+    _smoothed = _smoothed == 0 ? current : (_smoothed * 0.7 + current * 0.3);
+    _lastTime = now;
+    _lastBytes = bytes;
+    return _smoothed;
+  }
 }
 
 class MediaLibraryState {
@@ -750,12 +769,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> exportScrapedDataToCloud() async {
     if (_api == null || state.isLoading || state.hasActiveScans) return;
-    _appendBackupLog('开始同步刮削数据到云盘');
+    _appendBackupLog('开始备份');
     state = state.copyWith(
       clearError: true,
       clearStatus: true,
       cloudBackupSync: const CloudBackupSyncProgress(
-        phase: '正在准备备份',
+        phase: '备份中',
         destination: '云盘根目录/小黄鸭备份',
         transferredBytes: 0,
         totalBytes: 0,
@@ -764,38 +783,27 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
     Directory? temporaryDirectory;
     try {
-      _appendBackupLog('正在确认云盘备份目录');
       final destination = await _resolveCloudBackupDestination();
-      state = state.copyWith(
-        cloudBackupSync: CloudBackupSyncProgress(
-          phase: '正在导出本地数据库',
-          destination: destination.path,
-          transferredBytes: 0,
-          totalBytes: 0,
-          isActive: true,
-        ),
-      );
-      _appendBackupLog('备份目录已就绪：${destination.path}');
       temporaryDirectory = await Directory.systemTemp.createTemp(
         'guangya-media-',
       );
       final backup = File(
         '${temporaryDirectory.path}/${_cloudBackupFileName(DateTime.now())}',
       );
-      _appendBackupLog('正在导出本地刮削数据库');
       await _store.exportBackupTo(backup.path);
       final size = await backup.length();
-      _appendBackupLog('本地数据库导出完成，大小 ${FormatBytes.format(size)}');
+      _appendBackupLog('已导出 ${FormatBytes.format(size)}，正在上传');
       state = state.copyWith(
         cloudBackupSync: CloudBackupSyncProgress(
-          phase: '正在上传备份',
+          phase: '备份中',
           destination: '${destination.path}/${backup.uri.pathSegments.last}',
           transferredBytes: 0,
           totalBytes: size,
           isActive: true,
         ),
       );
-      _appendBackupLog('正在上传备份到 ${destination.path}');
+      _appendBackupLog('上传到 ${destination.path}');
+      final uploadRate = _BackupTransferRate();
       await _api!.fileUpload(
         backup,
         parentID: destination.id,
@@ -803,12 +811,27 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         onProgress: (sent, total) {
           state = state.copyWith(
             cloudBackupSync: CloudBackupSyncProgress(
-              phase: '正在上传备份',
+              phase: '备份中',
               destination:
                   '${destination.path}/${backup.uri.pathSegments.last}',
               transferredBytes: sent,
               totalBytes: total,
               isActive: true,
+              bytesPerSecond: uploadRate.update(sent),
+            ),
+          );
+        },
+        onProcessing: () {
+          final current = state.cloudBackupSync;
+          state = state.copyWith(
+            cloudBackupSync: CloudBackupSyncProgress(
+              phase: '处理中',
+              destination:
+                  '${destination.path}/${backup.uri.pathSegments.last}',
+              transferredBytes: size,
+              totalBytes: size,
+              isActive: true,
+              bytesPerSecond: current?.bytesPerSecond ?? 0,
             ),
           );
         },
@@ -825,18 +848,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           isActive: false,
         ),
       );
-      _appendBackupLog('云盘备份同步完成：$uploadedPath');
+      _appendBackupLog('上传完成：$uploadedPath');
     } catch (error) {
-      final destination = state.cloudBackupSync?.destination ?? '云盘根目录/小黄鸭备份';
+      final current = state.cloudBackupSync;
+      final destination = current?.destination ?? '云盘根目录/小黄鸭备份';
       final reason = _backupFailureReason(error);
-      _appendBackupLog('同步到云盘失败：$reason', isError: true, error: error);
+      _appendBackupLog('备份失败：$reason', isError: true, error: error);
       state = state.copyWith(
         errorMessage: '同步到云盘失败：$reason',
         cloudBackupSync: CloudBackupSyncProgress(
           phase: '同步失败',
           destination: destination,
-          transferredBytes: 0,
-          totalBytes: 0,
+          transferredBytes: current?.transferredBytes ?? 0,
+          totalBytes: current?.totalBytes ?? 0,
           isActive: false,
           error: reason,
         ),
@@ -884,12 +908,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<List<CloudFile>> cloudScrapedBackups() async {
     if (_api == null) return const [];
-    _appendBackupLog('正在查找云盘中的 SQLite 备份');
+    _appendBackupLog('查找云盘备份');
     state = state.copyWith(
       clearError: true,
       clearStatus: true,
       cloudBackupSync: const CloudBackupSyncProgress(
-        phase: '正在查找云盘备份',
+        phase: '查找备份',
         destination: '云盘根目录/小黄鸭备份',
         transferredBytes: 0,
         totalBytes: 0,
@@ -899,10 +923,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     try {
       final destination = await _findCloudBackupDestination();
       if (destination == null) {
-        _appendBackupLog('未找到云盘备份目录，当前没有可恢复的备份');
+        _appendBackupLog('未找到备份目录');
         state = state.copyWith(
           cloudBackupSync: const CloudBackupSyncProgress(
-            phase: '未找到云盘备份',
+            phase: '未找到备份',
             destination: '云盘根目录/小黄鸭备份',
             transferredBytes: 0,
             totalBytes: 0,
@@ -911,7 +935,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         );
         return const [];
       }
-      _appendBackupLog('正在读取备份目录：${destination.path}');
+      _appendBackupLog('读取备份目录：${destination.path}');
       final response = await _api!.fsFiles(
         parentID: destination.id,
         pageSize: 1000,
@@ -921,15 +945,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               .where(
                 (file) =>
                     !file.isDirectory &&
-                    file.name.toLowerCase().endsWith('.sqlite3') &&
-                    file.name.startsWith('media-library-'),
+                    file.name.toLowerCase().endsWith('.sqlite3'),
               )
               .toList()
             ..sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
-      _appendBackupLog('云盘备份查找完成，找到 ${backups.length} 个文件');
+      _appendBackupLog('找到 ${backups.length} 个备份');
       state = state.copyWith(
         cloudBackupSync: const CloudBackupSyncProgress(
-          phase: '请选择要恢复的备份',
+          phase: '选择备份',
           destination: '云盘根目录/小黄鸭备份',
           transferredBytes: 0,
           totalBytes: 0,
@@ -955,15 +978,34 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
   }
 
+  Future<CloudFile> renameCloudScrapedBackup(
+    CloudFile backup,
+    String newName,
+  ) async {
+    if (_api == null) throw StateError('云盘服务未就绪');
+    await _api!.fsRename(backup.id, newName);
+    _appendBackupLog('备份已重命名：$newName');
+    return backup.copyWith(
+      name: newName,
+      cloudPath: _cloudPathWithName(backup.cloudPath, newName),
+    );
+  }
+
+  Future<void> deleteCloudScrapedBackup(CloudFile backup) async {
+    if (_api == null) throw StateError('云盘服务未就绪');
+    await _api!.fsDelete([backup.id]);
+    _appendBackupLog('已删除云盘备份：${backup.name}');
+  }
+
   Future<void> importScrapedDataFromCloud(CloudFile backup) async {
     if (_api == null || state.isLoading || state.hasActiveScans) return;
-    _appendBackupLog('开始从云盘恢复：${backup.name}');
+    _appendBackupLog('恢复：${backup.name}');
     state = state.copyWith(
       isLoading: true,
       clearError: true,
       clearStatus: true,
       cloudBackupSync: CloudBackupSyncProgress(
-        phase: '正在获取备份下载地址',
+        phase: '恢复中',
         destination: backup.name,
         transferredBytes: 0,
         totalBytes: backup.size ?? 0,
@@ -976,7 +1018,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final url = _findDownloadUrlDeep(download);
       if (url == null) {
         final fields = _describeDownloadResponse(download);
-        _appendBackupLog('下载地址解析失败，接口返回字段：$fields', isError: true);
+        _appendBackupLog('下载失败：$fields', isError: true);
         throw Exception('云盘未返回有效下载地址（字段：$fields）');
       }
       temporaryDirectory = await Directory.systemTemp.createTemp(
@@ -985,26 +1027,28 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final localBackup = File(
         '${temporaryDirectory.path}/media-library.sqlite3',
       );
-      _appendBackupLog('正在下载云盘备份：${backup.name}');
+      _appendBackupLog('下载备份：${backup.name}');
+      final downloadRate = _BackupTransferRate();
       await Dio().download(
         url,
         localBackup.path,
         onReceiveProgress: (received, total) {
           state = state.copyWith(
             cloudBackupSync: CloudBackupSyncProgress(
-              phase: '正在下载云盘备份',
+              phase: '恢复中',
               destination: backup.name,
               transferredBytes: received,
               totalBytes: total > 0 ? total : (backup.size ?? 0),
               isActive: true,
+              bytesPerSecond: downloadRate.update(received),
             ),
           );
         },
       );
-      _appendBackupLog('备份下载完成，正在覆盖本地数据库');
+      _appendBackupLog('下载完成，覆盖本地数据库');
       state = state.copyWith(
         cloudBackupSync: CloudBackupSyncProgress(
-          phase: '正在覆盖刮削数据',
+          phase: '处理中',
           destination: backup.name,
           transferredBytes: backup.size ?? 0,
           totalBytes: backup.size ?? 0,
@@ -1012,7 +1056,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         ),
       );
       await _applyImportedBackup(localBackup.path);
-      _appendBackupLog('云盘备份恢复完成：${backup.name}');
+      _appendBackupLog('恢复完成：${backup.name}');
       state = state.copyWith(
         cloudBackupSync: CloudBackupSyncProgress(
           phase: '恢复完成',
@@ -1023,6 +1067,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         ),
       );
     } catch (error) {
+      final current = state.cloudBackupSync;
       final reason = _backupFailureReason(error);
       _appendBackupLog('从云盘恢复失败：$reason', isError: true, error: error);
       state = state.copyWith(
@@ -1030,8 +1075,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         cloudBackupSync: CloudBackupSyncProgress(
           phase: '恢复失败',
           destination: backup.name,
-          transferredBytes: 0,
-          totalBytes: backup.size ?? 0,
+          transferredBytes: current?.transferredBytes ?? 0,
+          totalBytes: current?.totalBytes ?? (backup.size ?? 0),
           isActive: false,
           error: reason,
         ),
@@ -2456,9 +2501,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   String _backupFailureReason(Object error) {
     final value = error.toString().trim();
-    return value
+    var reason = value
         .replaceFirst(RegExp(r'^Exception:\s*'), '')
         .replaceFirst(RegExp(r'^DioException \[[^\]]+\]:\s*'), '网络请求失败：');
+    // Deduplicate identical prefix before colon (e.g. "上传中：上传中" → "上传中")
+    final colonIndex = reason.indexOf('：');
+    if (colonIndex > 0) {
+      final prefix = reason.substring(0, colonIndex).trim();
+      final suffix = reason.substring(colonIndex + 1).trim();
+      if (prefix.isNotEmpty && suffix.isNotEmpty && prefix == suffix) {
+        reason = prefix;
+      }
+    }
+    return reason;
   }
 
   String _cloudBackupFileName(DateTime value) {
@@ -2503,11 +2558,30 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     if (normalized.isEmpty) return const [];
     final cached = _searchResultsCache[normalized];
     if (cached != null) return cached;
+    final allItems = await _loadAllItems();
     final results =
-        (await _loadAllItems()).where((item) {
-          return item.title.toLowerCase().contains(normalized) ||
+        allItems.where((item) {
+          if (item.title.toLowerCase().contains(normalized) ||
               item.file.name.toLowerCase().contains(normalized) ||
-              item.file.cloudPath.toLowerCase().contains(normalized);
+              item.file.cloudPath.toLowerCase().contains(normalized)) {
+            return true;
+          }
+          if (item.tmdbID != null) {
+            final tmdbQuery = normalized.replaceAll(RegExp(r'^tmdb[:\s]+'), '');
+            if (item.tmdbID.toString() == tmdbQuery) return true;
+          }
+          if (item.imdbID != null && item.imdbID!.isNotEmpty) {
+            final imdbQuery = normalized.replaceAll(RegExp(r'^imdb[:\s]+'), '');
+            if (item.imdbID!.toLowerCase() == imdbQuery) return true;
+          }
+          if (item.doubanID != null && item.doubanID!.isNotEmpty) {
+            final doubanQuery = normalized.replaceAll(
+              RegExp(r'^douban[:\s]+'),
+              '',
+            );
+            if (item.doubanID == doubanQuery) return true;
+          }
+          return false;
         }).toList()..sort(
           (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
         );

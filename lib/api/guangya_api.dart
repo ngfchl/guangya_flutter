@@ -670,16 +670,18 @@ class GuangyaAPI {
     String contentType = 'application/octet-stream',
     int chunkSize = 5 * 1024 * 1024,
     void Function(int sent, int total)? onProgress,
+    void Function()? onProcessing,
+    CancelToken? cancelToken,
   }) async {
-    final bytes = await file.readAsBytes();
     final name = file.uri.pathSegments.isEmpty
         ? file.path.split(Platform.pathSeparator).last
         : Uri.decodeComponent(file.uri.pathSegments.last);
-    final size = bytes.length;
+    final size = await file.length();
     onProgress?.call(0, size);
 
     Map<String, dynamic> token;
     if (size < 1024 * 1024) {
+      final bytes = await file.readAsBytes();
       final md5Base64 = base64Encode(md5.convert(bytes).bytes);
       token = await uploadToken(
         name: name,
@@ -692,43 +694,81 @@ class GuangyaAPI {
         onProgress?.call(size, size);
         return token;
       }
-      final result = await uploadInfo(taskID);
       onProgress?.call(size, size);
-      return result;
+      onProcessing?.call();
+      return _waitForUploadCompletion(taskID, cancelToken: cancelToken);
     }
 
     token = await uploadToken(name: name, fileSize: size, parentID: parentID);
     final taskID = JsonDeep.findString(token, ['taskId', 'task_id']);
     if (taskID == null) throw Exception('响应缺少字段：taskId');
 
-    final gcid = _calculateGCID(bytes);
+    final gcid = await _calculateFileGCID(file, size);
     final canFlash = await checkCanFlashUpload(taskID, gcid);
     if (JsonDeep.findBool(canFlash, ['canFlashUpload', 'can_flash_upload']) ==
         true) {
-      final result = await uploadInfo(taskID);
       onProgress?.call(size, size);
-      return result;
+      onProcessing?.call();
+      return _waitForUploadCompletion(taskID, cancelToken: cancelToken);
     }
 
     final tokenData = JsonDeep.findMap(token, ['data']) ?? token;
-    await _cdnUpload(
-      bytes,
+    await _cdnUploadFile(
+      file,
+      fileSize: size,
       tokenData: tokenData,
       contentType: contentType,
       chunkSize: chunkSize,
       onProgress: onProgress,
+      cancelToken: cancelToken,
     );
-    final result = await uploadInfo(taskID);
     onProgress?.call(size, size);
-    return result;
+    onProcessing?.call();
+    return _waitForUploadCompletion(taskID, cancelToken: cancelToken);
   }
 
-  Future<String> _cdnUpload(
-    List<int> bytes, {
+  Future<Map<String, dynamic>> _waitForUploadCompletion(
+    String taskID, {
+    CancelToken? cancelToken,
+  }) async {
+    const maxAttempts = 90; // 180s max wait (90 x 2s)
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      if (cancelToken?.isCancelled == true) {
+        throw Exception('上传已取消');
+      }
+      try {
+        final result = await uploadInfo(taskID);
+        final message = extractHttpMessage(result)?.toLowerCase() ?? '';
+        if (!_isUploadProcessingMessage(message)) return result;
+      } on ApiException catch (error) {
+        if (!_isUploadProcessingMessage(error.message.toLowerCase())) rethrow;
+      }
+      if (attempt + 1 < maxAttempts) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
+    }
+    throw Exception('云端处理上传文件超时（已等待180秒）');
+  }
+
+  bool _isUploadProcessingMessage(String message) {
+    return message.contains('文件上传中') ||
+        message.contains('上传处理中') ||
+        message.contains('正在上传') ||
+        message.contains('processing') ||
+        message.contains('pending') ||
+        message.contains('等待处理') ||
+        message.contains('正在处理') ||
+        message.contains('file is being processed');
+  }
+
+  Future<String> _cdnUploadFile(
+    File file, {
+    required int fileSize,
     required Map<String, dynamic> tokenData,
     required String contentType,
     required int chunkSize,
     void Function(int sent, int total)? onProgress,
+    CancelToken? cancelToken,
   }) async {
     final creds =
         JsonDeep.findMap(tokenData, ['creds']) ?? const <String, dynamic>{};
@@ -763,36 +803,46 @@ class GuangyaAPI {
       secret: secret,
       sessionToken: sessionToken,
       subResources: {'uploads': ''},
+      cancelToken: cancelToken,
     );
     final uploadID = _xmlValue(init.body, 'UploadId');
     if (uploadID == null) throw Exception('响应缺少字段：UploadId');
 
     final parts = <MapEntry<int, String>>[];
-    var offset = 0;
-    var number = 1;
-    while (offset < bytes.length) {
-      final end = min(offset + chunkSize, bytes.length);
-      final chunk = bytes.sublist(offset, end);
-      final contentMD5 = base64Encode(md5.convert(chunk).bytes);
-      final response = await _ossRequest(
-        method: 'PUT',
-        url: objectURL,
-        bucket: bucket,
-        objectKey: objectPath,
-        accessKeyID: accessKeyID,
-        secret: secret,
-        sessionToken: sessionToken,
-        content: chunk,
-        contentType: 'application/octet-stream',
-        contentMD5: contentMD5,
-        subResources: {'partNumber': '$number', 'uploadId': uploadID},
-      );
-      parts.add(
-        MapEntry(number, response.headers['etag']?.replaceAll('"', '') ?? ''),
-      );
-      offset = end;
-      onProgress?.call(offset, bytes.length);
-      number += 1;
+    final input = await file.open();
+    try {
+      var offset = 0;
+      var number = 1;
+      while (offset < fileSize) {
+        if (cancelToken?.isCancelled == true) {
+          throw Exception('上传已取消');
+        }
+        final chunk = await input.read(min(chunkSize, fileSize - offset));
+        if (chunk.isEmpty) throw Exception('读取上传文件失败：文件提前结束');
+        final contentMD5 = base64Encode(md5.convert(chunk).bytes);
+        final response = await _ossRequest(
+          method: 'PUT',
+          url: objectURL,
+          bucket: bucket,
+          objectKey: objectPath,
+          accessKeyID: accessKeyID,
+          secret: secret,
+          sessionToken: sessionToken,
+          content: chunk,
+          contentType: 'application/octet-stream',
+          contentMD5: contentMD5,
+          subResources: {'partNumber': '$number', 'uploadId': uploadID},
+          cancelToken: cancelToken,
+        );
+        parts.add(
+          MapEntry(number, response.headers['etag']?.replaceAll('"', '') ?? ''),
+        );
+        offset += chunk.length;
+        onProgress?.call(offset, fileSize);
+        number += 1;
+      }
+    } finally {
+      await input.close();
     }
 
     final xml =
@@ -810,6 +860,7 @@ class GuangyaAPI {
       contentType: 'application/xml',
       contentMD5: base64Encode(md5.convert(xmlBytes).bytes),
       subResources: {'uploadId': uploadID},
+      cancelToken: cancelToken,
     );
     return _xmlValue(result.body, 'ETag') ?? '';
   }
@@ -826,6 +877,7 @@ class GuangyaAPI {
     String contentType = '',
     String contentMD5 = '',
     Map<String, String> subResources = const {},
+    CancelToken? cancelToken,
   }) async {
     final date = HttpDate.format(DateTime.now().toUtc());
     final canonicalResource =
@@ -855,8 +907,10 @@ class GuangyaAPI {
           'x-oss-security-token': sessionToken,
           if (contentType.isNotEmpty) 'Content-Type': contentType,
           if (contentMD5.isNotEmpty) 'Content-MD5': contentMD5,
+          if (content.isNotEmpty) 'Content-Length': content.length,
         },
       ),
+      cancelToken: cancelToken,
     );
     final status = response.statusCode ?? 0;
     if (status < 200 || status >= 300) {
@@ -1006,8 +1060,7 @@ class GuangyaAPI {
     return base64Encode(bytes);
   }
 
-  static String _calculateGCID(List<int> bytes) {
-    final length = bytes.length;
+  static Future<String> _calculateFileGCID(File file, int length) async {
     final chunkSize = length <= 0x8000000
         ? 262144
         : length <= 0x10000000
@@ -1016,9 +1069,17 @@ class GuangyaAPI {
         ? 1048576
         : 2097152;
     final hashes = <int>[];
-    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-      final end = min(offset + chunkSize, bytes.length);
-      hashes.addAll(sha1.convert(bytes.sublist(offset, end)).bytes);
+    final input = await file.open();
+    try {
+      var offset = 0;
+      while (offset < length) {
+        final chunk = await input.read(min(chunkSize, length - offset));
+        if (chunk.isEmpty) throw Exception('读取上传文件失败：文件提前结束');
+        hashes.addAll(sha1.convert(chunk).bytes);
+        offset += chunk.length;
+      }
+    } finally {
+      await input.close();
     }
     return sha1
         .convert(hashes)
@@ -1038,11 +1099,7 @@ class GuangyaAPI {
       'count': count.toString(),
       'apikey': '0ac44ae016490db2204ce0a042db2916',
     };
-    final uri = Uri.https(
-      'frodo.douban.com',
-      '/api/v2/search/movie',
-      params,
-    );
+    final uri = Uri.https('frodo.douban.com', '/api/v2/search/movie', params);
     const maxAttempts = 2;
     // Douban Frodo API does not need the app's auth token.
     // Create a clean Dio instance without interceptors.
