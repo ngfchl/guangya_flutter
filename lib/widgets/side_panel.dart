@@ -114,7 +114,7 @@ class SidePanel extends ConsumerWidget {
                   );
                 },
                 leading: const Icon(LucideIcons.trash2, size: 16),
-                child: const Text('清空回收站'),
+                child: const Text('清空'),
               ),
             ),
           ],

@@ -364,7 +364,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
               ? _showEpisodesSheet
               : () => setState(() => _showEpisodes = !_showEpisodes),
           leading: const Icon(Icons.format_list_bulleted_rounded, size: 16),
-          child: const Text('同目录剧集'),
+          child: const Text('剧集'),
         ),
         ShadButton.outline(
           onPressed: () => Navigator.of(context).pop(),
@@ -727,7 +727,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
               if (mounted) setState(() {});
             },
             leading: const Icon(Icons.search_rounded, size: 15),
-            child: const Text('搜索同目录字幕'),
+            child: const Text('搜字幕'),
           ),
           ShadButton.ghost(
             size: ShadButtonSize.sm,
@@ -741,7 +741,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
               await widget.onLoadLocalSubtitle();
             },
             leading: const Icon(Icons.folder_open_rounded, size: 15),
-            child: const Text('加载本地字幕'),
+            child: const Text('加字幕'),
           ),
         ],
       ),
@@ -1054,7 +1054,7 @@ class _ExternalPlayerDialogState extends ConsumerState<ExternalPlayerDialog> {
                       Navigator.of(context).pop();
                     },
                     leading: const Icon(Icons.play_arrow_rounded, size: 16),
-                    child: const Text('使用系统默认播放器'),
+                    child: const Text('系统播放'),
                   ),
                 ],
               );

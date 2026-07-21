@@ -272,7 +272,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         ShadButton.outline(
           onPressed: () => ref.read(authProvider.notifier).initQRLogin(),
           leading: const Icon(LucideIcons.refreshCw, size: 16),
-          child: const Text('刷新二维码'),
+          child: const Text('刷新'),
         ),
       ],
     );

@@ -121,7 +121,7 @@ class _FileListTileState extends State<FileListTile> {
           ),
           ShadButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('确认重命名'),
+            child: const Text('确认'),
           ),
         ],
       ),

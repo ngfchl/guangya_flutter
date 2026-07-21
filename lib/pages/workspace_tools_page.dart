@@ -538,7 +538,7 @@ class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
           ),
           ShadButton.destructive(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('删除已选项'),
+            child: const Text('删除'),
           ),
         ],
         child: const Padding(
@@ -613,7 +613,7 @@ class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
             child: ShadButton.destructive(
               size: ShadButtonSize.sm,
               onPressed: _selectedIDs.isEmpty ? null : _confirmDelete,
-              child: Text('删除已选 ${_selectedIDs.length} 项'),
+              child: Text('删除 ${_selectedIDs.length}'),
             ),
           ),
         ],
@@ -644,7 +644,7 @@ class _CleanupList extends ConsumerWidget {
           ),
           ShadButton.destructive(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('重新校验并删除'),
+            child: const Text('复检删除'),
           ),
         ],
         child: const Padding(
@@ -788,7 +788,7 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
           ),
           ShadButton.destructive(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('删除已选项'),
+            child: const Text('删除'),
           ),
         ],
         child: const Padding(
@@ -829,7 +829,7 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
               ShadButton.destructive(
                 size: ShadButtonSize.sm,
                 onPressed: selectedCount == 0 ? null : _confirmDelete,
-                child: Text('删除已选 $selectedCount 项'),
+                child: Text('删除 $selectedCount'),
               ),
             ],
           ),
@@ -1131,7 +1131,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
           ),
           ShadButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('应用重命名'),
+            child: const Text('应用'),
           ),
         ],
         child: const Padding(
@@ -1273,13 +1273,13 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                 ),
                 ShadCheckbox(
                   value: _preserveExtension,
-                  label: const Text('保留扩展名'),
+                  label: const Text('保留后缀'),
                   onChanged: (value) =>
                       setState(() => _preserveExtension = value),
                 ),
                 ShadCheckbox(
                   value: _recursive,
-                  label: const Text('包含子文件夹'),
+                  label: const Text('含子目录'),
                   onChanged: _loadingCandidates
                       ? null
                       : (value) async {
@@ -1406,7 +1406,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                                     applicable.map((item) => item.file.id),
                                   );
                               }),
-                        child: const Text('全选可应用项'),
+                        child: const Text('全选'),
                       ),
                       ShadButton.ghost(
                         onPressed: _running
@@ -1658,7 +1658,7 @@ class _BatchRenameFolderPickerState
             context,
           ).pop(_BatchRenameFolderSelection(_parentID, _label)),
           leading: const Icon(Icons.check_rounded, size: 16),
-          child: const Text('使用此目录'),
+          child: const Text('使用目录'),
         ),
       ],
       child: Material(
@@ -1836,7 +1836,7 @@ class _BatchRenameRuleRow extends StatelessWidget {
           if (supportsCase)
             ShadCheckbox(
               value: rule.ignoreCase,
-              label: const Text('忽略大小写'),
+              label: const Text('忽略大小'),
               onChanged: (value) => onChanged(rule.copyWith(ignoreCase: value)),
             ),
           _RenameRuleIconButton(
@@ -2500,7 +2500,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       });
       _sessionPersistTimer?.cancel();
       _sessionPersistTimer = null;
-      await _persistSession();
+      unawaited(_persistSession().catchError((_) {}));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -2816,19 +2816,19 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                           children: [
                             _fastTransferSourceButton(
                               cs,
-                              title: '粘贴 JSON',
+                              title: '粘贴',
                               icon: Icons.content_paste_rounded,
                               onPressed: _pasteJSON,
                             ),
                             _fastTransferSourceButton(
                               cs,
-                              title: '选择 JSON',
+                              title: '选择',
                               icon: Icons.folder_open_rounded,
                               onPressed: _chooseJSONFile,
                             ),
                             _fastTransferSourceButton(
                               cs,
-                              title: '本地生成 JSON',
+                              title: '生成',
                               icon: Icons.fingerprint_rounded,
                               onPressed: () =>
                                   setState(() => _generateMode = true),
@@ -2987,21 +2987,21 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       ShadButton.outline(
         onPressed: _generating || _running ? null : _generateLocalFolderJson,
         leading: const Icon(Icons.create_new_folder_outlined, size: 16),
-        child: const Text('选择文件夹'),
+        child: const Text('选文件夹'),
       ),
       ShadButton.outline(
         onPressed: _generating || _json.text.trim().isEmpty
             ? null
             : _copyGeneratedJSON,
         leading: const Icon(Icons.copy_rounded, size: 16),
-        child: const Text('复制 JSON'),
+        child: const Text('复制'),
       ),
       ShadButton(
         onPressed: _generating || _json.text.trim().isEmpty
             ? null
             : _exportGeneratedJSON,
         leading: const Icon(Icons.download_rounded, size: 16),
-        child: const Text('导出 JSON'),
+        child: const Text('导出'),
       ),
       _buildTransferRunControl(pendingEntries),
     ]);
@@ -3034,7 +3034,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     return ShadButton(
       onPressed: canStart ? _startPending : null,
       leading: const Icon(Icons.bolt_rounded, size: 16),
-      child: Text('开始秒传 ${pendingEntries.length} 项'),
+      child: Text('秒传 ${pendingEntries.length}'),
     );
   }
 
@@ -3211,7 +3211,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                   size: ShadButtonSize.sm,
                   onPressed: _running ? null : _retryFailed,
                   leading: const Icon(Icons.refresh_rounded, size: 15),
-                  child: const Text('重传失败项'),
+                  child: const Text('重传'),
                 ),
               ),
             ],
@@ -3541,12 +3541,12 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                 ButtonSegment(
                   value: false,
                   icon: Icon(Icons.data_object_rounded, size: 16),
-                  label: Text('JSON 秒传'),
+                  label: Text('秒传'),
                 ),
                 ButtonSegment(
                   value: true,
                   icon: Icon(Icons.fingerprint_rounded, size: 16),
-                  label: Text('本地生成 JSON'),
+                  label: Text('生成'),
                 ),
               ],
               selected: {_generateMode},
@@ -4252,7 +4252,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                                 ? null
                                 : () => setState(() => _stopRequested = true),
                             leading: const Icon(Icons.stop_rounded, size: 16),
-                            child: const Text('完成当前项后停止'),
+                            child: const Text('停止'),
                           )
                         else
                           ShadButton(
@@ -4261,7 +4261,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                               Icons.drive_file_move_rounded,
                               size: 16,
                             ),
-                            child: Text('整理 $selectedCount 项'),
+                            child: Text('整理 $selectedCount'),
                           ),
                       ],
                     ),
@@ -4799,7 +4799,7 @@ class _CategoryRuleDialogState extends State<_CategoryRuleDialog> {
               alignment: Alignment.centerLeft,
               child: ShadCheckbox(
                 value: _isFallback,
-                label: const Text('设为默认分类'),
+                label: const Text('默认分类'),
                 sublabel: const Text('在其它分类均未匹配时使用'),
                 onChanged: (value) => setState(() => _isFallback = value),
               ),

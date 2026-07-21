@@ -307,7 +307,7 @@ class _CloudFolderDestinationPickerState
           onPressed: () => Navigator.of(
             context,
           ).pop(_CloudFolderDestination(_path.isEmpty ? null : _path.last.id)),
-          child: const Text('选择此文件夹'),
+          child: const Text('选择'),
         ),
       ],
       child: SizedBox(

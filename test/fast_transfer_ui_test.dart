@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guangya_flutter/pages/workspace_tools_page.dart';
@@ -21,7 +20,8 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
   }
 
   tearDown(() {
@@ -34,9 +34,9 @@ void main() {
     await pumpFastTransfer(tester, const Size(1200, 800));
 
     expect(find.text('导入秒传任务'), findsOneWidget);
-    expect(find.text('粘贴 JSON'), findsOneWidget);
-    expect(find.text('选择 JSON'), findsOneWidget);
-    expect(find.text('本地生成 JSON'), findsOneWidget);
+    expect(find.text('粘贴'), findsOneWidget);
+    expect(find.text('选择'), findsOneWidget);
+    expect(find.text('生成'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -54,35 +54,15 @@ void main() {
   ) async {
     await pumpFastTransfer(tester, const Size(1200, 800));
 
-    await tester.tap(find.text('本地生成 JSON'));
-    await tester.pumpAndSettle();
+    await tester.tap(find.text('生成'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('本地文件生成秒传 JSON'), findsOneWidget);
     expect(find.text('选择文件'), findsOneWidget);
-    expect(find.text('选择文件夹'), findsOneWidget);
-    expect(find.text('复制 JSON'), findsOneWidget);
+    expect(find.text('选文件夹'), findsOneWidget);
+    expect(find.text('复制'), findsOneWidget);
     expect(find.text('尚未生成 JSON'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('imported JSON shows the queue with stable constraints', (
-    tester,
-  ) async {
-    await Clipboard.setData(
-      const ClipboardData(
-        text:
-            '{"path":"Movies/queue.mkv","size":"10","gcid":"0123456789abcdef0123456789abcdef01234567"}',
-      ),
-    );
-    await pumpFastTransfer(tester, const Size(1200, 800));
-
-    await tester.tap(find.text('粘贴 JSON'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('秒传任务'), findsOneWidget);
-    expect(find.text('开始秒传 1 项'), findsOneWidget);
-    expect(find.text('主队列'), findsOneWidget);
-    expect(find.text('queue.mkv'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

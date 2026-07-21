@@ -375,7 +375,7 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                           Icons.drive_file_rename_outline_rounded,
                           size: 16,
                         ),
-                        child: const Text('批量重命名'),
+                        child: const Text('重命名'),
                       ),
                       ShadButton.ghost(
                         size: ShadButtonSize.sm,
@@ -722,7 +722,7 @@ class _MediaSearchResultsPageState
                                 builder: (_) =>
                                     ExternalPlayerDialog(file: item.file),
                               ),
-                              child: const Text('外部播放器'),
+                              child: const Text('外部播放'),
                             ),
                             ShadContextMenuItem.inset(
                               leading: const Icon(
@@ -742,7 +742,7 @@ class _MediaSearchResultsPageState
                               onPressed: () => ref
                                   .read(mediaLibraryProvider.notifier)
                                   .scanSelectedLibrary(),
-                              child: const Text('重新扫描媒体库'),
+                              child: const Text('重扫'),
                             ),
                           ],
                           child: Material(

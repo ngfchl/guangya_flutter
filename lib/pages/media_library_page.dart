@@ -821,7 +821,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         size: ShadButtonSize.sm,
         onPressed: () => _showCreateLibraryDialog(context, ref),
         leading: const Icon(Icons.add_rounded, size: 16),
-        child: const Text('新建媒体库'),
+        child: const Text('新建'),
       ),
       ShadTooltip(
         builder: (_) => const Text('查看所有媒体库的刮削任务'),
@@ -943,7 +943,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           ShadButton.outline(
             onPressed: () =>
                 MediaLibraryPage.showManagementDialog(context, ref),
-            child: const Text('打开媒体库管理'),
+            child: const Text('管理'),
           ),
         ],
       ),
@@ -1117,7 +1117,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 size: ShadButtonSize.sm,
                 onPressed: () => setState(() => _activeCollectionKey = null),
                 leading: const Icon(Icons.arrow_back_rounded, size: 16),
-                child: Text('返回合集：${activeCollection.name}'),
+                child: Text('返回合集'),
               ),
               const SizedBox(height: 8),
               Expanded(child: wallContent),
@@ -2668,7 +2668,7 @@ class _MediaLibraryManagementDialogState
                         ref,
                       ),
                   leading: const Icon(Icons.add_rounded, size: 16),
-                  child: const Text('新建媒体库'),
+                  child: const Text('新建'),
                 ),
                 const SizedBox(width: 8),
                 _BackupActionsMenu(
@@ -3257,7 +3257,7 @@ class _CreateMediaLibraryDialogState
               ShadButton(
                 onPressed: _useBrowserFolder,
                 leading: const Icon(Icons.check_rounded, size: 16),
-                child: const Text('使用此目录'),
+                child: const Text('使用目录'),
               ),
             ]
           : [
@@ -3399,7 +3399,7 @@ class _CreateMediaLibraryDialogState
             alignment: Alignment.centerLeft,
             child: ShadCheckbox(
               value: _recursive,
-              label: const Text('递归扫描所有子目录'),
+              label: const Text('递归扫描'),
               sublabel: const Text('关闭后仅扫描当前目录中的视频文件'),
               onChanged: (value) => setState(() => _recursive = value),
             ),
@@ -5525,7 +5525,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           ShadContextMenuItem.inset(
             leading: const Icon(LucideIcons.monitorPlay, size: 16),
             onPressed: () => widget.onExternalPlay(resource),
-            child: const Text('外部播放器'),
+            child: const Text('外部播放'),
           ),
           ShadContextMenuItem.inset(
             leading: const Icon(LucideIcons.download, size: 16),
