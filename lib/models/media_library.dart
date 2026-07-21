@@ -296,14 +296,18 @@ class MediaLibraryItem {
 
   String get id => file.id;
   String get year => releaseDate.length >= 4 ? releaseDate.substring(0, 4) : '';
-  bool get isMatched => mediaKind != null && (tmdbID != null || doubanID != null);
+  bool get isMatched =>
+      mediaKind != null && (tmdbID != null || doubanID != null);
 
   MediaLibraryItem copyWith({
+    String? libraryID,
     CloudFile? file,
     int? tmdbID,
     bool clearTMDBID = false,
     String? doubanID,
+    bool clearDoubanID = false,
     String? imdbID,
+    bool clearImdbID = false,
     String? title,
     String? originalTitle,
     TMDBMediaKind? mediaKind,
@@ -315,15 +319,17 @@ class MediaLibraryItem {
     bool? hasChineseAudio,
     bool? hasChineseSubtitle,
     int? collectionID,
+    bool clearCollectionID = false,
     String? collectionName,
+    bool clearCollectionName = false,
     DateTime? updatedAt,
   }) {
     return MediaLibraryItem(
-      libraryID: libraryID,
+      libraryID: libraryID ?? this.libraryID,
       file: file ?? this.file,
       tmdbID: clearTMDBID ? null : (tmdbID ?? this.tmdbID),
-      doubanID: doubanID ?? this.doubanID,
-      imdbID: imdbID ?? this.imdbID,
+      doubanID: clearDoubanID ? null : (doubanID ?? this.doubanID),
+      imdbID: clearImdbID ? null : (imdbID ?? this.imdbID),
       title: title ?? this.title,
       originalTitle: originalTitle ?? this.originalTitle,
       mediaKind: clearMediaKind ? null : (mediaKind ?? this.mediaKind),
@@ -333,8 +339,12 @@ class MediaLibraryItem {
       backdropPath: backdropPath ?? this.backdropPath,
       hasChineseAudio: hasChineseAudio ?? this.hasChineseAudio,
       hasChineseSubtitle: hasChineseSubtitle ?? this.hasChineseSubtitle,
-      collectionID: collectionID ?? this.collectionID,
-      collectionName: collectionName ?? this.collectionName,
+      collectionID: clearCollectionID
+          ? null
+          : (collectionID ?? this.collectionID),
+      collectionName: clearCollectionName
+          ? null
+          : (collectionName ?? this.collectionName),
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -489,9 +499,11 @@ class MediaLibraryStatistics {
       '',
     );
     final kind = item.mediaKind?.name ?? 'unknown';
-    return item.tmdbID == null
-        ? '$kind:$title:${item.year}'
-        : '$kind:tmdb:${item.tmdbID}';
+    return item.tmdbID != null
+        ? '$kind:tmdb:${item.tmdbID}'
+        : item.doubanID != null
+        ? '$kind:douban:${item.doubanID}'
+        : '$kind:$title:${item.year}';
   }
 }
 

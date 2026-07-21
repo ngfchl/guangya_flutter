@@ -131,7 +131,9 @@ class CloudFile {
     String? modifiedAt,
     String? cloudPath,
     String? parentID,
+    bool clearParentID = false,
     String? fullParentIDs,
+    bool clearFullParentIDs = false,
     int? fileType,
   }) {
     return CloudFile(
@@ -144,8 +146,10 @@ class CloudFile {
       subFileCount: subFileCount ?? this.subFileCount,
       modifiedAt: modifiedAt ?? this.modifiedAt,
       cloudPath: cloudPath ?? this.cloudPath,
-      parentID: parentID ?? this.parentID,
-      fullParentIDs: fullParentIDs ?? this.fullParentIDs,
+      parentID: clearParentID ? null : (parentID ?? this.parentID),
+      fullParentIDs: clearFullParentIDs
+          ? null
+          : (fullParentIDs ?? this.fullParentIDs),
       fileType: fileType ?? this.fileType,
     );
   }

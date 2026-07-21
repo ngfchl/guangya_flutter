@@ -19,6 +19,7 @@ import '../core/utils/json_deep.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import '../utils/media_known_match_index.dart';
+import '../utils/media_artwork.dart';
 import '../utils/media_title_matcher.dart';
 import '../utils/media_tmdb_candidate_resolver.dart';
 import 'watch_history_provider.dart';
@@ -1460,10 +1461,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             if (_scanShouldAbort(library.id)) return;
             unique[file.id] = item;
             completed += 1;
-            if (item.tmdbID == null) {
-              unmatchedCount += 1;
-            } else {
+            if (item.isMatched) {
               recognizedCount += 1;
+            } else {
+              unmatchedCount += 1;
             }
             final visible = unique.values.toList()
               ..sort(
@@ -1483,8 +1484,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               state = state.copyWith(items: visible);
             }
             _appendScanLog(
-              item.tmdbID == null
-                  ? '已入库：${file.name}（未匹配 TMDB）'
+              !item.isMatched
+                  ? '已入库：${file.name}（未匹配）'
                   : item.file.name == file.name
                   ? '已识别并入库：${file.name} → ${item.title}'
                   : '已识别并重命名：${file.name} → ${item.file.name}',
@@ -2514,6 +2515,51 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return results;
   }
 
+  Future<MediaLibraryItem> relocateMediaItemAsUnmatched(
+    MediaLibraryItem previous,
+    String libraryID,
+    CloudFile file,
+  ) async {
+    final item = MediaLibraryItem.fromFile(
+      libraryID,
+      file,
+      directoryName: _parentDirectoryName(file.cloudPath),
+    );
+    await _replaceItemsByPreviousIDs({
+      '${previous.libraryID}:${previous.id}': item,
+    });
+    _searchResultsCache.clear();
+    final allItems = await _loadAllItems();
+    state = state.copyWith(
+      items: state.selectedLibraryID == libraryID
+          ? await _loadItems(libraryID)
+          : state.items,
+      allItems: allItems,
+      statusMessage: '已加入目标媒体库，正在自动识别 ${file.name}',
+      clearError: true,
+    );
+    await recognizeItems([item]);
+    final refreshedItems = await _loadAllItems();
+    final refreshed =
+        refreshedItems
+            .where(
+              (value) => value.libraryID == libraryID && value.id == file.id,
+            )
+            .firstOrNull ??
+        item;
+    state = state.copyWith(
+      items: state.selectedLibraryID == libraryID
+          ? await _loadItems(libraryID)
+          : state.items,
+      allItems: refreshedItems,
+      statusMessage: refreshed.isMatched
+          ? '已加入目标媒体库并完成自动识别'
+          : '已加入目标媒体库，自动识别未匹配',
+      clearError: true,
+    );
+    return refreshed;
+  }
+
   Future<void> recognizeItems(Iterable<MediaLibraryItem> values) async {
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
     if (_api == null || apiKey.trim().isEmpty) return;
@@ -3245,6 +3291,111 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           .map((item) => replacements['${item.libraryID}:${item.id}'] ?? item)
           .toList(),
       allItems: await _loadAllItems(),
+    );
+  }
+
+  Future<void> transferMediaRecords(
+    Iterable<MediaLibraryItem> values, {
+    required String targetLibraryID,
+    required String sourceRootPath,
+    required String destinationRootPath,
+    required String movedNodeID,
+    required String? targetParentID,
+  }) async {
+    final records = {
+      for (final item in values) '${item.libraryID}:${item.id}': item,
+    }.values.toList(growable: false);
+    if (records.isEmpty) return;
+
+    String destinationPathFor(String path) {
+      if (path == sourceRootPath) return destinationRootPath;
+      if (!path.startsWith('$sourceRootPath/')) {
+        throw StateError('资源路径不在所选移动层级中：$path');
+      }
+      return '$destinationRootPath${path.substring(sourceRootPath.length)}';
+    }
+
+    final now = DateTime.now();
+    final replacements = <String, MediaLibraryItem>{};
+    for (final item in records) {
+      final movesFileDirectly = item.id == movedNodeID;
+      final file = item.file.copyWith(
+        cloudPath: destinationPathFor(item.file.cloudPath),
+        parentID: movesFileDirectly ? targetParentID : item.file.parentID,
+        clearParentID: movesFileDirectly && targetParentID == null,
+        clearFullParentIDs: movesFileDirectly,
+      );
+      replacements['${item.libraryID}:${item.id}'] = item.copyWith(
+        libraryID: targetLibraryID,
+        file: file,
+        updatedAt: now,
+      );
+    }
+
+    await _replaceItemsByPreviousIDs(replacements);
+    await _store.removeFilesFromAllFolders(records.map((item) => item.id));
+    _cachedCloudEntries = null;
+    _searchResultsCache.clear();
+    final allItems = await _loadAllItems();
+    final selectedLibraryID = state.selectedLibraryID;
+    state = state.copyWith(
+      items: selectedLibraryID == null
+          ? const <MediaLibraryItem>[]
+          : await _loadItems(selectedLibraryID),
+      allItems: allItems,
+      statusMessage: '已移动 ${records.length} 个媒体资源到其他媒体库',
+      clearError: true,
+    );
+  }
+
+  Future<void> clearMediaMetadata(
+    Iterable<MediaLibraryItem> values, {
+    required bool clearTMDB,
+    required bool clearDouban,
+  }) async {
+    final records = {
+      for (final item in values) '${item.libraryID}:${item.id}': item,
+    }.values.toList();
+    if (records.isEmpty || (!clearTMDB && !clearDouban)) return;
+
+    final replacements = <String, MediaLibraryItem>{};
+    for (final item in records) {
+      final keepsTMDB = !clearTMDB && item.tmdbID != null;
+      final keepsDouban =
+          !clearDouban && item.doubanID?.trim().isNotEmpty == true;
+      final updated = keepsTMDB || keepsDouban
+          ? item.copyWith(
+              clearTMDBID: clearTMDB,
+              clearDoubanID: clearDouban,
+              clearImdbID: clearTMDB,
+              clearCollectionID: clearTMDB,
+              clearCollectionName: clearTMDB,
+              updatedAt: DateTime.now(),
+            )
+          : MediaLibraryItem.fromFile(
+              item.libraryID,
+              item.file,
+              directoryName: _parentDirectoryName(item.file.cloudPath),
+            ).copyWith(
+              hasChineseAudio: item.hasChineseAudio,
+              hasChineseSubtitle: item.hasChineseSubtitle,
+            );
+      replacements['${item.libraryID}:${item.id}'] = updated;
+    }
+
+    await _replaceItemsByPreviousIDs(replacements);
+    _searchResultsCache.clear();
+    state = state.copyWith(
+      items: state.items
+          .map((item) => replacements['${item.libraryID}:${item.id}'] ?? item)
+          .toList(),
+      allItems: await _loadAllItems(),
+      statusMessage: clearTMDB && clearDouban
+          ? '已清除识别信息'
+          : clearTMDB
+          ? '已清除 TMDB 信息'
+          : '已清除豆瓣信息',
+      clearError: true,
     );
   }
 
@@ -3980,33 +4131,23 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     if (_api == null || titleVariants.isEmpty) return const [];
     for (final variant in titleVariants) {
       final q = variant.value.trim();
-      if (RegExp(
-        r'合集|出品|系列|合辑|收藏|精选|套装|全集|典藏',
-      ).hasMatch(q)) {
-        _appendScanLog(
-          '[豆瓣][跳过] 疑似合集/合辑名，不搜索："$q"',
-        );
+      if (RegExp(r'合集|出品|系列|合辑|收藏|精选|套装|全集|典藏').hasMatch(q)) {
+        _appendScanLog('[豆瓣][跳过] 疑似合集/合辑名，不搜索："$q"');
         continue;
       }
       Map<String, dynamic> result;
       try {
         result = await _api!.doubanSearch(variant.value);
       } catch (error) {
-        _appendScanLog(
-          '[豆瓣][搜索] 请求失败：query="${variant.value}"，错误=$error',
-        );
+        _appendScanLog('[豆瓣][搜索] 请求失败：query="${variant.value}"，错误=$error');
         continue;
       }
       final items = result['items'];
       if (items is! List || items.isEmpty) {
-        _appendScanLog(
-          '[豆瓣][搜索] 无结果：query="${variant.value}"',
-        );
+        _appendScanLog('[豆瓣][搜索] 无结果：query="${variant.value}"');
         continue;
       }
-      _appendScanLog(
-        '[豆瓣][搜索] 返回 ${items.length} 条：query="${variant.value}"',
-      );
+      _appendScanLog('[豆瓣][搜索] 返回 ${items.length} 条：query="${variant.value}"');
       final candidates = <Map<String, dynamic>>[];
       for (final raw in items) {
         if (raw is! Map) continue;
@@ -4015,8 +4156,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         final candidate = Map<String, dynamic>.from(target);
         final id = candidate['id']?.toString();
         if (id == null || id.isEmpty) continue;
-        final cardSubtitle =
-            (candidate['card_subtitle'] ?? '').toString();
+        final cardSubtitle = (candidate['card_subtitle'] ?? '').toString();
         final type = cardSubtitle.contains('集') ? 'tv' : 'movie';
         if (requestedKind != 'auto' && type != requestedKind) continue;
         candidate['media_type'] = type;
@@ -4025,7 +4165,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         if (yearStr.length >= 4) {
           candidate['release_date'] = '$yearStr-01-01';
         }
-        candidate['poster_path'] = candidate['cover_url']?.toString();
+        candidate['poster_path'] = doubanPosterPath(candidate);
         candidate['overview'] = cardSubtitle;
         final rating = candidate['rating'];
         if (rating is Map) {
@@ -4035,9 +4175,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         candidates.add(candidate);
       }
       if (candidates.isEmpty) continue;
-      _appendScanLog(
-        '[豆瓣][筛选] ${candidates.length} 条候选通过类型筛选',
-      );
+      _appendScanLog('[豆瓣][筛选] ${candidates.length} 条候选通过类型筛选');
       return candidates;
     }
     return const [];
@@ -4063,21 +4201,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       var map = Map<String, dynamic>.from(candidate);
       final date =
           (map['release_date'] ?? map['first_air_date'])?.toString() ?? '';
-      final candidateYear =
-          date.length >= 4 ? int.tryParse(date.substring(0, 4)) : null;
+      final candidateYear = date.length >= 4
+          ? int.tryParse(date.substring(0, 4))
+          : null;
       final type = map['media_type']?.toString();
-      final yearMatch = candidateYear != null && doubanYears.contains(candidateYear);
+      final yearMatch =
+          candidateYear != null && doubanYears.contains(candidateYear);
       final typeMatch = type != null && doubanTypes.contains(type);
       if (yearMatch && typeMatch) {
-        final doubanMatch = doubanItems.firstWhere(
-          (d) {
-            final dDate = d['release_date']?.toString() ?? '';
-            final dYear =
-                dDate.length >= 4 ? int.tryParse(dDate.substring(0, 4)) : null;
-            return dYear == candidateYear && d['media_type'] == type;
-          },
-          orElse: () => {},
-        );
+        final doubanMatch = doubanItems.firstWhere((d) {
+          final dDate = d['release_date']?.toString() ?? '';
+          final dYear = dDate.length >= 4
+              ? int.tryParse(dDate.substring(0, 4))
+              : null;
+          return dYear == candidateYear && d['media_type'] == type;
+        }, orElse: () => {});
         if (doubanMatch.isNotEmpty) {
           map['_douban_boost'] = true;
           map['douban_id'] = doubanMatch['douban_id'];
@@ -4109,8 +4247,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
     final ranked = <({int score, Map<String, dynamic> value})>[];
     for (final candidate in refined.take(5)) {
-      final title =
-          (candidate['title'] ?? candidate['name'])?.toString() ?? '';
+      final title = (candidate['title'] ?? candidate['name'])?.toString() ?? '';
       final titleScore = _bestMediaTitleMatch(
         titleVariants.first.value,
         title: title,
@@ -4121,8 +4258,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         score = _fuzzyTitleScore(titleVariants.first.value, title);
       }
       final date = candidate['release_date']?.toString() ?? '';
-      final candidateYear =
-          date.length >= 4 ? int.tryParse(date.substring(0, 4)) : null;
+      final candidateYear = date.length >= 4
+          ? int.tryParse(date.substring(0, 4))
+          : null;
       if (parsed.year != null && candidateYear != null) {
         final delta = (candidateYear - parsed.year!).abs();
         if (delta == 0) {
@@ -4142,7 +4280,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
     ranked.sort((a, b) => b.score.compareTo(a.score));
     final yearMatched =
-        parsed.year != null && refined.every((c) {
+        parsed.year != null &&
+        refined.every((c) {
           final date = c['release_date']?.toString() ?? '';
           return date.startsWith('${parsed.year}');
         });
@@ -4159,8 +4298,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (!uniqueByYear && !uniqueAltogether) return null;
     }
     final best = ranked.first.value;
-    final title =
-        (best['title'] ?? best['name'])?.toString().trim() ?? '';
+    final title = (best['title'] ?? best['name'])?.toString().trim() ?? '';
     final date = best['release_date']?.toString() ?? '';
     final type = best['media_type']?.toString() ?? 'movie';
     final doubanId = best['douban_id']?.toString();
@@ -4172,12 +4310,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       title: title.isEmpty ? fallback.title : title,
       originalTitle: title.isEmpty ? fallback.originalTitle : title,
       doubanID: doubanId,
-      mediaKind: type == 'tv'
-          ? TMDBMediaKind.tv
-          : TMDBMediaKind.movie,
+      mediaKind: type == 'tv' ? TMDBMediaKind.tv : TMDBMediaKind.movie,
       releaseDate: date,
       overview: best['overview']?.toString() ?? '',
-      posterPath: best['poster_path']?.toString(),
+      posterPath: best['poster_path']?.toString() ?? doubanPosterPath(best),
       updatedAt: DateTime.now(),
     );
   }
@@ -5326,16 +5462,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         (candidate['release_date'] ?? candidate['first_air_date'])
             ?.toString() ??
         '';
+    final source = candidate['_source']?.toString();
+    final isDouban = source == 'douban';
     return fallback.copyWith(
-      tmdbID: _toInt(candidate['id']),
+      tmdbID: isDouban ? null : _toInt(candidate['id']),
+      clearTMDBID: isDouban,
+      doubanID: isDouban
+          ? candidate['id']?.toString()
+          : candidate['douban_id']?.toString(),
       title: title == null || title.isEmpty ? fallback.title : title,
       originalTitle: originalTitle == null || originalTitle.isEmpty
           ? fallback.originalTitle
           : originalTitle,
-      // A manual selection is authoritative. In particular, do not retain an
-      // earlier filename-based guess when the selected TMDB result says this
-      // is a movie or a TV series. Keep the existing value only for malformed
-      // legacy candidates that do not contain a media type at all.
       mediaKind: type == 'tv'
           ? TMDBMediaKind.tv
           : type == 'movie'
@@ -5343,8 +5481,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           : fallback.mediaKind,
       releaseDate: releaseDate,
       overview: candidate['overview']?.toString() ?? '',
-      posterPath: candidate['poster_path']?.toString(),
+      posterPath:
+          candidate['poster_path']?.toString() ??
+          (isDouban ? doubanPosterPath(candidate) : null),
       backdropPath: candidate['backdrop_path']?.toString(),
+      imdbID: _extractImdbID(candidate),
       updatedAt: DateTime.now(),
     );
   }
@@ -5405,6 +5546,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           item.backdropPath,
       collectionID: _toInt(collectionMap['id']) ?? item.collectionID,
       collectionName: collectionMap['name']?.toString() ?? item.collectionName,
+      imdbID: _extractImdbID(details) ?? item.imdbID,
       updatedAt: DateTime.now(),
     );
   }
@@ -5427,6 +5569,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final path = value['file_path']?.toString();
       if (path != null && path.isNotEmpty) return path;
     }
+    return null;
+  }
+
+  String? _extractImdbID(Map<String, dynamic> data) {
+    final externalIDs = data['external_ids'];
+    if (externalIDs is Map) {
+      final imdbID = externalIDs['imdb_id']?.toString();
+      if (imdbID != null && imdbID.isNotEmpty) return imdbID;
+    }
+    final imdbID = data['imdb_id']?.toString();
+    if (imdbID != null && imdbID.isNotEmpty) return imdbID;
     return null;
   }
 
