@@ -33,6 +33,12 @@ Future<void> showMediaPlayerDialog(
     );
   }
 
+  if (_requiresExternalPlayer(file)) {
+    AppLogger.info('Player', '当前格式使用外部播放器：${file.name}');
+    await openExternalPlayer();
+    return;
+  }
+
   try {
     await showShadDialog<void>(
       context: context,
@@ -48,6 +54,11 @@ Future<void> showMediaPlayerDialog(
     AppLogger.debug('Player', stackTrace.toString());
     await openExternalPlayer();
   }
+}
+
+bool _requiresExternalPlayer(CloudFile file) {
+  final extension = file.name.split('.').last.toLowerCase();
+  return extension == 'rm' || extension == 'rmvb';
 }
 
 class MediaPlayerDialog extends ConsumerStatefulWidget {
