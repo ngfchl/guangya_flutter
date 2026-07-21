@@ -4752,6 +4752,39 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
     }
 
+    void addFranchiseReleaseTitleVariants(String? raw, String source) {
+      final value = (raw?.trim() ?? '')
+          .replaceFirst(
+            RegExp(
+              r'[ ._-]*(?:混剪完整版|重新调色版|(?:美亚|泰吉)?修复版?|完整版|加长版)\s*$',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .trim();
+      final numbered = RegExp(
+        r'^(.{2,}?)(?:剧场版|電影|电影)\s*0*\d{1,2}\s*[:：]?\s*(.{2,})$',
+        caseSensitive: false,
+      ).firstMatch(value);
+      if (numbered != null) {
+        final franchise = numbered.group(1)!.trim();
+        final subtitle = numbered.group(2)!.trim();
+        add('$franchise：$subtitle', '$source去剧场版序号');
+        add('$franchise $subtitle', '$source去剧场版序号');
+        return;
+      }
+      final movieLabel = RegExp(
+        r'^(.{2,}?)(?:電影|电影)\s+(.{2,})$',
+        caseSensitive: false,
+      ).firstMatch(value);
+      if (movieLabel != null) {
+        final franchise = movieLabel.group(1)!.trim();
+        final subtitle = movieLabel.group(2)!.trim();
+        add('$franchise：$subtitle', '$source去电影标签');
+        add('$franchise $subtitle', '$source去电影标签');
+      }
+    }
+
     void addDescriptiveTitleVariants(String? raw, String source) {
       final value = raw?.trim() ?? '';
       final withoutParenthetical = value
@@ -4759,6 +4792,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           .trim();
       if (withoutParenthetical != value) {
         add(withoutParenthetical, '$source去尾注');
+        final cleaned = ParsedMediaName.parse(
+          withoutParenthetical,
+        ).title.trim();
+        if (cleaned.isNotEmpty && cleaned != withoutParenthetical) {
+          add(cleaned, '$source去尾注清理后');
+        }
       }
       final firstSentence = value.split(RegExp(r'[。；;！!]')).first.trim();
       if (firstSentence.length >= 2 && firstSentence != value) {
@@ -4822,6 +4861,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
       addTVSeasonTitleVariants(simplified, '$source简体标题');
       addDescriptiveTitleVariants(simplified, '$source简体标题');
+      addFranchiseReleaseTitleVariants(simplified, '$source简体标题');
       addChineseSubtitleVariants(simplified, '$source简体标题');
 
       final firstInstallment = RegExp(
@@ -4838,6 +4878,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       addTVSeasonTitleVariants(raw, source);
       addAliasTitleVariants(raw, source);
       addNumberGlyphVariants(raw, source);
+      addFranchiseReleaseTitleVariants(raw, source);
       addDescriptiveTitleVariants(raw, source);
       // Prefer a complete alternate-language title before falling back to a
       // broader franchise name.

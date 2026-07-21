@@ -140,6 +140,32 @@ class _RecognitionAPI extends GuangyaAPI {
         ],
       };
     }
+    if (query == '醉拳3') {
+      return {
+        'results': [
+          {
+            'id': 200031,
+            'media_type': 'movie',
+            'title': '醉拳3',
+            'original_title': '醉拳III',
+            'release_date': '1994-07-02',
+          },
+        ],
+      };
+    }
+    if (query == '龙珠Z：神与神') {
+      return {
+        'results': [
+          {
+            'id': 200032,
+            'media_type': 'movie',
+            'title': '龙珠Z：神与神',
+            'original_title': 'ドラゴンボールZ 神と神',
+            'release_date': '2013-03-30',
+          },
+        ],
+      };
+    }
     if (query == 'Black Cat White Cat' && year == null) {
       return {
         'results': [
@@ -552,6 +578,22 @@ class _RecognitionAPI extends GuangyaAPI {
     }
     if (id == 200030) {
       return {'id': id, 'title': '另一朵花', 'original_title': 'Another Flower'};
+    }
+    if (id == 200031) {
+      return {
+        'id': id,
+        'title': '醉拳3',
+        'original_title': '醉拳III',
+        'release_date': '1994-07-02',
+      };
+    }
+    if (id == 200032) {
+      return {
+        'id': id,
+        'title': '龙珠Z：神与神',
+        'original_title': 'ドラゴンボールZ 神と神',
+        'release_date': '2013-03-30',
+      };
     }
     if (id == 200022) {
       return {
@@ -1128,6 +1170,57 @@ void main() {
 
       expect(recognized.tmdbID, 200029);
       expect(recognized.title, '向阳花开');
+    },
+  );
+
+  test('recognition cleans a leading year after removing cast notes', () async {
+    final api = _RecognitionAPI();
+    final notifier = MediaLibraryNotifier()..api = api;
+    addTearDown(notifier.dispose);
+    final item = MediaLibraryItem.fromFile(
+      'library-1',
+      const CloudFile(
+        id: 'drunken-master-3',
+        name: '1994.醉拳3(刘德华、李嘉欣).MP4',
+        isDirectory: false,
+        cloudPath: '/电影/刘德华电影(1)/1994.醉拳3(刘德华、李嘉欣).MP4',
+      ),
+    ).copyWith(mediaKind: TMDBMediaKind.movie);
+
+    final recognized = await notifier.recognizeMediaItemForTesting(
+      item,
+      apiKey: 'test-key',
+    );
+
+    expect(recognized.tmdbID, 200031);
+    expect(recognized.title, '醉拳3');
+    expect(api.calls, contains((query: '醉拳3', mediaKind: 'movie', year: 1994)));
+  });
+
+  test(
+    'recognition removes Dragon Ball movie ordinals and edition labels',
+    () async {
+      final api = _RecognitionAPI();
+      final notifier = MediaLibraryNotifier()..api = api;
+      addTearDown(notifier.dispose);
+      final item = MediaLibraryItem.fromFile(
+        'library-1',
+        const CloudFile(
+          id: 'dragon-ball-battle-of-gods',
+          name: '龙珠Z剧场版18：神与神 加长版.mkv',
+          isDirectory: false,
+          cloudPath: '/电影/龙珠 剧场版/龙珠Z剧场版18：神与神 加长版.mkv',
+        ),
+      ).copyWith(mediaKind: TMDBMediaKind.movie);
+
+      final recognized = await notifier.recognizeMediaItemForTesting(
+        item,
+        apiKey: 'test-key',
+      );
+
+      expect(recognized.tmdbID, 200032);
+      expect(recognized.title, '龙珠Z：神与神');
+      expect(api.calls.map((call) => call.query), contains('龙珠Z：神与神'));
     },
   );
 
