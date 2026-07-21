@@ -172,6 +172,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
           .read(fileProvider.notifier)
           .playbackUrl(_currentFile);
       await _player.open(Media(url.toString()), play: true);
+      _restorePlaybackPosition();
       final initialSubtitle = widget.initialSubtitle;
       if (initialSubtitle != null) {
         await _setDirectorySubtitle(initialSubtitle);
@@ -236,6 +237,19 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
             duration: duration,
           ),
     );
+  }
+
+  void _restorePlaybackPosition() {
+    final history = ref.read(watchHistoryProvider);
+    final entry = history.where((e) => e.fileID == _currentFile.id).firstOrNull;
+    if (entry == null || entry.completed) return;
+    final saved = Duration(milliseconds: entry.positionMilliseconds);
+    if (saved.inSeconds < 3) return;
+    unawaited(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+      await _player.seek(saved);
+    }());
   }
 
   void _saveCurrentPlaybackProgress() {
