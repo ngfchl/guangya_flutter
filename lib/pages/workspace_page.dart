@@ -2405,11 +2405,9 @@ class _MediaSidebar extends ConsumerWidget {
                   for (final library in state.libraries)
                     Builder(
                       builder: (context) {
-                        final statistics = MediaLibraryStatistics.fromItems(
-                          state.allItems.where(
-                            (item) => item.libraryID == library.id,
-                          ),
-                        );
+                        final statistics =
+                            state.libraryStatistics[library.id] ??
+                            const MediaLibraryStatistics();
                         return _SidebarTile(
                           icon: library.kind == MediaLibraryKind.series
                               ? Icons.live_tv_rounded
@@ -3764,20 +3762,28 @@ class _FilePaneCollectionState extends State<_FilePaneCollection> {
               child: widget.itemBuilder(context, index),
             ),
           )
-        : GridView.builder(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.all(10),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 168,
-              mainAxisExtent: 132,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-            ),
-            itemCount: widget.itemCount,
-            itemBuilder: (context, index) => KeyedSubtree(
-              key: _itemKey(index),
-              child: widget.itemBuilder(context, index),
-            ),
+        : LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              final columns = width < 400
+                  ? (width / 120).floor().clamp(2, 4)
+                  : (width / 160).floor().clamp(3, 8);
+              return GridView.builder(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(10),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                  childAspectRatio: 1.35,
+                ),
+                itemCount: widget.itemCount,
+                itemBuilder: (context, index) => KeyedSubtree(
+                  key: _itemKey(index),
+                  child: widget.itemBuilder(context, index),
+                ),
+              );
+            },
           );
     final start = _start;
     final current = _current;
