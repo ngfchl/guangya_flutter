@@ -18,10 +18,12 @@ import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../providers/watch_history_provider.dart';
 import '../models/watch_history.dart';
+import '../utils/media_artwork.dart';
 import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/media_player_dialog.dart';
+import '../core/logging/app_logger.dart';
 
 export '../models/media_navigation.dart'
     show MediaLibraryBrowseFilter, MediaNavigationState, MediaWorkspaceView;
@@ -43,9 +45,7 @@ String _tmdbImageURL(String path, {required String size}) {
 }
 
 String _tmdbDirectImageURL(String path, {required String size}) {
-  return path.startsWith('http')
-      ? path
-      : 'https://image.tmdb.org/t/p/$size$path';
+  return mediaArtworkDirectURL(path, size: size);
 }
 
 String? _parentDirectoryName(String cloudPath) {
@@ -62,7 +62,29 @@ String _parentCloudPath(String cloudPath) {
   return index <= 0 ? '' : normalized.substring(0, index);
 }
 
+String _normalizedCloudPath(String value) {
+  final parts = value
+      .trim()
+      .replaceAll('\\', '/')
+      .split('/')
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList(growable: false);
+  return parts.isEmpty ? '' : '/${parts.join('/')}';
+}
+
+String _joinCloudPath(String parent, String name) {
+  final root = _normalizedCloudPath(parent);
+  return root.isEmpty ? '/$name' : '$root/$name';
+}
+
 String _mediaRecordKey(MediaLibraryItem item) => '${item.libraryID}:${item.id}';
+
+enum _MediaMetadataSource { tmdb, douban }
+
+extension on _MediaMetadataSource {
+  String get title => this == _MediaMetadataSource.tmdb ? 'TMDB' : '豆瓣';
+}
 
 Future<bool> _confirmCloudBackupRestore(
   BuildContext context,
@@ -111,6 +133,539 @@ Widget _tmdbDirectFallback({
     height: height,
     errorWidget: (_, _, _) => fallback,
   );
+}
+
+class _MediaFolderDestination {
+  final MediaLibraryDefinition library;
+  final MediaLibrarySource source;
+  final String? parentID;
+  final String path;
+
+  const _MediaFolderDestination({
+    required this.library,
+    required this.source,
+    required this.parentID,
+    required this.path,
+  });
+}
+
+class _MediaMoveSelection {
+  final List<CloudFile> sources;
+  final _MediaFolderDestination destination;
+
+  const _MediaMoveSelection({required this.sources, required this.destination});
+}
+
+class _MediaMoveDialog extends ConsumerStatefulWidget {
+  final List<CloudFile> sources;
+  final List<MediaLibraryDefinition> libraries;
+
+  const _MediaMoveDialog({required this.sources, required this.libraries});
+
+  @override
+  ConsumerState<_MediaMoveDialog> createState() => _MediaMoveDialogState();
+}
+
+class _MediaMoveDialogState extends ConsumerState<_MediaMoveDialog> {
+  late MediaLibraryDefinition _library = widget.libraries.first;
+  MediaLibrarySource? _librarySource;
+  final _folderPath = <CloudFile>[];
+  var _folders = <CloudFile>[];
+  var _loading = false;
+  String? _error;
+
+  _MediaFolderDestination? get _destination {
+    final source = _librarySource;
+    if (source == null) return null;
+    return _MediaFolderDestination(
+      library: _library,
+      source: source,
+      parentID: _folderPath.lastOrNull?.id ?? source.rootID,
+      path: _folderPath.fold(
+        source.path,
+        (path, folder) => _joinCloudPath(path, folder.name),
+      ),
+    );
+  }
+
+  void _selectLibrary(MediaLibraryDefinition library) {
+    setState(() {
+      _library = library;
+      _librarySource = null;
+      _folderPath.clear();
+      _folders = const [];
+      _error = null;
+    });
+  }
+
+  Future<void> _openSource(MediaLibrarySource source) async {
+    setState(() {
+      _librarySource = source;
+      _folderPath.clear();
+    });
+    await _loadFolders(source.rootID);
+  }
+
+  Future<void> _enterFolder(CloudFile folder) async {
+    setState(() => _folderPath.add(folder));
+    await _loadFolders(folder.id);
+  }
+
+  Future<void> _navigateTo(int index) async {
+    final source = _librarySource;
+    if (source == null) return;
+    setState(() {
+      if (index < 0) {
+        _folderPath.clear();
+      } else {
+        _folderPath.removeRange(index + 1, _folderPath.length);
+      }
+    });
+    await _loadFolders(index < 0 ? source.rootID : _folderPath[index].id);
+  }
+
+  Future<void> _loadFolders(String? parentID) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final response = await ref
+          .read(authProvider.notifier)
+          .api
+          .fsFiles(parentID: parentID, pageSize: 1000);
+      if (!mounted) return;
+      final files = <String, CloudFile>{};
+      void visit(dynamic value) {
+        if (value is Map) {
+          try {
+            final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+            files[file.id] = file;
+          } catch (_) {
+            // API response envelopes can contain unrelated maps.
+          }
+          for (final child in value.values) {
+            visit(child);
+          }
+        } else if (value is Iterable && value is! String) {
+          for (final child in value) {
+            visit(child);
+          }
+        }
+      }
+
+      visit(response);
+      setState(() {
+        _folders = files.values.where((file) => file.isDirectory).toList()
+          ..sort(
+            (left, right) =>
+                left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+          );
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final size = MediaQuery.sizeOf(context);
+    final destination = _destination;
+    return ShadDialog(
+      title: const Text('移动到'),
+      description: Text('移动 ${widget.sources.length} 个文件或文件夹'),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        ShadButton(
+          onPressed: destination == null || _loading
+              ? null
+              : () => Navigator.of(context).pop(
+                  _MediaMoveSelection(
+                    sources: widget.sources,
+                    destination: destination,
+                  ),
+                ),
+          leading: const Icon(Icons.drive_file_move_rounded, size: 16),
+          child: const Text('确认移动'),
+        ),
+      ],
+      child: SizedBox(
+        width: (size.width - 32).clamp(300.0, 560.0).toDouble(),
+        height: (size.height - 250).clamp(300.0, 430.0).toDouble(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              '目标媒体库',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: cs.mutedForeground,
+              ),
+            ),
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final library in widget.libraries)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ShadButton.outline(
+                        size: ShadButtonSize.sm,
+                        backgroundColor: library.id == _library.id
+                            ? cs.primary
+                            : null,
+                        foregroundColor: library.id == _library.id
+                            ? cs.primaryForeground
+                            : null,
+                        onPressed: () => _selectLibrary(library),
+                        child: Text(library.name),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: ShadSeparator.horizontal(),
+            ),
+            Expanded(child: _folderBrowser(context)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _folderBrowser(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final source = _librarySource;
+    if (source == null) {
+      return ListView.separated(
+        itemCount: _library.sources.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 4),
+        itemBuilder: (context, index) {
+          final value = _library.sources[index];
+          return _folderRow(
+            context,
+            title: value.path,
+            subtitle: '媒体库根文件夹',
+            onTap: () => unawaited(_openSource(value)),
+          );
+        },
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 4,
+          runSpacing: 4,
+          children: [
+            ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: () => setState(() {
+                _librarySource = null;
+                _folderPath.clear();
+                _folders = const [];
+              }),
+              child: const Text('资源目录'),
+            ),
+            ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: () => unawaited(_navigateTo(-1)),
+              child: Text(source.path),
+            ),
+            for (var index = 0; index < _folderPath.length; index++)
+              ShadButton.ghost(
+                size: ShadButtonSize.sm,
+                onPressed: () => unawaited(_navigateTo(index)),
+                child: Text(_folderPath[index].name),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Expanded(
+          child: _loading
+              ? const Center(
+                  child: AppLoadingIndicator(
+                    size: AppLoadingSize.compact,
+                    label: '正在读取文件夹',
+                  ),
+                )
+              : _error != null
+              ? Center(
+                  child: Text(_error!, style: TextStyle(color: cs.destructive)),
+                )
+              : _folders.isEmpty
+              ? Center(
+                  child: Text(
+                    '当前文件夹没有下级目录，可直接移动到这里',
+                    style: TextStyle(color: cs.mutedForeground),
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: _folders.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 4),
+                  itemBuilder: (context, index) {
+                    final folder = _folders[index];
+                    return _folderRow(
+                      context,
+                      title: folder.name,
+                      subtitle: '点击进入下级目录',
+                      onTap: () => unawaited(_enterFolder(folder)),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _folderRow(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: ListTile(
+        dense: true,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+        leading: const Icon(Icons.folder_rounded, size: 18),
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(subtitle, maxLines: 1),
+        trailing: const Icon(Icons.chevron_right_rounded, size: 18),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _CloudMoveDestination {
+  final String? parentID;
+  final String path;
+  final Set<String> ancestorIDs;
+
+  const _CloudMoveDestination({
+    required this.parentID,
+    required this.path,
+    required this.ancestorIDs,
+  });
+}
+
+class _CloudMoveDestinationPicker extends ConsumerStatefulWidget {
+  const _CloudMoveDestinationPicker();
+
+  @override
+  ConsumerState<_CloudMoveDestinationPicker> createState() =>
+      _CloudMoveDestinationPickerState();
+}
+
+class _CloudMoveDestinationPickerState
+    extends ConsumerState<_CloudMoveDestinationPicker> {
+  final _path = <CloudFile>[];
+  var _folders = <CloudFile>[];
+  CloudFile? _selected;
+  var _loading = false;
+  String? _error;
+
+  String get _currentPath =>
+      _path.isEmpty ? '' : '/${_path.map((item) => item.name).join('/')}';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final response = await ref
+          .read(authProvider.notifier)
+          .api
+          .fsFiles(
+            parentID: _path.isEmpty ? null : _path.last.id,
+            pageSize: 1000,
+          );
+      if (!mounted) return;
+      final files = <String, CloudFile>{};
+      void visit(dynamic value) {
+        if (value is Map) {
+          try {
+            final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+            files[file.id] = file;
+          } catch (_) {
+            // API envelopes and unrelated nested objects are expected.
+          }
+          for (final child in value.values) {
+            visit(child);
+          }
+        } else if (value is Iterable && value is! String) {
+          for (final child in value) {
+            visit(child);
+          }
+        }
+      }
+
+      visit(response);
+      setState(() {
+        _folders = files.values.where((file) => file.isDirectory).toList()
+          ..sort(
+            (left, right) =>
+                left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+          );
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _enter(CloudFile folder) {
+    setState(() {
+      _path.add(folder);
+      _selected = null;
+    });
+    unawaited(_load());
+  }
+
+  void _selectDestination() {
+    final selected = _selected;
+    Navigator.of(context).pop(
+      _CloudMoveDestination(
+        parentID: selected?.id ?? (_path.isEmpty ? null : _path.last.id),
+        path: selected == null
+            ? _currentPath
+            : _joinCloudPath(_currentPath, selected.name),
+        ancestorIDs: {
+          for (final folder in _path) folder.id,
+          if (selected != null) selected.id,
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final size = MediaQuery.sizeOf(context);
+    return ShadDialog(
+      title: const Text('移动文件到'),
+      description: Text(
+        '目标文件夹：${_selected?.name ?? (_path.lastOrNull?.name ?? '云盘根目录')}',
+      ),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        ShadButton(
+          onPressed: _loading ? null : _selectDestination,
+          child: const Text('移动到这里'),
+        ),
+      ],
+      child: SizedBox(
+        width: (size.width - 32).clamp(300.0, 440.0).toDouble(),
+        height: (size.height - 250).clamp(280.0, 340.0).toDouble(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: _path.isEmpty
+                      ? null
+                      : () {
+                          setState(() {
+                            _path.clear();
+                            _selected = null;
+                          });
+                          unawaited(_load());
+                        },
+                  child: const Text('根目录'),
+                ),
+                for (var index = 0; index < _path.length; index++)
+                  ShadButton.ghost(
+                    size: ShadButtonSize.sm,
+                    onPressed: () {
+                      setState(() {
+                        _path.removeRange(index + 1, _path.length);
+                        _selected = null;
+                      });
+                      unawaited(_load());
+                    },
+                    child: Text(_path[index].name),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: _loading
+                  ? const Center(
+                      child: AppLoadingIndicator(
+                        size: AppLoadingSize.compact,
+                        label: '正在读取文件夹',
+                      ),
+                    )
+                  : _error != null
+                  ? Center(
+                      child: Text(
+                        _error!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: cs.destructive),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _folders.length,
+                      itemBuilder: (context, index) {
+                        final folder = _folders[index];
+                        final active = _selected?.id == folder.id;
+                        return ListTile(
+                          dense: true,
+                          selected: active,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          leading: const Icon(Icons.folder_rounded, size: 18),
+                          title: Text(
+                            folder.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onTap: () => setState(() => _selected = folder),
+                          trailing: IconButton(
+                            tooltip: '进入目录',
+                            onPressed: () => _enter(folder),
+                            icon: const Icon(
+                              Icons.chevron_right_rounded,
+                              size: 18,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class MediaLibraryPage extends ConsumerStatefulWidget {
@@ -589,6 +1144,462 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         .toList(growable: false);
     await _removeMediaRecords(allReferences.isEmpty ? records : allReferences);
     return true;
+  }
+
+  Future<void> _renameMediaFile(MediaLibraryItem item) async {
+    final controller = TextEditingController(text: item.file.name);
+    final newName = await showShadDialog<String>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('重命名文件'),
+        description: Text(item.file.cloudPath),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          ShadButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            leading: const Icon(LucideIcons.filePenLine, size: 16),
+            child: const Text('重命名'),
+          ),
+        ],
+        child: Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: ShadInput(
+            controller: controller,
+            autofocus: true,
+            placeholder: const Text('输入完整文件名'),
+            onSubmitted: (value) =>
+                Navigator.of(dialogContext).pop(value.trim()),
+          ),
+        ),
+      ),
+    );
+    controller.dispose();
+    if (!mounted || newName == null || newName == item.file.name) return;
+    if (newName.isEmpty ||
+        newName.contains('/') ||
+        newName.contains('\\') ||
+        newName.contains('\u0000')) {
+      ShadSonner.maybeOf(context)?.show(
+        const ShadToast(
+          title: Text('文件名无效'),
+          description: Text('文件名不能为空，也不能包含路径分隔符。'),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+      return;
+    }
+
+    try {
+      await ref.read(authProvider.notifier).api.fsRename(item.file.id, newName);
+      await _mediaNotifier.synchronizeRenamedFiles([
+        item.file.copyWith(name: newName),
+      ]);
+      if (!mounted) return;
+      ShadSonner.maybeOf(context)?.show(
+        ShadToast(
+          title: const Text('重命名完成'),
+          description: Text(newName),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ShadSonner.maybeOf(context)?.show(
+        ShadToast.destructive(
+          title: const Text('重命名失败'),
+          description: Text(error.toString()),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+    }
+  }
+
+  Future<void> _moveCloudResource(MediaLibraryItem item) async {
+    final libraries = ref
+        .read(mediaLibraryProvider)
+        .libraries
+        .where((library) => library.sources.isNotEmpty)
+        .toList(growable: false);
+    if (libraries.isEmpty) return;
+    final selection = await showShadDialog<_MediaMoveSelection>(
+      context: context,
+      builder: (_) =>
+          _MediaMoveDialog(sources: [item.file], libraries: libraries),
+    );
+    if (!mounted || selection == null) return;
+    final destination = selection.destination;
+    final sourceParent = item.file.parentID?.trim();
+    final targetParent = destination.parentID?.trim();
+    if ((sourceParent?.isEmpty ?? true ? null : sourceParent) ==
+        (targetParent?.isEmpty ?? true ? null : targetParent)) {
+      ShadSonner.maybeOf(context)?.show(
+        const ShadToast(
+          title: Text('移动文件'),
+          description: Text('不能移动至相同目录'),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+      return;
+    }
+
+    try {
+      await ref.read(authProvider.notifier).api.fsMove([
+        item.file.id,
+      ], parentID: destination.parentID);
+      final destinationPath = _joinCloudPath(destination.path, item.file.name);
+      final movedFile = item.file.copyWith(
+        cloudPath: destinationPath,
+        parentID: destination.parentID,
+        clearParentID: destination.parentID == null,
+        clearFullParentIDs: true,
+      );
+      await _mediaNotifier.relocateMediaItemAsUnmatched(
+        item,
+        destination.library.id,
+        movedFile,
+      );
+      if (mounted) _closeDetail();
+      if (!mounted) return;
+      ShadSonner.maybeOf(context)?.show(
+        ShadToast(
+          title: const Text('文件移动完成'),
+          description: Text(
+            destination.path.isEmpty ? '云盘根目录' : destination.path,
+          ),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ShadSonner.maybeOf(context)?.show(
+        ShadToast.destructive(
+          title: const Text('文件移动失败'),
+          description: Text(error.toString()),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+    }
+  }
+
+  Future<void> _moveMediaFile(MediaLibraryItem item) async {
+    final state = ref.read(mediaLibraryProvider);
+    final library = state.libraries
+        .where((value) => value.id == item.libraryID)
+        .firstOrNull;
+    if (library == null) return;
+    final destinationLibraries = state.libraries
+        .where(
+          (candidate) =>
+              candidate.id != item.libraryID && candidate.sources.isNotEmpty,
+        )
+        .toList(growable: false);
+    if (destinationLibraries.isEmpty) {
+      ShadSonner.maybeOf(context)?.show(
+        const ShadToast(
+          title: Text('没有可用的目标媒体库'),
+          description: Text('请先为另一个媒体库配置至少一个资源目录。'),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+      return;
+    }
+    final work = _MediaWork.fromItems(state.allItems)
+        .where(
+          (candidate) => candidate.resources.any(
+            (resource) => _mediaRecordKey(resource) == _mediaRecordKey(item),
+          ),
+        )
+        .firstOrNull;
+    final associated = (work?.resources ?? [item])
+        .where((resource) => resource.libraryID == item.libraryID)
+        .toList(growable: false);
+    final nodes = <String, CloudFile>{};
+    final recordsByNode = <String, List<MediaLibraryItem>>{};
+    for (final resource in associated) {
+      final source = _mediaSourceForItem(library, resource);
+      if (source == null) continue;
+      final levels = await _loadMediaMoveSources(resource, source);
+      final node = levels.last;
+      nodes[node.id] = node;
+      (recordsByNode[node.id] ??= []).add(resource);
+    }
+    if (!mounted) return;
+    if (nodes.isEmpty) {
+      ShadSonner.maybeOf(context)?.show(
+        const ShadToast.destructive(
+          title: Text('无法确定关联文件'),
+          description: Text('没有找到可移动的媒体文件或文件夹。'),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+      return;
+    }
+    final selection = await showShadDialog<_MediaMoveSelection>(
+      context: context,
+      builder: (_) => _MediaMoveDialog(
+        sources: nodes.values.toList(growable: false),
+        libraries: destinationLibraries,
+      ),
+    );
+    if (!mounted || selection == null) return;
+    final destination = selection.destination;
+    final targetRootPath = _normalizedCloudPath(destination.path);
+    final invalidTarget = nodes.values.any((node) {
+      final path = _normalizedCloudPath(node.cloudPath);
+      return path.isNotEmpty &&
+          (targetRootPath == path || targetRootPath.startsWith('$path/'));
+    });
+    if (invalidTarget) {
+      ShadSonner.maybeOf(context)?.show(
+        const ShadToast.destructive(
+          title: Text('无法移动'),
+          description: Text('目标媒体目录不能位于所选文件夹内部。'),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+      return;
+    }
+
+    try {
+      await ref
+          .read(authProvider.notifier)
+          .api
+          .fsMove(
+            nodes.keys.toList(growable: false),
+            parentID: destination.parentID,
+          );
+      for (final node in nodes.values) {
+        final movedRootPath = _normalizedCloudPath(node.cloudPath);
+        var records = movedRootPath.isEmpty
+            ? <MediaLibraryItem>[]
+            : state.allItems
+                  .where((record) {
+                    if (record.libraryID != item.libraryID) return false;
+                    final path = _normalizedCloudPath(record.file.cloudPath);
+                    return path == movedRootPath ||
+                        path.startsWith('$movedRootPath/');
+                  })
+                  .toList(growable: false);
+        if (records.isEmpty) records = recordsByNode[node.id] ?? const [];
+        if (records.isEmpty) continue;
+        if (movedRootPath.isEmpty) {
+          for (final record in records) {
+            final recordPath = _normalizedCloudPath(record.file.cloudPath);
+            await _mediaNotifier.transferMediaRecords(
+              [record],
+              targetLibraryID: destination.library.id,
+              sourceRootPath: recordPath,
+              destinationRootPath: _joinCloudPath(
+                _joinCloudPath(destination.path, node.name),
+                record.file.name,
+              ),
+              movedNodeID: node.id,
+              targetParentID: destination.parentID,
+            );
+          }
+          continue;
+        }
+        await _mediaNotifier.transferMediaRecords(
+          records,
+          targetLibraryID: destination.library.id,
+          sourceRootPath: movedRootPath,
+          destinationRootPath: _joinCloudPath(destination.path, node.name),
+          movedNodeID: node.id,
+          targetParentID: destination.parentID,
+        );
+      }
+      if (!mounted) return;
+      _closeDetail();
+      ShadSonner.maybeOf(context)?.show(
+        ShadToast(
+          title: const Text('移动完成'),
+          description: Text(
+            '${nodes.length} 个文件或文件夹 → ${destination.library.name} / '
+            '${destination.path}',
+          ),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ShadSonner.maybeOf(context)?.show(
+        ShadToast.destructive(
+          title: const Text('移动失败'),
+          description: Text(error.toString()),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+    }
+  }
+
+  MediaLibrarySource? _mediaSourceForItem(
+    MediaLibraryDefinition library,
+    MediaLibraryItem item,
+  ) {
+    final itemPath = _normalizedCloudPath(item.file.cloudPath);
+    final matching =
+        library.sources.where((source) {
+          final root = _normalizedCloudPath(source.path);
+          return itemPath == root || itemPath.startsWith('$root/');
+        }).toList()..sort(
+          (left, right) => right.path.length.compareTo(left.path.length),
+        );
+    final ancestorIDs = RegExp(r'[A-Za-z0-9][A-Za-z0-9_-]*')
+        .allMatches(item.file.fullParentIDs ?? '')
+        .map((match) => match.group(0))
+        .whereType<String>()
+        .toSet();
+    return matching.firstOrNull ??
+        library.sources.where((source) {
+          final rootID = source.rootID?.trim();
+          return rootID != null &&
+              rootID.isNotEmpty &&
+              (item.file.parentID?.trim() == rootID ||
+                  ancestorIDs.contains(rootID));
+        }).firstOrNull ??
+        (library.sources.length == 1 ? library.sources.first : null);
+  }
+
+  Future<List<CloudFile>> _loadMediaMoveSources(
+    MediaLibraryItem item,
+    MediaLibrarySource librarySource,
+  ) async {
+    final values = <CloudFile>[item.file];
+    var parentID = item.file.parentID?.trim();
+    var parentPath = _parentCloudPath(item.file.cloudPath);
+    final rootID = librarySource.rootID?.trim();
+    final visited = <String>{item.id};
+    while (parentID != null &&
+        parentID.isNotEmpty &&
+        parentID != rootID &&
+        visited.add(parentID)) {
+      try {
+        final detail = await ref
+            .read(authProvider.notifier)
+            .api
+            .fsDetail(parentID);
+        final folder = _cloudFileFromResponse(detail, parentID);
+        if (folder == null || !folder.isDirectory) break;
+        values.add(folder.copyWith(cloudPath: parentPath));
+        parentID = mediaParentIDFromMetadata(folder)?.trim();
+        parentPath = _parentCloudPath(parentPath);
+      } catch (error) {
+        AppLogger.warning('Media', '读取可移动父目录失败：$parentID，$error');
+        break;
+      }
+    }
+    return values;
+  }
+
+  CloudFile? _cloudFileFromResponse(dynamic value, String expectedID) {
+    if (value is Map) {
+      try {
+        final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+        if (file.id == expectedID) return file;
+      } catch (_) {
+        // Detail responses can contain envelope maps around the file object.
+      }
+      for (final child in value.values) {
+        final file = _cloudFileFromResponse(child, expectedID);
+        if (file != null) return file;
+      }
+    } else if (value is Iterable && value is! String) {
+      for (final child in value) {
+        final file = _cloudFileFromResponse(child, expectedID);
+        if (file != null) return file;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _clearMediaMetadata(
+    _MediaWork work,
+    _MediaMetadataSource source,
+  ) async {
+    final records = work.resources.where((item) {
+      return source == _MediaMetadataSource.tmdb
+          ? item.tmdbID != null
+          : item.doubanID?.trim().isNotEmpty == true;
+    }).toList();
+    if (records.isEmpty) return;
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: Text('清理 ${source.title} 信息？'),
+        description: Text(work.primary.title),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton.destructive(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            leading: const Icon(Icons.link_off_rounded, size: 16),
+            child: const Text('清理信息'),
+          ),
+        ],
+        child: Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            '将从 ${records.length} 个资源记录中删除 ${source.title} 关联。'
+            '若没有其他识别来源，条目会恢复为基于文件名的未匹配状态。',
+          ),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final resourceIDs = records.map((item) => item.id).toSet();
+    try {
+      await _mediaNotifier.clearMediaMetadata(
+        records,
+        clearTMDB: source == _MediaMetadataSource.tmdb,
+        clearDouban: source == _MediaMetadataSource.douban,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ShadSonner.maybeOf(context)?.show(
+        ShadToast.destructive(
+          title: Text('清理 ${source.title} 信息失败'),
+          description: Text(error.toString()),
+          showCloseIconOnlyWhenHovered: false,
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+
+    final refreshed =
+        _MediaWork.fromItems(ref.read(mediaLibraryProvider).allItems)
+            .where(
+              (candidate) => candidate.resources.any(
+                (item) => resourceIDs.contains(item.id),
+              ),
+            )
+            .firstOrNull;
+    if (refreshed == null) {
+      _closeDetail();
+      return;
+    }
+    setState(() => _detailWork = refreshed);
+    _setDetailHeader(
+      MediaDetailHeader(
+        title: refreshed.primary.title,
+        mediaKind: refreshed.primary.mediaKind,
+        year: refreshed.primary.year,
+      ),
+    );
+    ShadSonner.maybeOf(context)?.show(
+      ShadToast(
+        title: Text('已清理 ${source.title} 信息'),
+        description: Text(refreshed.primary.title),
+        showCloseIconOnlyWhenHovered: false,
+      ),
+    );
   }
 
   @override
@@ -1082,6 +2093,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 unawaited(_refreshAndRecognizeDetail(selectedWork)),
             onManualMatch: (resource) =>
                 unawaited(_showManualTMDBMatch(selectedWork, resource)),
+            onRenameFile: _renameMediaFile,
+            onMoveMediaResource: _moveMediaFile,
+            onMoveCloudFile: _moveCloudResource,
+            onClearMetadata: (source) =>
+                _clearMediaMetadata(selectedWork, source),
             manualMatchBusyResourceKeys: _manualMatchBusyResourceKeys,
             manualMatchLoadingResourceKeys: _manualMatchLoadingResourceKeys,
             onRemoveRecords: _removeMediaRecords,
@@ -1871,17 +2887,17 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 final target = raw['target'];
                 if (target is! Map) return null;
                 final candidate = Map<String, dynamic>.from(target);
-                final cardSubtitle =
-                    (candidate['card_subtitle'] ?? '').toString();
+                final cardSubtitle = (candidate['card_subtitle'] ?? '')
+                    .toString();
                 final type = cardSubtitle.contains('集') ? 'tv' : 'movie';
                 candidate['media_type'] = type;
                 candidate['id'] = candidate['id']?.toString();
+                candidate['_source'] = 'douban';
                 final yearStr = candidate['year']?.toString() ?? '';
                 if (yearStr.length >= 4) {
                   candidate['release_date'] = '$yearStr-01-01';
                 }
-                candidate['poster_path'] =
-                    candidate['cover_url']?.toString();
+                candidate['poster_path'] = doubanPosterPath(candidate);
                 candidate['overview'] = cardSubtitle;
                 final rating = candidate['rating'];
                 if (rating is Map) {
@@ -2109,13 +3125,13 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         return;
       }
       final source = candidate['_source']?.toString() ?? 'tmdb';
-      final candidateTitle =
-          (candidate['title'] ?? candidate['name'] ?? '').toString();
+      final candidateTitle = (candidate['title'] ?? candidate['name'] ?? '')
+          .toString();
       final candidateID = candidate['id']?.toString() ?? '';
       AppLogger.info(
         'Media',
         '[手动匹配] 用户选中：${target.file.name} -> '
-        '"$candidateTitle" (id=$candidateID, 来源=$source)',
+            '"$candidateTitle" (id=$candidateID, 来源=$source)',
       );
       setState(() => _manualMatchApplyingResourceKeys.add(targetKey));
       if (candidate['media_type'] == 'tv') {
@@ -3760,9 +4776,11 @@ class _MediaWork {
         '',
       );
       final kind = item.mediaKind?.name ?? 'unknown';
-      final key = item.tmdbID == null
-          ? '$kind:$title:${item.year}'
-          : '$kind:tmdb:${item.tmdbID}';
+      final key = item.tmdbID != null
+          ? '$kind:tmdb:${item.tmdbID}'
+          : item.doubanID != null
+          ? '$kind:douban:${item.doubanID}'
+          : '$kind:$title:${item.year}';
       grouped.putIfAbsent(key, () => []).add(item);
     }
     return grouped.entries.map((entry) {
@@ -3984,8 +5002,9 @@ class _ContinueWatchingTile extends StatelessWidget {
         ? '第 ${episode.season ?? 1} 季第 ${episode.episode} 集'
         : '继续观看';
     final percent = (value.entry.progress * 100).round();
-    final backdrop = item.backdropPath?.isNotEmpty == true
-        ? _tmdbImageURL(item.backdropPath!, size: 'w780')
+    final backdropPath = mediaBackdropPath(item);
+    final backdrop = backdropPath != null
+        ? _tmdbImageURL(backdropPath, size: 'w780')
         : null;
     return Semantics(
       button: true,
@@ -4230,6 +5249,10 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final ValueChanged<MediaLibraryItem> onDownload;
   final ValueChanged<MediaLibraryItem> onPlay;
   final ValueChanged<MediaLibraryItem> onExternalPlay;
+  final Future<void> Function(MediaLibraryItem) onRenameFile;
+  final Future<void> Function(MediaLibraryItem) onMoveMediaResource;
+  final Future<void> Function(MediaLibraryItem) onMoveCloudFile;
+  final Future<void> Function(_MediaMetadataSource) onClearMetadata;
   final VoidCallback onRecognize;
   final ValueChanged<MediaLibraryItem> onManualMatch;
   final Future<void> Function(List<MediaLibraryItem>) onRemoveRecords;
@@ -4244,6 +5267,10 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onDownload,
     required this.onPlay,
     required this.onExternalPlay,
+    required this.onRenameFile,
+    required this.onMoveMediaResource,
+    required this.onMoveCloudFile,
+    required this.onClearMetadata,
     required this.onRecognize,
     required this.onManualMatch,
     required this.onRemoveRecords,
@@ -4474,7 +5501,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   List<String> _heroBackdropPaths(MediaLibraryItem item) {
     final images = _tmdbDetails?['images'];
     final paths = <String>[
-      if (item.backdropPath?.isNotEmpty == true) item.backdropPath!,
+      ?mediaBackdropPath(item),
       if (_tmdbDetails?['backdrop_path']?.toString().isNotEmpty == true)
         _tmdbDetails!['backdrop_path'].toString(),
       if (images is Map) ..._imagePaths(images['backdrops']),
@@ -4688,6 +5715,13 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         Icons.rate_review_rounded,
       ));
     }
+    if (item.imdbID != null && item.imdbID!.isNotEmpty) {
+      links.add((
+        'IMDB',
+        'https://www.imdb.com/title/${item.imdbID}/',
+        Icons.star_rounded,
+      ));
+    }
     if (links.isEmpty) return const SizedBox.shrink();
     return Wrap(
       spacing: 8,
@@ -4727,6 +5761,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           runSpacing: 10,
           children: [
             _metadataPill(context, 'TMDB', item.tmdbID?.toString() ?? '未匹配'),
+            if (item.doubanID != null && item.doubanID!.isNotEmpty)
+              _metadataPill(context, '豆瓣', item.doubanID!),
+            if (item.imdbID != null && item.imdbID!.isNotEmpty)
+              _metadataPill(context, 'IMDB', item.imdbID!),
             _metadataPill(context, '资源', '${widget.work.resources.length}'),
             _metadataPill(context, '大小', _resource.file.formattedSize),
             if (parsed.resolution != null)
@@ -4748,6 +5786,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               : '未获取',
         ),
         _metadataRow(context, '云盘位置', _resource.file.cloudPath),
+        if (item.doubanID != null && item.doubanID!.isNotEmpty)
+          _metadataRow(context, '豆瓣 ID', item.doubanID!),
+        if (item.imdbID != null && item.imdbID!.isNotEmpty)
+          _metadataRow(context, 'IMDB ID', item.imdbID!),
       ],
     );
   }
@@ -5003,67 +6045,140 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       controller: _removeMenuController,
       popover: (_) => SizedBox(
         width: 292,
-        child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 8, 7),
-                child: Text(
-                  '删除',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: cs.mutedForeground,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: (MediaQuery.sizeOf(context).height - 96).clamp(
+              260.0,
+              520.0,
+            ),
+          ),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 7),
+                    child: Text(
+                      '资源操作',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: cs.mutedForeground,
+                      ),
+                    ),
                   ),
-                ),
+                  _removalMenuItem(
+                    icon: LucideIcons.folderInput,
+                    title: '移动到其他媒体库',
+                    description: '选择移动层级和目标媒体目录',
+                    destructive: false,
+                    onPressed: () => widget.onMoveMediaResource(_resource),
+                  ),
+                  if (widget.work.resources.any(
+                        (item) => item.tmdbID != null,
+                      ) ||
+                      widget.work.resources.any(
+                        (item) => item.doubanID?.trim().isNotEmpty == true,
+                      )) ...[
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 5),
+                      child: ShadSeparator.horizontal(),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
+                      child: Text(
+                        '清理刮削信息',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (widget.work.resources.any(
+                    (item) => item.tmdbID != null,
+                  )) ...[
+                    const SizedBox(height: 3),
+                    _removalMenuItem(
+                      icon: LucideIcons.unlink,
+                      title: '清理 TMDB 信息',
+                      description: '保留豆瓣信息（如有）',
+                      onPressed: () =>
+                          widget.onClearMetadata(_MediaMetadataSource.tmdb),
+                    ),
+                  ],
+                  if (widget.work.resources.any(
+                    (item) => item.doubanID?.trim().isNotEmpty == true,
+                  )) ...[
+                    const SizedBox(height: 3),
+                    _removalMenuItem(
+                      icon: LucideIcons.unlink,
+                      title: '清理豆瓣信息',
+                      description: '保留 TMDB 信息（如有）',
+                      onPressed: () =>
+                          widget.onClearMetadata(_MediaMetadataSource.douban),
+                    ),
+                  ],
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 5),
+                    child: ShadSeparator.horizontal(),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
+                    child: Text(
+                      '删除',
+                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                    ),
+                  ),
+                  _removalMenuItem(
+                    icon: LucideIcons.fileX,
+                    title: '仅删除条目（默认）',
+                    description: '保留云盘文件，强制扫描后可重新加入',
+                    onPressed: () => _removeResource(_resource),
+                  ),
+                  const SizedBox(height: 3),
+                  _removalMenuItem(
+                    icon: LucideIcons.trash2,
+                    title: '删除文件',
+                    description: '同时清理媒体库条目',
+                    onPressed: () => _deleteResourceFile(_resource),
+                  ),
+                  if (isSeries && parsed.episode != null) ...[
+                    const SizedBox(height: 3),
+                    _removalMenuItem(
+                      icon: LucideIcons.listX,
+                      title: '移除第 ${parsed.season ?? 1} 季第 ${parsed.episode} 集',
+                      description: episodeRecords.length > 1
+                          ? '包含 ${episodeRecords.length} 个资源版本'
+                          : '移除当前单集记录',
+                      onPressed: () => _removeEpisode(_resource),
+                    ),
+                  ],
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 5),
+                    child: ShadSeparator.horizontal(),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
+                    child: Text(
+                      '批量删除条目',
+                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                    ),
+                  ),
+                  _removalMenuItem(
+                    icon: LucideIcons.trash2,
+                    title: isSeries ? '移除当前媒体库内整部剧集' : '移除当前媒体库内整部电影',
+                    description: isSeries
+                        ? '${libraryRecords.length} 个资源记录'
+                        : '${libraryRecords.length} 个资源版本',
+                    onPressed: _removeCurrentLibraryWork,
+                  ),
+                ],
               ),
-              _removalMenuItem(
-                icon: LucideIcons.fileX,
-                title: '仅删除条目（默认）',
-                description: '保留云盘文件，强制扫描后可重新加入',
-                onPressed: () => _removeResource(_resource),
-              ),
-              const SizedBox(height: 3),
-              _removalMenuItem(
-                icon: LucideIcons.trash2,
-                title: '删除文件',
-                description: '同时清理媒体库条目',
-                onPressed: () => _deleteResourceFile(_resource),
-              ),
-              if (isSeries && parsed.episode != null) ...[
-                const SizedBox(height: 3),
-                _removalMenuItem(
-                  icon: LucideIcons.listX,
-                  title: '移除第 ${parsed.season ?? 1} 季第 ${parsed.episode} 集',
-                  description: episodeRecords.length > 1
-                      ? '包含 ${episodeRecords.length} 个资源版本'
-                      : '移除当前单集记录',
-                  onPressed: () => _removeEpisode(_resource),
-                ),
-              ],
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 5),
-                child: ShadSeparator.horizontal(),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
-                child: Text(
-                  '批量删除条目',
-                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-                ),
-              ),
-              _removalMenuItem(
-                icon: LucideIcons.trash2,
-                title: isSeries ? '移除当前媒体库内整部剧集' : '移除当前媒体库内整部电影',
-                description: isSeries
-                    ? '${libraryRecords.length} 个资源记录'
-                    : '${libraryRecords.length} 个资源版本',
-                onPressed: _removeCurrentLibraryWork,
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -5089,14 +6204,16 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     required String title,
     required String description,
     required Future<void> Function() onPressed,
+    bool destructive = true,
   }) {
     final cs = ShadTheme.of(context).colorScheme;
+    final color = destructive ? cs.destructive : cs.foreground;
     return ShadButton.ghost(
       width: double.infinity,
       height: 54,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       mainAxisAlignment: MainAxisAlignment.start,
-      leading: Icon(icon, size: 17, color: cs.destructive),
+      leading: Icon(icon, size: 17, color: color),
       onPressed: _removalBlocked
           ? null
           : () {
@@ -5116,7 +6233,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: cs.destructive,
+                color: color,
               ),
             ),
             const SizedBox(height: 2),
@@ -5672,6 +6789,17 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           ),
           const Divider(height: 8),
           ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.filePenLine, size: 16),
+            onPressed: () => unawaited(widget.onRenameFile(resource)),
+            child: const Text('重命名'),
+          ),
+          ShadContextMenuItem.inset(
+            leading: const Icon(LucideIcons.folderInput, size: 16),
+            onPressed: () => unawaited(widget.onMoveCloudFile(resource)),
+            child: const Text('移动到…'),
+          ),
+          const Divider(height: 8),
+          ShadContextMenuItem.inset(
             leading: Icon(LucideIcons.trash2, size: 16, color: cs.destructive),
             onPressed: _removalBlocked
                 ? null
@@ -5927,8 +7055,7 @@ class _ManualTMDBMatchDialogState
             final target = raw['target'];
             if (target is! Map) return null;
             final candidate = Map<String, dynamic>.from(target);
-            final cardSubtitle =
-                (candidate['card_subtitle'] ?? '').toString();
+            final cardSubtitle = (candidate['card_subtitle'] ?? '').toString();
             final type = cardSubtitle.contains('集') ? 'tv' : 'movie';
             if (mediaKind != 'auto' && type != mediaKind) return null;
             candidate['media_type'] = type;
@@ -5938,7 +7065,7 @@ class _ManualTMDBMatchDialogState
             if (yearStr.length >= 4) {
               candidate['release_date'] = '$yearStr-01-01';
             }
-            candidate['poster_path'] = candidate['cover_url']?.toString();
+            candidate['poster_path'] = doubanPosterPath(candidate);
             candidate['overview'] = cardSubtitle;
             final rating = candidate['rating'];
             if (rating is Map) {
@@ -6174,8 +7301,9 @@ class _ManualTMDBMatchDialogState
                         ),
                         if (candidate['_source'] == 'douban')
                           ShadBadge(
-                            backgroundColor: const Color(0xFF22A559)
-                                .withValues(alpha: 0.12),
+                            backgroundColor: const Color(
+                              0xFF22A559,
+                            ).withValues(alpha: 0.12),
                             child: const Text(
                               '豆瓣',
                               style: TextStyle(
