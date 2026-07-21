@@ -1328,7 +1328,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final queuedRecognitionIDs = <String>{};
       Future<void> recognitionTail = Future.value();
       var scheduledRecognitionBatches = 0;
+      var recognizedCount = 0;
+      var unmatchedCount = 0;
       _appendScanLog('$modeLabel，媒体识别并发数：$concurrency');
+      if (tmdbApiKey.trim().isEmpty) {
+        _appendScanLog('未配置 TMDB API Key，本次仅建立本地媒体索引，不会执行 TMDB 自动识别');
+      }
 
       Future<void> indexBatch(List<CloudFile> files) async {
         final pending = files.toList();
@@ -1455,6 +1460,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             if (_scanShouldAbort(library.id)) return;
             unique[file.id] = item;
             completed += 1;
+            if (item.tmdbID == null) {
+              unmatchedCount += 1;
+            } else {
+              recognizedCount += 1;
+            }
             final visible = unique.values.toList()
               ..sort(
                 (a, b) =>
@@ -1628,8 +1638,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         aborted
             ? '扫描已停止，已保留 ${items.length} 个条目'
             : removedMissing == 0
-            ? '$modeLabel完成，共入库 ${items.length} 个条目'
-            : '$modeLabel完成，共入库 ${items.length} 个条目，已清理 $removedMissing 个失效条目',
+            ? '$modeLabel完成，本次处理 $completed 个资源，识别 $recognizedCount 个，未匹配 $unmatchedCount 个；媒体库现有 ${items.length} 个条目'
+            : '$modeLabel完成，本次处理 $completed 个资源，识别 $recognizedCount 个，未匹配 $unmatchedCount 个；媒体库现有 ${items.length} 个条目，已清理 $removedMissing 个失效条目',
       );
       _updateScanTask(
         taskID,
@@ -3604,6 +3614,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         fallback,
         primaryTitle: searchTitle,
       );
+      if (titleVariants.isEmpty) {
+        _appendScanLog(
+          '[同步识别][调试] TMDB 跳过：无法从文件名解析有效标题，文件=${fallback.file.name}',
+        );
+        return fallback;
+      }
       final taggedCandidate = await _tmdbCandidateFromPathTag(
         fallback,
         apiKey,
@@ -3623,8 +3639,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         year: parsed.year,
       );
       final values = searchResult.candidates;
-      if (values.isEmpty) return fallback;
-      if (titleVariants.isEmpty) return fallback;
+      if (values.isEmpty) {
+        _appendScanLog(
+          '[同步识别][调试] TMDB 未命中：${fallback.file.name}；'
+          '${_describeTMDBRecognitionAttempts(searchResult.attempts)}',
+        );
+        return fallback;
+      }
       var refinedValues = _refineTMDBCandidates(fallback, parsed, values);
       if (refinedValues.length > 1) {
         final resolution = await _resolveAmbiguousTMDBCandidates(
@@ -3647,7 +3668,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         _appendScanLog(
           '[同步识别][调试] 自动识别未完成：候选收敛后仍有 '
           '${refinedValues.length} 条，保留为未识别以避免误匹配。'
-          '文件=${fallback.file.name}',
+          '文件=${fallback.file.name}；'
+          '${_describeTMDBRecognitionAttempts(searchResult.attempts)}',
         );
         return fallback;
       }
@@ -3705,7 +3727,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           candidate = map;
         }
       }
-      if (candidate == null) return fallback;
+      if (candidate == null) {
+        _appendScanLog(
+          '[同步识别][调试] TMDB 候选被过滤：${fallback.file.name}；'
+          '${_describeTMDBRecognitionAttempts(searchResult.attempts)}',
+        );
+        return fallback;
+      }
       var item = _itemFromTMDBCandidate(fallback, candidate);
       if (item.tmdbID == null) return item;
       try {
@@ -3738,6 +3766,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       return fallback;
     }
+  }
+
+  String _describeTMDBRecognitionAttempts(List<String> attempts) {
+    if (attempts.isEmpty) return '没有可用的 TMDB 查询尝试';
+    final visible = attempts.take(4).join('；');
+    final remaining = attempts.length - 4;
+    return remaining <= 0 ? '查询尝试：$visible' : '查询尝试：$visible；另有 $remaining 次';
   }
 
   /// fs_detail/search responses sometimes return only a bare filename. Keep
