@@ -10,6 +10,7 @@ TARGET_BRANCH="main"
 PUBSPEC_FILE="pubspec.yaml"
 REQUESTED_VERSION=""
 DRY_RUN=false
+YES=false
 RETURN_TO_SOURCE_ON_ERROR=false
 
 usage() {
@@ -23,6 +24,7 @@ usage() {
   --remote <远程>     Git 远程仓库。默认: github
   --pubspec <文件>    pubspec.yaml 路径。默认: pubspec.yaml
   --dry-run           显示发布计划，不修改文件或 Git 状态
+  -y, --yes           自动确认发布流程
   -h, --help          显示帮助信息
 
 版本规则:
@@ -214,6 +216,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --dry-run)
       DRY_RUN=true
+      shift
+      ;;
+    -y|--yes)
+      YES=true
       shift
       ;;
     -h|--help)
