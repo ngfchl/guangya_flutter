@@ -284,6 +284,7 @@ class MediaLibraryState {
   final List<MediaLibraryScanLog> scanLogs;
   final String searchQuery;
   final MediaLibrarySort sort;
+  final MediaSortDirection sortDirection;
   final String? errorMessage;
   final String? statusMessage;
 
@@ -305,6 +306,7 @@ class MediaLibraryState {
     this.scanLogs = const [],
     this.searchQuery = '',
     this.sort = MediaLibrarySort.addedAt,
+    this.sortDirection = MediaSortDirection.descending,
     this.errorMessage,
     this.statusMessage,
   });
@@ -389,6 +391,7 @@ class MediaLibraryState {
     List<MediaLibraryScanLog>? scanLogs,
     String? searchQuery,
     MediaLibrarySort? sort,
+    MediaSortDirection? sortDirection,
     String? errorMessage,
     bool clearError = false,
     String? statusMessage,
@@ -420,6 +423,7 @@ class MediaLibraryState {
       scanLogs: scanLogs ?? this.scanLogs,
       searchQuery: searchQuery ?? this.searchQuery,
       sort: sort ?? this.sort,
+      sortDirection: sortDirection ?? this.sortDirection,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       statusMessage: clearStatus ? null : (statusMessage ?? this.statusMessage),
     );
@@ -505,6 +509,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     MediaLibraryBrowseFilter filter = MediaLibraryBrowseFilter.all,
     String search = '',
     bool reset = true,
+    bool force = false,
   }) async {
     final serial = reset ? ++_contentLoadSerial : _contentLoadSerial;
     await load();
@@ -518,12 +523,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         filter == MediaLibraryBrowseFilter.series ||
         filter == MediaLibraryBrowseFilter.unmatched;
     final sort = state.sort;
+    final direction = state.sortDirection;
     final key =
-        '$selectedID|$home|${filter.name}|$normalizedSearch|${sort.name}';
+        '$selectedID|$home|${filter.name}|$normalizedSearch|${sort.name}|${direction.name}';
     if (!reset && (_contentKey != key || !state.hasMoreContent)) return;
     if (reset &&
         _contentKey == key &&
-        (global ? state.allItems : state.items).isNotEmpty) {
+        (global ? state.allItems : state.items).isNotEmpty &&
+        !force) {
       return;
     }
     if (state.isLoadingMore) return;
@@ -581,6 +588,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           limit: pageSize,
           offset: _contentOffset,
           sort: sort,
+          direction: direction,
+          distinctWorks: true,
         );
         if (serial != _contentLoadSerial || _contentKey != key) return;
         _contentOffset += page.length;
@@ -2909,6 +2918,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<void> setSort(MediaLibrarySort sort) async {
     if (sort == state.sort) return;
     state = state.copyWith(sort: sort);
+    await loadContent(
+      home: _contentHome,
+      filter: _contentFilter,
+      search: _contentSearch,
+    );
+  }
+
+  Future<void> setSortDirection(MediaSortDirection direction) async {
+    if (direction == state.sortDirection) return;
+    state = state.copyWith(sortDirection: direction);
     await loadContent(
       home: _contentHome,
       filter: _contentFilter,

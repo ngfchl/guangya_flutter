@@ -15,6 +15,7 @@ import '../app/app_theme.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
+import '../models/media_navigation.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
@@ -663,6 +664,14 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                 mediaLibrarySection: _mediaLibrarySection,
                 mediaHomeSelected: _mediaHomeSelected,
                 onMediaLibrarySectionChanged: _changeMediaLibrarySection,
+                onMediaSortChanged: (sort) => unawaited(
+                  ref.read(mediaLibraryProvider.notifier).setSort(sort),
+                ),
+                onMediaSortDirectionChanged: (direction) => unawaited(
+                  ref
+                      .read(mediaLibraryProvider.notifier)
+                      .setSortDirection(direction),
+                ),
                 hideMediaIdentity:
                     _mode == WorkspaceMode.media && _mediaActiveTool != null,
                 uploadProgress: fp.uploadProgress,
@@ -1090,6 +1099,8 @@ class _TopBar extends StatelessWidget {
   final MediaLibraryBrowseFilter mediaLibrarySection;
   final bool mediaHomeSelected;
   final ValueChanged<MediaLibraryBrowseFilter> onMediaLibrarySectionChanged;
+  final ValueChanged<MediaLibrarySort> onMediaSortChanged;
+  final ValueChanged<MediaSortDirection> onMediaSortDirectionChanged;
   final bool hideMediaIdentity;
   final UploadProgress? uploadProgress;
   final MediaDetailHeader? mediaDetail;
@@ -1109,6 +1120,8 @@ class _TopBar extends StatelessWidget {
     required this.mediaLibrarySection,
     required this.mediaHomeSelected,
     required this.onMediaLibrarySectionChanged,
+    required this.onMediaSortChanged,
+    required this.onMediaSortDirectionChanged,
     required this.hideMediaIdentity,
     required this.uploadProgress,
     required this.mediaDetail,
@@ -1340,6 +1353,15 @@ class _TopBar extends StatelessWidget {
               Expanded(child: searchOpen ? searchField : identity),
               if (!searchOpen) ...[
                 const SizedBox(width: 4),
+                if (!mediaHomeSelected) ...[
+                  _MediaSortTopAction(
+                    selected: mediaState.sort,
+                    direction: mediaState.sortDirection,
+                    onSelected: onMediaSortChanged,
+                    onDirectionSelected: onMediaSortDirectionChanged,
+                  ),
+                  const SizedBox(width: 4),
+                ],
                 _TopBarIconButton(
                   tooltip: '搜索影视资源',
                   icon: Icons.search_rounded,
@@ -1382,6 +1404,15 @@ class _TopBar extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(width: 8),
+                if (!mediaHomeSelected) ...[
+                  _MediaSortTopAction(
+                    selected: mediaState.sort,
+                    direction: mediaState.sortDirection,
+                    onSelected: onMediaSortChanged,
+                    onDirectionSelected: onMediaSortDirectionChanged,
+                  ),
+                  const SizedBox(width: 4),
+                ],
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 160),
                   width: searchOpen ? (narrow ? 220 : 360) : 40,
@@ -1782,6 +1813,104 @@ class _TopBarIconButton extends StatelessWidget {
         padding: EdgeInsets.zero,
         onPressed: onTap,
         child: Icon(icon, size: 18, color: cs.mutedForeground),
+      ),
+    );
+  }
+}
+
+class _MediaSortTopAction extends StatefulWidget {
+  final MediaLibrarySort selected;
+  final MediaSortDirection direction;
+  final ValueChanged<MediaLibrarySort> onSelected;
+  final ValueChanged<MediaSortDirection> onDirectionSelected;
+
+  const _MediaSortTopAction({
+    required this.selected,
+    required this.direction,
+    required this.onSelected,
+    required this.onDirectionSelected,
+  });
+
+  @override
+  State<_MediaSortTopAction> createState() => _MediaSortTopActionState();
+}
+
+class _MediaSortTopActionState extends State<_MediaSortTopAction> {
+  final _controller = ShadPopoverController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadPopover(
+      controller: _controller,
+      popover: (_) => SizedBox(
+        width: 148,
+        child: Padding(
+          padding: const EdgeInsets.all(5),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final value in MediaLibrarySort.values)
+                SizedBox(
+                  width: double.infinity,
+                  child: ShadButton.ghost(
+                    onPressed: () {
+                      _controller.hide();
+                      widget.onSelected(value);
+                    },
+                    leading: Icon(
+                      value == widget.selected
+                          ? Icons.check_rounded
+                          : Icons.sort_rounded,
+                      size: 16,
+                      color: value == widget.selected
+                          ? cs.primary
+                          : cs.mutedForeground,
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(value.title),
+                    ),
+                  ),
+                ),
+              const Divider(height: 12),
+              for (final direction in MediaSortDirection.values)
+                SizedBox(
+                  width: double.infinity,
+                  child: ShadButton.ghost(
+                    onPressed: () {
+                      _controller.hide();
+                      widget.onDirectionSelected(direction);
+                    },
+                    leading: Icon(
+                      direction == MediaSortDirection.ascending
+                          ? Icons.arrow_upward_rounded
+                          : Icons.arrow_downward_rounded,
+                      size: 16,
+                      color: direction == widget.direction
+                          ? cs.primary
+                          : cs.mutedForeground,
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(direction.title),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      child: _TopBarIconButton(
+        tooltip: '排序：${widget.selected.title} · ${widget.direction.title}',
+        icon: Icons.swap_vert_rounded,
+        onTap: _controller.toggle,
       ),
     );
   }

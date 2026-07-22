@@ -156,6 +156,8 @@ class MediaLibraryStore {
     int limit = 100,
     int offset = 0,
     MediaLibrarySort sort = MediaLibrarySort.addedAt,
+    MediaSortDirection direction = MediaSortDirection.descending,
+    bool distinctWorks = false,
   }) async {
     final db = await _db;
     await _ensureMediaItemLocationColumns(db);
@@ -200,33 +202,70 @@ class MediaLibraryStore {
         args.addAll(List<Object?>.filled(7, '%$query%'));
       }
     }
-    final rows = await db.query(
-      'media_items',
-      columns: _itemMetadataColumns,
-      where: where.isEmpty ? null : where.join(' AND '),
-      whereArgs: args.isEmpty ? null : args,
-      orderBy: _mediaItemsOrderBy(sort),
-      limit: limit.clamp(1, 500),
-      offset: offset.clamp(0, 1 << 31),
-    );
+    final safeLimit = limit.clamp(1, 500);
+    final safeOffset = offset.clamp(0, 1 << 31);
+    final rows = distinctWorks
+        ? await db.rawQuery(
+            '''
+            WITH keyed_items AS (
+              SELECT
+                rowid AS item_rowid,
+                COALESCE(media_kind, 'unknown') || ':' || CASE
+                  WHEN tmdb_id IS NOT NULL THEN 'tmdb:' || tmdb_id
+                  WHEN douban_id IS NOT NULL AND douban_id != ''
+                    THEN 'douban:' || douban_id
+                  ELSE 'title:' || LOWER(REPLACE(REPLACE(
+                    COALESCE(title, cloud_name, ''), ' ', ''), ',', '')) ||
+                    ':' || SUBSTR(COALESCE(release_date, ''), 1, 4)
+                END AS work_key
+              FROM media_items
+              ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
+            ), selected_works AS (
+              SELECT work_key, MIN(item_rowid) AS item_rowid
+              FROM keyed_items
+              GROUP BY work_key
+            )
+            SELECT media_items.*
+            FROM selected_works
+            JOIN media_items ON media_items.rowid = selected_works.item_rowid
+            ORDER BY ${_mediaItemsOrderBy(sort, direction)}
+            LIMIT ? OFFSET ?
+            ''',
+            [...args, safeLimit, safeOffset],
+          )
+        : await db.query(
+            'media_items',
+            columns: _itemMetadataColumns,
+            where: where.isEmpty ? null : where.join(' AND '),
+            whereArgs: args.isEmpty ? null : args,
+            orderBy: _mediaItemsOrderBy(sort, direction),
+            limit: safeLimit,
+            offset: safeOffset,
+          );
     return rows.map(_itemFromRow).toList(growable: false);
   }
 
-  String _mediaItemsOrderBy(MediaLibrarySort sort) => switch (sort) {
-    MediaLibrarySort.addedAt =>
-      'updated_at DESC, title COLLATE NOCASE, library_id, file_id',
-    MediaLibrarySort.releaseDate =>
-      "release_date IS NULL OR release_date = '', release_date DESC, "
-          'title COLLATE NOCASE, library_id, file_id',
-    MediaLibrarySort.title =>
-      'title COLLATE NOCASE, release_date DESC, library_id, file_id',
-    MediaLibrarySort.doubanRating =>
-      'douban_rating IS NULL, douban_rating DESC, '
-          'title COLLATE NOCASE, library_id, file_id',
-    MediaLibrarySort.tmdbRating =>
-      'tmdb_rating IS NULL, tmdb_rating DESC, '
-          'title COLLATE NOCASE, library_id, file_id',
-  };
+  String _mediaItemsOrderBy(
+    MediaLibrarySort sort,
+    MediaSortDirection direction,
+  ) {
+    final order = direction == MediaSortDirection.ascending ? 'ASC' : 'DESC';
+    return switch (sort) {
+      MediaLibrarySort.addedAt =>
+        'updated_at $order, title COLLATE NOCASE, library_id, file_id',
+      MediaLibrarySort.releaseDate =>
+        "release_date IS NULL OR release_date = '', release_date $order, "
+            'title COLLATE NOCASE, library_id, file_id',
+      MediaLibrarySort.title =>
+        'title COLLATE NOCASE $order, release_date DESC, library_id, file_id',
+      MediaLibrarySort.doubanRating =>
+        'douban_rating IS NULL, douban_rating $order, '
+            'title COLLATE NOCASE, library_id, file_id',
+      MediaLibrarySort.tmdbRating =>
+        'tmdb_rating IS NULL, tmdb_rating $order, '
+            'title COLLATE NOCASE, library_id, file_id',
+    };
+  }
 
   Future<List<MediaLibraryItem>> workPreviewPage({
     required String libraryID,

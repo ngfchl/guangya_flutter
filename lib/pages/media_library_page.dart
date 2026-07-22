@@ -2218,6 +2218,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 filter: _wallFilter,
                 search: widget.searchTitle ?? '',
                 reset: true,
+                force: true,
               );
             },
             child: NotificationListener<ScrollNotification>(
@@ -2312,48 +2313,12 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               Expanded(child: wallContent),
             ],
           );
-    final browseContent = widget.showHomePanel
-        ? content
-        : Column(
-            children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: SizedBox(
-                  width: 180,
-                  child: ShadSelect<MediaLibrarySort>(
-                    key: ValueKey('media-sort:${state.sort.name}'),
-                    initialValue: state.sort,
-                    minWidth: 180,
-                    placeholder: const Text('排序方式'),
-                    selectedOptionBuilder: (_, value) => Row(
-                      children: [
-                        const Icon(Icons.swap_vert_rounded, size: 16),
-                        const SizedBox(width: 7),
-                        Text(value.title),
-                      ],
-                    ),
-                    options: [
-                      for (final value in MediaLibrarySort.values)
-                        ShadOption(value: value, child: Text(value.title)),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        unawaited(_mediaNotifier.setSort(value));
-                      }
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Expanded(child: content),
-            ],
-          );
-    if (!state.isScanning) return browseContent;
+    if (!state.isScanning) return content;
     return Column(
       children: [
         _scanProgress(context, state),
         const SizedBox(height: 10),
-        Expanded(child: browseContent),
+        Expanded(child: content),
       ],
     );
   }

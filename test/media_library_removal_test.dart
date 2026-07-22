@@ -71,6 +71,7 @@ class _FakeMediaLibraryStore extends MediaLibraryStore {
   bool initialized = false;
   int removeFilesFromAllFoldersCalls = 0;
   int removeLiveFileIDsCalls = 0;
+  int itemPageCalls = 0;
 
   _FakeMediaLibraryStore({
     required List<MediaLibraryDefinition> definitions,
@@ -117,43 +118,63 @@ class _FakeMediaLibraryStore extends MediaLibraryStore {
     int limit = 100,
     int offset = 0,
     MediaLibrarySort sort = MediaLibrarySort.addedAt,
+    MediaSortDirection direction = MediaSortDirection.descending,
+    bool distinctWorks = false,
   }) async {
+    itemPageCalls += 1;
     final delay = libraryID == null ? null : itemDelays[libraryID];
     if (delay != null) await Future<void>.delayed(delay);
     final query = search.trim().toLowerCase();
-    final values =
-        records
-            .where((item) {
-              if (libraryID != null && item.libraryID != libraryID) {
-                return false;
-              }
-              if (mediaKind != null && item.mediaKind?.name != mediaKind) {
-                return false;
-              }
-              if (unmatchedOnly && item.isMatched) {
-                return false;
-              }
-              if (query.isNotEmpty && !item.matchesSearch(query)) {
-                return false;
-              }
-              return true;
-            })
-            .toList(growable: false)
-          ..sort(
-            (a, b) => switch (sort) {
-              MediaLibrarySort.addedAt => b.updatedAt.compareTo(a.updatedAt),
-              MediaLibrarySort.releaseDate => b.releaseDate.compareTo(
-                a.releaseDate,
-              ),
-              MediaLibrarySort.title => a.title.compareTo(b.title),
-              MediaLibrarySort.doubanRating => (b.doubanRating ?? -1).compareTo(
-                a.doubanRating ?? -1,
-              ),
-              MediaLibrarySort.tmdbRating => (b.tmdbRating ?? -1).compareTo(
-                a.tmdbRating ?? -1,
-              ),
-            },
-          );
+    var values = records
+        .where((item) {
+          if (libraryID != null && item.libraryID != libraryID) {
+            return false;
+          }
+          if (mediaKind != null && item.mediaKind?.name != mediaKind) {
+            return false;
+          }
+          if (unmatchedOnly && item.isMatched) {
+            return false;
+          }
+          if (query.isNotEmpty && !item.matchesSearch(query)) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
+    if (distinctWorks) {
+      final works = <String, MediaLibraryItem>{};
+      for (final item in values) {
+        final kind = item.mediaKind?.name ?? 'unknown';
+        final title = item.title.toLowerCase().replaceAll(
+          RegExp(r'[^a-z0-9\u4e00-\u9fff]'),
+          '',
+        );
+        final key = item.tmdbID != null
+            ? '$kind:tmdb:${item.tmdbID}'
+            : item.doubanID?.isNotEmpty == true
+            ? '$kind:douban:${item.doubanID}'
+            : '$kind:$title:${item.year}';
+        works.putIfAbsent(key, () => item);
+      }
+      values = works.values.toList(growable: false);
+    }
+    values.sort((a, b) {
+      final comparison = switch (sort) {
+        MediaLibrarySort.addedAt => a.updatedAt.compareTo(b.updatedAt),
+        MediaLibrarySort.releaseDate => a.releaseDate.compareTo(b.releaseDate),
+        MediaLibrarySort.title => a.title.compareTo(b.title),
+        MediaLibrarySort.doubanRating => (a.doubanRating ?? -1).compareTo(
+          b.doubanRating ?? -1,
+        ),
+        MediaLibrarySort.tmdbRating => (a.tmdbRating ?? -1).compareTo(
+          b.tmdbRating ?? -1,
+        ),
+      };
+      return direction == MediaSortDirection.descending
+          ? -comparison
+          : comparison;
+    });
     return values.skip(offset).take(limit).toList(growable: false);
   }
 
@@ -316,8 +337,52 @@ void main() {
     await notifier.setSort(MediaLibrarySort.doubanRating);
     expect(notifier.state.items.map((item) => item.id), ['low', 'high']);
     await notifier.setSort(MediaLibrarySort.title);
+    expect(notifier.state.items.map((item) => item.id), ['low', 'high']);
+    await notifier.setSortDirection(MediaSortDirection.ascending);
     expect(notifier.state.items.map((item) => item.id), ['high', 'low']);
   });
+
+  test('forced refresh reloads an already cached media page', () async {
+    final store = _FakeMediaLibraryStore(
+      definitions: const [_libraryA],
+      records: [_item(_libraryA.id, 'a')],
+    );
+    final notifier = MediaLibraryNotifier(store: store);
+    addTearDown(notifier.dispose);
+
+    await notifier.load();
+    await notifier.loadContent();
+    await notifier.loadContent();
+    expect(store.itemPageCalls, 1);
+
+    await notifier.loadContent(force: true);
+    expect(store.itemPageCalls, 2);
+  });
+
+  test(
+    'library pages use works rather than episode files as page units',
+    () async {
+      final store = _FakeMediaLibraryStore(
+        definitions: const [_libraryA],
+        records: [
+          for (var work = 0; work < 20; work++)
+            for (var episode = 1; episode <= 3; episode++)
+              _episode(_libraryA.id, work, episode),
+        ],
+      );
+      final notifier = MediaLibraryNotifier(store: store);
+      addTearDown(notifier.dispose);
+
+      await notifier.load();
+      await notifier.loadContent();
+
+      expect(notifier.state.items, hasLength(20));
+      expect(
+        notifier.state.items.map((item) => item.tmdbID).toSet(),
+        hasLength(20),
+      );
+    },
+  );
 
   group('MediaLibraryNotifier.transferMediaRecords', () {
     test(

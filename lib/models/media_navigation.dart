@@ -7,6 +7,15 @@ enum MediaLibraryBrowseFilter { all, movies, series, collections, unmatched }
 
 enum MediaLibrarySort { addedAt, releaseDate, title, doubanRating, tmdbRating }
 
+enum MediaSortDirection { ascending, descending }
+
+extension MediaSortDirectionTitle on MediaSortDirection {
+  String get title => switch (this) {
+    MediaSortDirection.ascending => '升序',
+    MediaSortDirection.descending => '降序',
+  };
+}
+
 extension MediaLibrarySortTitle on MediaLibrarySort {
   String get title => switch (this) {
     MediaLibrarySort.addedAt => '入库时间',
