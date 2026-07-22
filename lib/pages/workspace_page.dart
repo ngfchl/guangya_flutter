@@ -1071,6 +1071,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       showHomePanel: _mediaHomeSelected,
       browseFilter: _mediaBrowseFilter,
       librarySection: _mediaLibrarySection,
+      onOpenLibrary: _selectMediaLibrary,
     );
   }
 }

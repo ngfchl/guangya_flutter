@@ -685,6 +685,7 @@ class MediaLibraryPage extends ConsumerStatefulWidget {
   final MediaLibraryBrowseFilter browseFilter;
   final MediaLibraryBrowseFilter librarySection;
   final String? searchTitle;
+  final ValueChanged<String>? onOpenLibrary;
 
   const MediaLibraryPage({
     super.key,
@@ -695,6 +696,7 @@ class MediaLibraryPage extends ConsumerStatefulWidget {
     this.browseFilter = MediaLibraryBrowseFilter.all,
     this.librarySection = MediaLibraryBrowseFilter.all,
     this.searchTitle,
+    this.onOpenLibrary,
   });
 
   static void showCreateDialog(BuildContext context, WidgetRef ref) {
@@ -1666,6 +1668,21 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(mediaLibraryProvider);
+    if (widget.showHomePanel &&
+        !state.isLoading &&
+        state.allItems.isEmpty &&
+        state.globalStatistics.total > 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(
+            _mediaNotifier.loadContent(
+              home: true,
+              filter: MediaLibraryBrowseFilter.all,
+            ),
+          );
+        }
+      });
+    }
     ref.listen<MediaDetailHeader?>(activeMediaDetailHeaderProvider, (
       previous,
       next,
@@ -2219,67 +2236,67 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 ),
                 padding: const EdgeInsets.only(bottom: 16),
                 child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final compact = MediaQuery.sizeOf(context).width < 720;
-                  final spacing = compact ? 10.0 : 14.0;
-                  final mobileColumns = constraints.maxWidth >= 420 ? 3 : 2;
-                  final cardWidth = compact
-                      ? ((constraints.maxWidth -
-                                spacing * (mobileColumns - 1)) /
-                            mobileColumns)
-                      : 142.0;
-                  final cardHeight = cardWidth / 0.52;
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Wrap(
-                        spacing: spacing,
-                        runSpacing: compact ? 14 : 18,
-                        children: [
-                          for (final work in works)
-                            SizedBox(
-                              width: cardWidth,
-                              height: cardHeight,
-                              child: _MediaPosterTile(
-                                work: work,
-                                onOpen: () => _openDetail(work),
-                                onDownload: () => ref
-                                    .read(fileProvider.notifier)
-                                    .downloadFile(work.primary.file),
-                                onRecognize: state.isScanning
-                                    ? null
-                                    : () {
-                                        _openDetail(work);
-                                        unawaited(
-                                          _refreshAndRecognizeDetail(work),
-                                        );
-                                      },
-                                onManualMatch: () {
-                                  _openDetail(work);
-                                  unawaited(
-                                    _showManualTMDBMatch(work, work.primary),
-                                  );
-                                },
+                  builder: (context, constraints) {
+                    final compact = MediaQuery.sizeOf(context).width < 720;
+                    final spacing = compact ? 10.0 : 14.0;
+                    final mobileColumns = constraints.maxWidth >= 420 ? 3 : 2;
+                    final cardWidth = compact
+                        ? ((constraints.maxWidth -
+                                  spacing * (mobileColumns - 1)) /
+                              mobileColumns)
+                        : 142.0;
+                    final cardHeight = cardWidth / 0.52;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Wrap(
+                          spacing: spacing,
+                          runSpacing: compact ? 14 : 18,
+                          children: [
+                            for (final work in works)
+                              SizedBox(
+                                width: cardWidth,
+                                height: cardHeight,
+                                child: _MediaPosterTile(
+                                  work: work,
+                                  onOpen: () => _openDetail(work),
+                                  onDownload: () => ref
+                                      .read(fileProvider.notifier)
+                                      .downloadFile(work.primary.file),
+                                  onRecognize: state.isScanning
+                                      ? null
+                                      : () {
+                                          _openDetail(work);
+                                          unawaited(
+                                            _refreshAndRecognizeDetail(work),
+                                          );
+                                        },
+                                  onManualMatch: () {
+                                    _openDetail(work);
+                                    unawaited(
+                                      _showManualTMDBMatch(work, work.primary),
+                                    );
+                                  },
+                                ),
+                              ),
+                          ],
+                        ),
+                        if (state.isLoadingMore)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 20),
+                            child: Center(
+                              child: AppLoadingIndicator(
+                                size: AppLoadingSize.inline,
                               ),
                             ),
-                        ],
-                      ),
-                      if (state.isLoadingMore)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 20),
-                          child: Center(
-                            child: AppLoadingIndicator(
-                              size: AppLoadingSize.inline,
-                            ),
                           ),
-                        ),
-                    ],
-                  );
-                },
-              ), // LayoutBuilder
-            ), // SingleChildScrollView
-          ), // NotificationListener
-        ); // RefreshIndicator – end of wallContent statement
+                      ],
+                    );
+                  },
+                ), // LayoutBuilder
+              ), // SingleChildScrollView
+            ), // NotificationListener
+          ); // RefreshIndicator – end of wallContent statement
     final content = activeCollection == null
         ? wallContent
         : Column(
@@ -2379,6 +2396,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           context,
           library: section.library,
           works: section.works,
+          totalWorks: state.libraryStatistics[section.library.id]?.total ?? 0,
           compact: compact,
           searchActive: state.searchQuery.trim().isNotEmpty,
         ),
@@ -2457,13 +2475,24 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     BuildContext context, {
     required MediaLibraryDefinition library,
     required List<_MediaWork> works,
+    required int totalWorks,
     required bool compact,
     required bool searchActive,
   }) {
     final visibleWorks = works.take(10).toList();
-    final count = works.length > visibleWorks.length
-        ? '前 ${visibleWorks.length} 个 · 共 ${works.length} 个作品'
-        : '${works.length} 个作品';
+    final posterPaths = visibleWorks
+        .map((work) => work.primary.posterPath)
+        .whereType<String>()
+        .where((path) => path.isNotEmpty)
+        .toList(growable: false);
+    final posterIndex = library.id.codeUnits.fold<int>(
+      0,
+      (value, codeUnit) => (value * 31 + codeUnit) & 0x7fffffff,
+    );
+    final entryPosterPath = posterPaths.isEmpty
+        ? null
+        : posterPaths[posterIndex % posterPaths.length];
+    final count = searchActive ? '${works.length} 个匹配作品' : '$totalWorks 个作品';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2502,30 +2531,42 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           _horizontalHomeTrack(
             context,
             height: compact ? 252 : 272,
-            itemCount: visibleWorks.length,
-            itemBuilder: (_, index) => SizedBox(
-              width: compact ? 132 : 142,
-              child: _MediaPosterTile(
-                work: visibleWorks[index],
-                onOpen: () => _openDetail(visibleWorks[index]),
-                onDownload: () => ref
-                    .read(fileProvider.notifier)
-                    .downloadFile(visibleWorks[index].primary.file),
-                onRecognize: () {
-                  _openDetail(visibleWorks[index]);
-                  unawaited(_refreshAndRecognizeDetail(visibleWorks[index]));
-                },
-                onManualMatch: () {
-                  _openDetail(visibleWorks[index]);
-                  unawaited(
-                    _showManualTMDBMatch(
-                      visibleWorks[index],
-                      visibleWorks[index].primary,
-                    ),
-                  );
-                },
-              ),
-            ),
+            itemCount: visibleWorks.length + 1,
+            itemBuilder: (_, index) {
+              if (index == visibleWorks.length) {
+                return _HomeLibraryEntryTile(
+                  library: library,
+                  posterPath: entryPosterPath,
+                  width: compact ? 132 : 142,
+                  onOpen: () async {
+                    if (widget.onOpenLibrary != null) {
+                      widget.onOpenLibrary!(library.id);
+                    } else {
+                      await _mediaNotifier.selectLibrary(library.id);
+                    }
+                  },
+                );
+              }
+              final work = visibleWorks[index];
+              return SizedBox(
+                width: compact ? 132 : 142,
+                child: _MediaPosterTile(
+                  work: work,
+                  onOpen: () => _openDetail(work),
+                  onDownload: () => ref
+                      .read(fileProvider.notifier)
+                      .downloadFile(work.primary.file),
+                  onRecognize: () {
+                    _openDetail(work);
+                    unawaited(_refreshAndRecognizeDetail(work));
+                  },
+                  onManualMatch: () {
+                    _openDetail(work);
+                    unawaited(_showManualTMDBMatch(work, work.primary));
+                  },
+                ),
+              );
+            },
           ),
       ],
     );
@@ -5347,6 +5388,120 @@ class _ContinueWatchingTile extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   '$episodeLabel · 已观看 $percent%',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeLibraryEntryTile extends StatelessWidget {
+  final MediaLibraryDefinition library;
+  final String? posterPath;
+  final double width;
+  final VoidCallback onOpen;
+
+  const _HomeLibraryEntryTile({
+    required this.library,
+    required this.posterPath,
+    required this.width,
+    required this.onOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final posterURL = posterPath == null
+        ? null
+        : _tmdbImageURL(posterPath!, size: 'w342');
+    return Semantics(
+      button: true,
+      label: '进入${library.name}',
+      child: SizedBox(
+        width: width,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onOpen,
+            borderRadius: BorderRadius.circular(6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Container(
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          color: cs.muted,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: cs.border),
+                        ),
+                        child: posterURL == null
+                            ? Center(
+                                child: Icon(
+                                  Icons.video_library_rounded,
+                                  size: 34,
+                                  color: cs.mutedForeground,
+                                ),
+                              )
+                            : CachedNetworkImage(
+                                imageUrl: posterURL,
+                                fit: BoxFit.cover,
+                                errorWidget: (_, _, _) => _tmdbDirectFallback(
+                                  path: posterPath!,
+                                  size: 'w342',
+                                  fallback: Center(
+                                    child: Icon(
+                                      Icons.video_library_rounded,
+                                      size: 34,
+                                      color: cs.mutedForeground,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                      ),
+                      Positioned(
+                        right: 7,
+                        bottom: 7,
+                        child: Container(
+                          width: 30,
+                          height: 30,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.black.withValues(alpha: 0.72),
+                          ),
+                          child: const Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 17,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  library.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: cs.foreground,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '进入媒体库',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 11, color: cs.mutedForeground),
