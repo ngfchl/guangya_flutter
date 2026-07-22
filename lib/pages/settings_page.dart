@@ -33,6 +33,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   final _cloudIndexRefreshController = TextEditingController();
   final _pageSizeController = TextEditingController();
   final _mediaLibraryPageSizeController = TextEditingController();
+  final _mediaHomePreviewCountController = TextEditingController();
 
   @override
   void initState() {
@@ -59,6 +60,8 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         StorageManager.get<String>(StorageKeys.defaultFilePageSize) ?? '50';
     _mediaLibraryPageSizeController.text =
         StorageManager.get<String>(StorageKeys.mediaLibraryPageSize) ?? '100';
+    _mediaHomePreviewCountController.text =
+        StorageManager.get<String>(StorageKeys.mediaHomePreviewCount) ?? '15';
   }
 
   @override
@@ -74,6 +77,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     _cloudIndexRefreshController.dispose();
     _pageSizeController.dispose();
     _mediaLibraryPageSizeController.dispose();
+    _mediaHomePreviewCountController.dispose();
     super.dispose();
   }
 
@@ -154,6 +158,11 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                       icon: Icons.video_library_outlined,
                       label: '媒体库分页大小',
                       child: _numberInput(_mediaLibraryPageSizeController),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.home_outlined,
+                      label: '首页每库预览数量',
+                      child: _numberInput(_mediaHomePreviewCountController),
                     ),
                   ],
                 ),
@@ -398,6 +407,10 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       StorageManager.set(
         StorageKeys.mediaLibraryPageSize,
         _mediaLibraryPageSizeController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.mediaHomePreviewCount,
+        _mediaHomePreviewCountController.text.trim(),
       ),
     ]);
     DioClient.updateNetworkProxy();

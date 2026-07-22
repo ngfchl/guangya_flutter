@@ -283,6 +283,7 @@ class MediaLibraryState {
   final CloudBackupSyncProgress? cloudBackupSync;
   final List<MediaLibraryScanLog> scanLogs;
   final String searchQuery;
+  final MediaLibrarySort sort;
   final String? errorMessage;
   final String? statusMessage;
 
@@ -303,6 +304,7 @@ class MediaLibraryState {
     this.cloudBackupSync,
     this.scanLogs = const [],
     this.searchQuery = '',
+    this.sort = MediaLibrarySort.addedAt,
     this.errorMessage,
     this.statusMessage,
   });
@@ -386,6 +388,7 @@ class MediaLibraryState {
     bool clearCloudBackupSync = false,
     List<MediaLibraryScanLog>? scanLogs,
     String? searchQuery,
+    MediaLibrarySort? sort,
     String? errorMessage,
     bool clearError = false,
     String? statusMessage,
@@ -416,6 +419,7 @@ class MediaLibraryState {
           : (cloudBackupSync ?? this.cloudBackupSync),
       scanLogs: scanLogs ?? this.scanLogs,
       searchQuery: searchQuery ?? this.searchQuery,
+      sort: sort ?? this.sort,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       statusMessage: clearStatus ? null : (statusMessage ?? this.statusMessage),
     );
@@ -513,7 +517,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         filter == MediaLibraryBrowseFilter.movies ||
         filter == MediaLibraryBrowseFilter.series ||
         filter == MediaLibraryBrowseFilter.unmatched;
-    final key = '$selectedID|$home|${filter.name}|$normalizedSearch';
+    final sort = state.sort;
+    final key =
+        '$selectedID|$home|${filter.name}|$normalizedSearch|${sort.name}';
     if (!reset && (_contentKey != key || !state.hasMoreContent)) return;
     if (reset &&
         _contentKey == key &&
@@ -541,10 +547,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
     try {
       if (home) {
+        final previewCount = StorageManager.configuredMediaHomePreviewCount;
         final pages = await Future.wait(
           state.libraries.map(
-            (library) =>
-                _store.workPreviewPage(libraryID: library.id, limit: 15),
+            (library) => _store.workPreviewPage(
+              libraryID: library.id,
+              limit: previewCount,
+            ),
           ),
         );
         if (serial != _contentLoadSerial || _contentKey != key) return;
@@ -571,6 +580,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           search: normalizedSearch,
           limit: pageSize,
           offset: _contentOffset,
+          sort: sort,
         );
         if (serial != _contentLoadSerial || _contentKey != key) return;
         _contentOffset += page.length;
@@ -2896,6 +2906,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
   }
 
+  Future<void> setSort(MediaLibrarySort sort) async {
+    if (sort == state.sort) return;
+    state = state.copyWith(sort: sort);
+    await loadContent(
+      home: _contentHome,
+      filter: _contentFilter,
+      search: _contentSearch,
+    );
+  }
+
   Future<List<MediaLibraryItem>> searchAllItems(String query) async {
     final normalized = query.trim().toLowerCase();
     if (normalized.isEmpty) return const [];
@@ -3761,6 +3781,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           ? item.copyWith(
               clearTMDBID: clearTMDB,
               clearDoubanID: clearDouban,
+              clearTMDBRating: clearTMDB,
+              clearDoubanRating: clearDouban,
               clearImdbID: clearTMDB,
               clearCollectionID: clearTMDB,
               clearCollectionName: clearTMDB,
@@ -4708,6 +4730,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       releaseDate: date,
       overview: best['overview']?.toString() ?? '',
       posterPath: best['poster_path']?.toString() ?? doubanPosterPath(best),
+      doubanRating: _ratingValue(best['vote_average']),
       updatedAt: DateTime.now(),
     );
   }
@@ -5879,6 +5902,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           candidate['poster_path']?.toString() ??
           (isDouban ? doubanPosterPath(candidate) : null),
       backdropPath: candidate['backdrop_path']?.toString(),
+      tmdbRating: isDouban ? null : _ratingValue(candidate['vote_average']),
+      doubanRating: isDouban ? _ratingValue(candidate['vote_average']) : null,
       imdbID: _extractImdbID(candidate),
       updatedAt: DateTime.now(),
     );
@@ -5938,6 +5963,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           _preferredArtworkPath(details, 'backdrops') ??
           details['backdrop_path']?.toString() ??
           item.backdropPath,
+      tmdbRating: _ratingValue(details['vote_average']) ?? item.tmdbRating,
       collectionID: _toInt(collectionMap['id']) ?? item.collectionID,
       collectionName: collectionMap['name']?.toString() ?? item.collectionName,
       imdbID: _extractImdbID(details) ?? item.imdbID,
@@ -5980,6 +6006,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   int? _toInt(dynamic value) {
     if (value is int) return value;
     return int.tryParse(value?.toString() ?? '');
+  }
+
+  double? _ratingValue(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
   }
 
   Future<List<CloudFile>> _scanLibrarySourcesConcurrently(

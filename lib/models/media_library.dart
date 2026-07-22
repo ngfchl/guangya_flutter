@@ -268,6 +268,8 @@ class MediaLibraryItem {
   final String overview;
   final String? posterPath;
   final String? backdropPath;
+  final double? tmdbRating;
+  final double? doubanRating;
   final bool hasChineseAudio;
   final bool hasChineseSubtitle;
   final int? collectionID;
@@ -287,6 +289,8 @@ class MediaLibraryItem {
     this.overview = '',
     this.posterPath,
     this.backdropPath,
+    this.tmdbRating,
+    this.doubanRating,
     this.hasChineseAudio = false,
     this.hasChineseSubtitle = false,
     this.collectionID,
@@ -343,6 +347,10 @@ class MediaLibraryItem {
     String? overview,
     String? posterPath,
     String? backdropPath,
+    double? tmdbRating,
+    bool clearTMDBRating = false,
+    double? doubanRating,
+    bool clearDoubanRating = false,
     bool? hasChineseAudio,
     bool? hasChineseSubtitle,
     int? collectionID,
@@ -364,6 +372,10 @@ class MediaLibraryItem {
       overview: overview ?? this.overview,
       posterPath: posterPath ?? this.posterPath,
       backdropPath: backdropPath ?? this.backdropPath,
+      tmdbRating: clearTMDBRating ? null : (tmdbRating ?? this.tmdbRating),
+      doubanRating: clearDoubanRating
+          ? null
+          : (doubanRating ?? this.doubanRating),
       hasChineseAudio: hasChineseAudio ?? this.hasChineseAudio,
       hasChineseSubtitle: hasChineseSubtitle ?? this.hasChineseSubtitle,
       collectionID: clearCollectionID
@@ -429,6 +441,8 @@ class MediaLibraryItem {
       overview: json['overview']?.toString() ?? '',
       posterPath: json['posterPath']?.toString(),
       backdropPath: json['backdropPath']?.toString(),
+      tmdbRating: _toDouble(json['tmdbRating']),
+      doubanRating: _toDouble(json['doubanRating']),
       hasChineseAudio: json['hasChineseAudio'] == true,
       hasChineseSubtitle: json['hasChineseSubtitle'] == true,
       collectionID: _toInt(json['collectionID']),
@@ -458,6 +472,8 @@ class MediaLibraryItem {
     'overview': overview,
     'posterPath': posterPath,
     'backdropPath': backdropPath,
+    'tmdbRating': tmdbRating,
+    'doubanRating': doubanRating,
     'hasChineseAudio': hasChineseAudio,
     'hasChineseSubtitle': hasChineseSubtitle,
     'collectionID': collectionID,
@@ -1470,6 +1486,11 @@ int? _toInt(dynamic value) {
   if (value is int) return value;
   if (value is double) return value.toInt();
   return int.tryParse(value.toString());
+}
+
+double? _toDouble(dynamic value) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '');
 }
 
 DateTime? _parseDate(dynamic value) {

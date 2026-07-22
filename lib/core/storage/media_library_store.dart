@@ -8,6 +8,7 @@ import '../logging/app_logger.dart';
 import '../utils/format_bytes.dart';
 import '../../models/cloud_file.dart';
 import '../../models/media_library.dart';
+import '../../models/media_navigation.dart';
 
 /// SQLite-backed scraped media cache. The schema intentionally matches the
 /// macOS client so its backup database can be merged without deserializing
@@ -154,6 +155,7 @@ class MediaLibraryStore {
     String search = '',
     int limit = 100,
     int offset = 0,
+    MediaLibrarySort sort = MediaLibrarySort.addedAt,
   }) async {
     final db = await _db;
     await _ensureMediaItemLocationColumns(db);
@@ -203,12 +205,28 @@ class MediaLibraryStore {
       columns: _itemMetadataColumns,
       where: where.isEmpty ? null : where.join(' AND '),
       whereArgs: args.isEmpty ? null : args,
-      orderBy: 'title COLLATE NOCASE, library_id, file_id',
+      orderBy: _mediaItemsOrderBy(sort),
       limit: limit.clamp(1, 500),
       offset: offset.clamp(0, 1 << 31),
     );
     return rows.map(_itemFromRow).toList(growable: false);
   }
+
+  String _mediaItemsOrderBy(MediaLibrarySort sort) => switch (sort) {
+    MediaLibrarySort.addedAt =>
+      'updated_at DESC, title COLLATE NOCASE, library_id, file_id',
+    MediaLibrarySort.releaseDate =>
+      "release_date IS NULL OR release_date = '', release_date DESC, "
+          'title COLLATE NOCASE, library_id, file_id',
+    MediaLibrarySort.title =>
+      'title COLLATE NOCASE, release_date DESC, library_id, file_id',
+    MediaLibrarySort.doubanRating =>
+      'douban_rating IS NULL, douban_rating DESC, '
+          'title COLLATE NOCASE, library_id, file_id',
+    MediaLibrarySort.tmdbRating =>
+      'tmdb_rating IS NULL, tmdb_rating DESC, '
+          'title COLLATE NOCASE, library_id, file_id',
+  };
 
   Future<List<MediaLibraryItem>> workPreviewPage({
     required String libraryID,
@@ -654,6 +672,12 @@ class MediaLibraryStore {
         final importedImdbID = importedColumns.contains('imdb_id')
             ? 'imdb_id'
             : 'NULL';
+        final importedTMDBRating = importedColumns.contains('tmdb_rating')
+            ? 'tmdb_rating'
+            : 'NULL';
+        final importedDoubanRating = importedColumns.contains('douban_rating')
+            ? 'douban_rating'
+            : 'NULL';
         await txn.execute('''
           INSERT OR REPLACE INTO media_items (
             library_id, file_id, resource_path, cloud_name, file_size, gcid,
@@ -661,6 +685,7 @@ class MediaLibraryStore {
             media_kind,
             title, original_title,
             release_date, overview, poster_path, backdrop_path,
+            tmdb_rating, douban_rating,
             has_chinese_audio, has_chinese_subtitle, collection_id,
             collection_name, updated_at
           )
@@ -670,6 +695,7 @@ class MediaLibraryStore {
             tmdb_id, $importedDoubanID, $importedImdbID,
             media_kind, title, original_title,
             release_date, overview, $importedPosterPath, $importedBackdropPath,
+            $importedTMDBRating, $importedDoubanRating,
             has_chinese_audio, has_chinese_subtitle, collection_id,
             collection_name, updated_at
           FROM imported_backup.media_items
@@ -1160,6 +1186,8 @@ class MediaLibraryStore {
         overview TEXT NOT NULL,
         poster_path TEXT,
         backdrop_path TEXT,
+        tmdb_rating REAL,
+        douban_rating REAL,
         has_chinese_audio INTEGER NOT NULL DEFAULT 0,
         has_chinese_subtitle INTEGER NOT NULL DEFAULT 0,
         collection_id INTEGER,
@@ -1204,6 +1232,8 @@ class MediaLibraryStore {
     await _ensureColumn(db, 'media_items', 'full_parent_ids', 'TEXT');
     await _ensureColumn(db, 'media_items', 'douban_id', 'TEXT');
     await _ensureColumn(db, 'media_items', 'imdb_id', 'TEXT');
+    await _ensureColumn(db, 'media_items', 'tmdb_rating', 'REAL');
+    await _ensureColumn(db, 'media_items', 'douban_rating', 'REAL');
   }
 
   Future<({int rows, int artworkBytes})?> _migrateArtworkBlobSchema(
@@ -1240,6 +1270,12 @@ class MediaLibraryStore {
         : 'NULL';
     final doubanIDSource = columns.contains('douban_id') ? 'douban_id' : 'NULL';
     final imdbIDSource = columns.contains('imdb_id') ? 'imdb_id' : 'NULL';
+    final tmdbRatingSource = columns.contains('tmdb_rating')
+        ? 'tmdb_rating'
+        : 'NULL';
+    final doubanRatingSource = columns.contains('douban_rating')
+        ? 'douban_rating'
+        : 'NULL';
     AppLogger.info(
       'Storage',
       '发现旧图片二进制缓存：$rows 条记录，${FormatBytes.format(artworkBytes)}，正在重建精简表',
@@ -1266,6 +1302,8 @@ class MediaLibraryStore {
           overview TEXT NOT NULL,
           poster_path TEXT,
           backdrop_path TEXT,
+          tmdb_rating REAL,
+          douban_rating REAL,
           has_chinese_audio INTEGER NOT NULL DEFAULT 0,
           has_chinese_subtitle INTEGER NOT NULL DEFAULT 0,
           collection_id INTEGER,
@@ -1281,6 +1319,7 @@ class MediaLibraryStore {
           file_type, parent_id, full_parent_ids, tmdb_id, douban_id, imdb_id,
           media_kind, title,
           original_title, release_date, overview, poster_path, backdrop_path,
+          tmdb_rating, douban_rating,
           has_chinese_audio, has_chinese_subtitle, collection_id,
           collection_name, updated_at
         )
@@ -1289,7 +1328,8 @@ class MediaLibraryStore {
           file_type, $parentIDSource, $fullParentIDsSource, tmdb_id,
           $doubanIDSource, $imdbIDSource,
           media_kind, title, original_title, release_date, overview,
-          $posterPathSource, $backdropPathSource, has_chinese_audio,
+          $posterPathSource, $backdropPathSource,
+          $tmdbRatingSource, $doubanRatingSource, has_chinese_audio,
           has_chinese_subtitle, collection_id, collection_name, updated_at
         FROM media_items
       ''');
@@ -1368,6 +1408,8 @@ class MediaLibraryStore {
       'overview': row['overview'],
       'posterPath': row['poster_path'],
       'backdropPath': row['backdrop_path'],
+      'tmdbRating': row['tmdb_rating'],
+      'doubanRating': row['douban_rating'],
       'hasChineseAudio': row['has_chinese_audio'] == 1,
       'hasChineseSubtitle': row['has_chinese_subtitle'] == 1,
       'collectionID': row['collection_id'],
@@ -1396,6 +1438,8 @@ class MediaLibraryStore {
     'overview': item.overview,
     'poster_path': item.posterPath,
     'backdrop_path': item.backdropPath,
+    'tmdb_rating': item.tmdbRating,
+    'douban_rating': item.doubanRating,
     'has_chinese_audio': item.hasChineseAudio ? 1 : 0,
     'has_chinese_subtitle': item.hasChineseSubtitle ? 1 : 0,
     'collection_id': item.collectionID,
@@ -1450,6 +1494,8 @@ class MediaLibraryStore {
     'overview',
     'poster_path',
     'backdrop_path',
+    'tmdb_rating',
+    'douban_rating',
     'has_chinese_audio',
     'has_chinese_subtitle',
     'collection_id',
@@ -1501,6 +1547,8 @@ class MediaLibraryStore {
     final check = () async {
       await _ensureColumn(db, 'media_items', 'parent_id', 'TEXT');
       await _ensureColumn(db, 'media_items', 'full_parent_ids', 'TEXT');
+      await _ensureColumn(db, 'media_items', 'tmdb_rating', 'REAL');
+      await _ensureColumn(db, 'media_items', 'douban_rating', 'REAL');
       _mediaItemLocationColumnsReady = true;
     }();
     _mediaItemLocationColumnsCheck = check;

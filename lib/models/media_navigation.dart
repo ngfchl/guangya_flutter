@@ -5,6 +5,18 @@ enum MediaWorkspaceView { home, library, search, management }
 
 enum MediaLibraryBrowseFilter { all, movies, series, collections, unmatched }
 
+enum MediaLibrarySort { addedAt, releaseDate, title, doubanRating, tmdbRating }
+
+extension MediaLibrarySortTitle on MediaLibrarySort {
+  String get title => switch (this) {
+    MediaLibrarySort.addedAt => '入库时间',
+    MediaLibrarySort.releaseDate => '发布时间',
+    MediaLibrarySort.title => '标题',
+    MediaLibrarySort.doubanRating => '豆瓣评分',
+    MediaLibrarySort.tmdbRating => 'TMDB 评分',
+  };
+}
+
 class MediaNavigationState {
   final MediaWorkspaceView view;
   final MediaLibraryBrowseFilter filter;
@@ -25,25 +37,22 @@ class MediaNavigationState {
   bool get isSearch => view == MediaWorkspaceView.search;
   bool get isManagement => view == MediaWorkspaceView.management;
 
-  MediaNavigationState showHome() => const MediaNavigationState(
-    view: MediaWorkspaceView.home,
-  );
+  MediaNavigationState showHome() =>
+      const MediaNavigationState(view: MediaWorkspaceView.home);
 
   MediaNavigationState showLibrary({
     MediaLibraryBrowseFilter filter = MediaLibraryBrowseFilter.all,
-  }) => MediaNavigationState(
-    view: MediaWorkspaceView.library,
-    filter: filter,
-  );
+  }) => MediaNavigationState(view: MediaWorkspaceView.library, filter: filter);
 
-  MediaNavigationState showManagement() => const MediaNavigationState(
-    view: MediaWorkspaceView.management,
-  );
+  MediaNavigationState showManagement() =>
+      const MediaNavigationState(view: MediaWorkspaceView.management);
 
   MediaNavigationState openSearch(String value) {
     final normalized = value.trim();
     if (normalized.isEmpty) return this;
-    final baseView = isSearch ? (returnView ?? MediaWorkspaceView.library) : view;
+    final baseView = isSearch
+        ? (returnView ?? MediaWorkspaceView.library)
+        : view;
     final baseFilter = isSearch
         ? (returnFilter ?? MediaLibraryBrowseFilter.all)
         : filter;
@@ -72,16 +81,12 @@ class MediaNavigationState {
   }
 
   @override
-  int get hashCode => Object.hash(
-    view,
-    filter,
-    query,
-    returnView,
-    returnFilter,
-  );
+  int get hashCode =>
+      Object.hash(view, filter, query, returnView, returnFilter);
 
   @override
-  String toString() => 'MediaNavigationState('
+  String toString() =>
+      'MediaNavigationState('
       'view: $view, filter: $filter, query: $query, '
       'returnView: $returnView, returnFilter: $returnFilter)';
 }

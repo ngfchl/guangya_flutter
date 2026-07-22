@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:guangya_flutter/core/storage/media_library_store.dart';
 import 'package:guangya_flutter/models/cloud_file.dart';
 import 'package:guangya_flutter/models/media_library.dart';
+import 'package:guangya_flutter/models/media_navigation.dart';
 import 'package:guangya_flutter/providers/media_library_provider.dart';
 
 const _libraryA = MediaLibraryDefinition(
@@ -115,27 +116,44 @@ class _FakeMediaLibraryStore extends MediaLibraryStore {
     String search = '',
     int limit = 100,
     int offset = 0,
+    MediaLibrarySort sort = MediaLibrarySort.addedAt,
   }) async {
     final delay = libraryID == null ? null : itemDelays[libraryID];
     if (delay != null) await Future<void>.delayed(delay);
     final query = search.trim().toLowerCase();
-    final values = records
-        .where((item) {
-          if (libraryID != null && item.libraryID != libraryID) {
-            return false;
-          }
-          if (mediaKind != null && item.mediaKind?.name != mediaKind) {
-            return false;
-          }
-          if (unmatchedOnly && item.isMatched) {
-            return false;
-          }
-          if (query.isNotEmpty && !item.matchesSearch(query)) {
-            return false;
-          }
-          return true;
-        })
-        .toList(growable: false);
+    final values =
+        records
+            .where((item) {
+              if (libraryID != null && item.libraryID != libraryID) {
+                return false;
+              }
+              if (mediaKind != null && item.mediaKind?.name != mediaKind) {
+                return false;
+              }
+              if (unmatchedOnly && item.isMatched) {
+                return false;
+              }
+              if (query.isNotEmpty && !item.matchesSearch(query)) {
+                return false;
+              }
+              return true;
+            })
+            .toList(growable: false)
+          ..sort(
+            (a, b) => switch (sort) {
+              MediaLibrarySort.addedAt => b.updatedAt.compareTo(a.updatedAt),
+              MediaLibrarySort.releaseDate => b.releaseDate.compareTo(
+                a.releaseDate,
+              ),
+              MediaLibrarySort.title => a.title.compareTo(b.title),
+              MediaLibrarySort.doubanRating => (b.doubanRating ?? -1).compareTo(
+                a.doubanRating ?? -1,
+              ),
+              MediaLibrarySort.tmdbRating => (b.tmdbRating ?? -1).compareTo(
+                a.tmdbRating ?? -1,
+              ),
+            },
+          );
     return values.skip(offset).take(limit).toList(growable: false);
   }
 
@@ -273,6 +291,33 @@ void main() {
       expect(notifier.state.globalStatistics.total, 38);
     },
   );
+
+  test('reloads the current SQL page when media sorting changes', () async {
+    final low = _item(
+      _libraryA.id,
+      'low',
+    ).copyWith(title: 'Beta', tmdbRating: 4.2, doubanRating: 8.8);
+    final high = _item(
+      _libraryA.id,
+      'high',
+    ).copyWith(title: 'Alpha', tmdbRating: 9.1, doubanRating: 6.5);
+    final store = _FakeMediaLibraryStore(
+      definitions: const [_libraryA],
+      records: [low, high],
+    );
+    final notifier = MediaLibraryNotifier(store: store);
+    addTearDown(notifier.dispose);
+
+    await notifier.load();
+    await notifier.loadContent();
+    await notifier.setSort(MediaLibrarySort.tmdbRating);
+
+    expect(notifier.state.items.map((item) => item.id), ['high', 'low']);
+    await notifier.setSort(MediaLibrarySort.doubanRating);
+    expect(notifier.state.items.map((item) => item.id), ['low', 'high']);
+    await notifier.setSort(MediaLibrarySort.title);
+    expect(notifier.state.items.map((item) => item.id), ['high', 'low']);
+  });
 
   group('MediaLibraryNotifier.transferMediaRecords', () {
     test(
