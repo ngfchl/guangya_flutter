@@ -7437,8 +7437,7 @@ class _ManualTMDBMatchDialogState
   late final TextEditingController _yearController;
   late final TextEditingController _seasonController;
   late final TextEditingController _episodeController;
-  late final TextEditingController _tmdbIDController;
-  late final TextEditingController _doubanIDController;
+  late final TextEditingController _idController;
   late String _mediaKind;
   bool _searching = false;
   bool _loadingDetail = false;
@@ -7461,8 +7460,7 @@ class _ManualTMDBMatchDialogState
     _episodeController = TextEditingController(
       text: widget.initialEpisode?.toString() ?? '1',
     );
-    _tmdbIDController = TextEditingController();
-    _doubanIDController = TextEditingController();
+    _idController = TextEditingController();
     _mediaKind = widget.initialMediaKind;
     if (widget.initialResults != null) {
       _results = widget.initialResults!;
@@ -7477,13 +7475,12 @@ class _ManualTMDBMatchDialogState
     _yearController.dispose();
     _seasonController.dispose();
     _episodeController.dispose();
-    _tmdbIDController.dispose();
-    _doubanIDController.dispose();
+    _idController.dispose();
     super.dispose();
   }
 
   Future<void> _loadDirectTMDB() async {
-    final id = int.tryParse(_tmdbIDController.text.trim());
+    final id = int.tryParse(_idController.text.trim());
     if (id == null || id <= 0) {
       setState(() => _error = '请输入有效的 TMDB ID');
       return;
@@ -7536,7 +7533,7 @@ class _ManualTMDBMatchDialogState
   }
 
   Future<void> _loadDirectDouban() async {
-    final id = _doubanIDController.text.trim();
+    final id = _idController.text.trim();
     if (!RegExp(r'^\d+$').hasMatch(id)) {
       setState(() => _error = '请输入有效的豆瓣 ID');
       return;
@@ -8300,58 +8297,31 @@ class _ManualTMDBMatchDialogState
   }
 
   Widget _directIDMatchFields(ShadColorScheme cs) {
-    Widget input({
-      required String label,
-      required TextEditingController controller,
-      required VoidCallback onPressed,
-    }) {
-      return _manualMatchField(
-        label: label,
-        child: Row(
-          children: [
-            Expanded(
-              child: ShadInput(
-                controller: controller,
-                keyboardType: TextInputType.number,
-                placeholder: const Text('输入 ID'),
-                onSubmitted: (_) => onPressed(),
-              ),
+    return _manualMatchField(
+      label: 'ID 直达',
+      child: Row(
+        children: [
+          Expanded(
+            child: ShadInput(
+              controller: _idController,
+              placeholder: const Text('输入 TMDB / 豆瓣 ID'),
+              onSubmitted: (_) => unawaited(_loadDirectTMDB()),
             ),
-            const SizedBox(width: 6),
-            ShadButton.outline(
-              size: ShadButtonSize.sm,
-              onPressed: _loadingDetail ? null : onPressed,
-              leading: const Icon(Icons.arrow_forward_rounded, size: 15),
-              child: const Text('直达'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final tmdb = input(
-          label: 'TMDB ID',
-          controller: _tmdbIDController,
-          onPressed: () => unawaited(_loadDirectTMDB()),
-        );
-        final douban = input(
-          label: '豆瓣 ID',
-          controller: _doubanIDController,
-          onPressed: () => unawaited(_loadDirectDouban()),
-        );
-        if (constraints.maxWidth < 520) {
-          return Column(children: [tmdb, const SizedBox(height: 8), douban]);
-        }
-        return Row(
-          children: [
-            Expanded(child: tmdb),
-            const SizedBox(width: 10),
-            Expanded(child: douban),
-          ],
-        );
-      },
+          ),
+          const SizedBox(width: 6),
+          ShadButton.outline(
+            size: ShadButtonSize.sm,
+            onPressed: _loadingDetail ? null : () => unawaited(_loadDirectTMDB()),
+            child: const Text('TMDB'),
+          ),
+          const SizedBox(width: 4),
+          ShadButton.outline(
+            size: ShadButtonSize.sm,
+            onPressed: _loadingDetail ? null : () => unawaited(_loadDirectDouban()),
+            child: const Text('豆瓣'),
+          ),
+        ],
+      ),
     );
   }
 
