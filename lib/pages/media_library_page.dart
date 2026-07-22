@@ -767,6 +767,14 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
         ? '✅ 备份完成'
         : progress?.phase == '恢复完成'
         ? '✅ 恢复完成'
+        : progress?.phase == '导出完成'
+        ? '✅ 导出完成'
+        : progress?.phase == '导入完成'
+        ? '✅ 导入完成'
+        : progress?.phase == '导出失败'
+        ? '❌ 导出失败'
+        : progress?.phase == '导入失败'
+        ? '❌ 导入失败'
         : '备份设置';
     return ShadPopover(
       controller: _controller,
@@ -855,7 +863,11 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
               )
             : const Icon(Icons.storage_rounded, size: 16),
         trailing: const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
-        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(label),
+        ),
       ),
     );
   }
@@ -1042,6 +1054,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   void Function(MediaDetailHeader?) _setDetailHeader = (_) {};
   String? _activeCollectionKey;
   final _searchController = TextEditingController();
+  final _contentScrollController = ScrollController();
 
   Set<String> get _manualMatchBusyResourceKeys =>
       _manualMatchOperations.keys.toSet();
@@ -1065,10 +1078,17 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     );
     _setDetailHeader = (value) => detailHeaderNotifier.state = value;
     final api = ref.read(authProvider.notifier).api;
-    Future.microtask(() {
+    Future.microtask(() async {
       if (!mounted) return;
       _mediaNotifier.api = api;
-      _mediaNotifier.load();
+      await _mediaNotifier.load();
+      if (mounted) {
+        await _mediaNotifier.loadContent(
+          home: widget.showHomePanel,
+          filter: _wallFilter,
+          search: widget.searchTitle ?? '',
+        );
+      }
     });
   }
 
@@ -1089,6 +1109,13 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _detailSession == detailSession) {
           _setDetailHeader(null);
+          unawaited(
+            _mediaNotifier.loadContent(
+              home: widget.showHomePanel,
+              filter: _wallFilter,
+              search: widget.searchTitle ?? '',
+            ),
+          );
         }
       });
     }
@@ -1632,6 +1659,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     // The workspace owns the header lifecycle; it clears the value when the
     // media pane is left.  Do not update Riverpod from dispose.
     _searchController.dispose();
+    _contentScrollController.dispose();
     super.dispose();
   }
 
@@ -2166,40 +2194,92 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 ? '发现并入库的资源会立即显示在这里'
                 : '点击扫描读取该媒体库下的视频文件',
           )
-        : LayoutBuilder(
-            builder: (context, constraints) {
-              final columns = (constraints.maxWidth / 154).floor().clamp(2, 7);
-              return GridView.builder(
-                padding: const EdgeInsets.only(bottom: 10),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  mainAxisSpacing: 18,
-                  crossAxisSpacing: 14,
-                  childAspectRatio: 0.52,
-                ),
-                itemCount: works.length,
-                itemBuilder: (context, index) => _MediaPosterTile(
-                  work: works[index],
-                  onOpen: () => _openDetail(works[index]),
-                  onDownload: () => ref
-                      .read(fileProvider.notifier)
-                      .downloadFile(works[index].primary.file),
-                  onRecognize: state.isScanning
-                      ? null
-                      : () {
-                          _openDetail(works[index]);
-                          unawaited(_refreshAndRecognizeDetail(works[index]));
-                        },
-                  onManualMatch: () {
-                    _openDetail(works[index]);
-                    unawaited(
-                      _showManualTMDBMatch(works[index], works[index].primary),
-                    );
-                  },
-                ),
+        : RefreshIndicator(
+            onRefresh: () async {
+              await _mediaNotifier.loadContent(
+                home: widget.showHomePanel,
+                filter: _wallFilter,
+                search: widget.searchTitle ?? '',
+                reset: true,
               );
             },
-          );
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification.metrics.extentAfter < 480 &&
+                    state.hasMoreContent &&
+                    !state.isLoadingMore) {
+                  unawaited(_mediaNotifier.loadNextContentPage());
+                }
+                return false;
+              },
+              child: SingleChildScrollView(
+                controller: _contentScrollController,
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                padding: const EdgeInsets.only(bottom: 16),
+                child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = MediaQuery.sizeOf(context).width < 720;
+                  final spacing = compact ? 10.0 : 14.0;
+                  final mobileColumns = constraints.maxWidth >= 420 ? 3 : 2;
+                  final cardWidth = compact
+                      ? ((constraints.maxWidth -
+                                spacing * (mobileColumns - 1)) /
+                            mobileColumns)
+                      : 142.0;
+                  final cardHeight = cardWidth / 0.52;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Wrap(
+                        spacing: spacing,
+                        runSpacing: compact ? 14 : 18,
+                        children: [
+                          for (final work in works)
+                            SizedBox(
+                              width: cardWidth,
+                              height: cardHeight,
+                              child: _MediaPosterTile(
+                                work: work,
+                                onOpen: () => _openDetail(work),
+                                onDownload: () => ref
+                                    .read(fileProvider.notifier)
+                                    .downloadFile(work.primary.file),
+                                onRecognize: state.isScanning
+                                    ? null
+                                    : () {
+                                        _openDetail(work);
+                                        unawaited(
+                                          _refreshAndRecognizeDetail(work),
+                                        );
+                                      },
+                                onManualMatch: () {
+                                  _openDetail(work);
+                                  unawaited(
+                                    _showManualTMDBMatch(work, work.primary),
+                                  );
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                      if (state.isLoadingMore)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 20),
+                          child: Center(
+                            child: AppLoadingIndicator(
+                              size: AppLoadingSize.inline,
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ), // LayoutBuilder
+            ), // SingleChildScrollView
+          ), // NotificationListener
+        ); // RefreshIndicator – end of wallContent statement
     final content = activeCollection == null
         ? wallContent
         : Column(
@@ -4015,11 +4095,9 @@ class _MediaLibraryManagementDialogState
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (context, index) {
                         final library = state.libraries[index];
-                        final statistics = MediaLibraryStatistics.fromItems(
-                          state.allItems.where(
-                            (item) => item.libraryID == library.id,
-                          ),
-                        );
+                        final statistics =
+                            state.libraryStatistics[library.id] ??
+                            const MediaLibraryStatistics();
                         final scanning = state.isLibraryScanning(library.id);
                         return _ManagementLibraryRow(
                           library: library,
