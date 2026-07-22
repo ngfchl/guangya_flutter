@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export GIT_PAGER=cat
+export PAGER=cat
+
 REMOTE="github"
 SOURCE_BRANCH="dev"
 TARGET_BRANCH="main"
