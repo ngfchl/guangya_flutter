@@ -1271,7 +1271,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         newName.contains('/') ||
         newName.contains('\\') ||
         newName.contains('\u0000')) {
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         const ShadToast(
           title: Text('文件名无效'),
           description: Text('文件名不能为空，也不能包含路径分隔符。'),
@@ -1287,7 +1287,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         item.file.copyWith(name: newName),
       ]);
       if (!mounted) return;
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         ShadToast(
           title: const Text('重命名完成'),
           description: Text(newName),
@@ -1296,7 +1296,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       );
     } catch (error) {
       if (!mounted) return;
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         ShadToast.destructive(
           title: const Text('重命名失败'),
           description: Text(error.toString()),
@@ -1324,7 +1324,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     final targetParent = destination.parentID?.trim();
     if ((sourceParent?.isEmpty ?? true ? null : sourceParent) ==
         (targetParent?.isEmpty ?? true ? null : targetParent)) {
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         const ShadToast(
           title: Text('移动文件'),
           description: Text('不能移动至相同目录'),
@@ -1352,7 +1352,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       );
       if (mounted) _closeDetail();
       if (!mounted) return;
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         ShadToast(
           title: const Text('文件移动完成'),
           description: Text(
@@ -1363,7 +1363,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       );
     } catch (error) {
       if (!mounted) return;
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         ShadToast.destructive(
           title: const Text('文件移动失败'),
           description: Text(error.toString()),
@@ -1386,7 +1386,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         )
         .toList(growable: false);
     if (destinationLibraries.isEmpty) {
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         const ShadToast(
           title: Text('没有可用的目标媒体库'),
           description: Text('请先为另一个媒体库配置至少一个资源目录。'),
@@ -1417,7 +1417,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     }
     if (!mounted) return;
     if (nodes.isEmpty) {
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         const ShadToast.destructive(
           title: Text('无法确定关联文件'),
           description: Text('没有找到可移动的媒体文件或文件夹。'),
@@ -1442,7 +1442,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           (targetRootPath == path || targetRootPath.startsWith('$path/'));
     });
     if (invalidTarget) {
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         const ShadToast.destructive(
           title: Text('无法移动'),
           description: Text('目标媒体目录不能位于所选文件夹内部。'),
@@ -1502,7 +1502,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       }
       if (!mounted) return;
       _closeDetail();
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         ShadToast(
           title: const Text('移动完成'),
           description: Text(
@@ -1514,7 +1514,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       );
     } catch (error) {
       if (!mounted) return;
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         ShadToast.destructive(
           title: const Text('移动失败'),
           description: Text(error.toString()),
@@ -1650,7 +1650,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       );
     } catch (error) {
       if (!mounted) return;
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         ShadToast.destructive(
           title: Text('清理 ${source.title} 信息失败'),
           description: Text(error.toString()),
@@ -1681,7 +1681,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         year: refreshed.primary.year,
       ),
     );
-    ShadSonner.maybeOf(context)?.show(
+    ShadToaster.maybeOf(context)?.show(
       ShadToast(
         title: Text('已清理 ${source.title} 信息'),
         description: Text(refreshed.primary.title),
@@ -1738,7 +1738,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        ShadSonner.maybeOf(context)?.show(
+        ShadToaster.maybeOf(context)?.show(
           next.errorMessage == null
               ? ShadToast(
                   title: const Text('媒体库'),
@@ -2971,7 +2971,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     }
     if (!mounted || backups.isEmpty) {
       if (mounted && backups.isEmpty) {
-        ShadSonner.maybeOf(context)?.show(
+        ShadToaster.maybeOf(context)?.show(
           const ShadToast(
             title: Text('云盘恢复'),
             description: Text('云盘中没有找到 media-library.sqlite3 备份。'),
@@ -3194,7 +3194,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           .renameCloudScrapedBackup(backup, name);
     } catch (error) {
       if (!mounted) return;
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         ShadToast.destructive(
           title: const Text('重命名失败'),
           description: Text(error.toString()),
@@ -3230,7 +3230,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           .deleteCloudScrapedBackup(backup);
     } catch (error) {
       if (!mounted) return;
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         ShadToast.destructive(
           title: const Text('删除失败'),
           description: Text(error.toString()),
@@ -4341,7 +4341,7 @@ class _MediaLibraryManagementDialogState
     }
     if (!mounted || backups.isEmpty) {
       if (mounted && backups.isEmpty) {
-        ShadSonner.maybeOf(context)?.show(
+        ShadToaster.maybeOf(context)?.show(
           const ShadToast(
             title: Text('云盘恢复'),
             description: Text('云盘中没有找到 media-library.sqlite3 备份。'),

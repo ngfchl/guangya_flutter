@@ -227,7 +227,7 @@ void _openCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
     return;
   }
   if (file.isIso) {
-    ShadSonner.maybeOf(context)?.show(
+    ShadToaster.maybeOf(context)?.show(
       const ShadToast.destructive(
         title: Text('不支持播放 ISO 文件'),
         description: Text('可通过右键菜单下载该文件。'),
@@ -261,7 +261,7 @@ Future<bool> _copyOrMoveFilesToDestination(
       files.every(
         (file) => _sameCloudParentID(file.parentID, destination.parentID),
       )) {
-    ShadSonner.maybeOf(context)?.show(
+    ShadToaster.maybeOf(context)?.show(
       const ShadToast(
         title: Text('移动'),
         description: Text('不能移动至相同目录'),
@@ -638,7 +638,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        ShadSonner.maybeOf(context)?.show(
+        ShadToaster.maybeOf(context)?.show(
           next.errorMessage == null
               ? ShadToast(
                   title: const Text('云盘'),
@@ -5409,7 +5409,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
         .where((file) => !_sameCloudParentID(file.parentID, parentID))
         .toList(growable: false);
     if (movable.isEmpty) {
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         const ShadToast(
           title: Text('移动'),
           description: Text('不能移动至相同目录'),

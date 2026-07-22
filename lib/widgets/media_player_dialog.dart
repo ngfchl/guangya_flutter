@@ -115,7 +115,7 @@ Future<void> showMediaPlayerDialog(
   TMDBMediaKind? mediaKind,
 }) async {
   if (file.isIso) {
-    ShadSonner.maybeOf(context)?.show(
+    ShadToaster.maybeOf(context)?.show(
       const ShadToast.destructive(
         title: Text('不支持播放 ISO 文件'),
         description: Text('ISO 文件仍可用于媒体识别和下载。'),

@@ -418,7 +418,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     try {
       await _saveSettings();
       if (!mounted) return;
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         const ShadToast(
           title: Text('设置已保存'),
           description: Text('新的配置已应用到后续任务。'),
@@ -428,7 +428,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
-      ShadSonner.maybeOf(context)?.show(
+      ShadToaster.maybeOf(context)?.show(
         ShadToast.destructive(
           title: const Text('保存设置失败'),
           description: Text(error.toString()),

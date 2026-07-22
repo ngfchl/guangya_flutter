@@ -3,8 +3,15 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+const _dismissibleToastTheme = ShadToastTheme(
+  showCloseIconOnlyWhenHovered: false,
+  closeIconPosition: ShadPosition(top: 8, right: 8),
+);
+
 // Light theme
 final lightTheme = ShadThemeData(
+  primaryToastTheme: _dismissibleToastTheme,
+  destructiveToastTheme: _dismissibleToastTheme,
   colorScheme: const ShadOrangeColorScheme.light(
     background: Color(0xFFFFFFFF),
     foreground: Color(0xFF0F172A),
@@ -31,6 +38,8 @@ final lightTheme = ShadThemeData(
 
 // Dark theme
 final darkTheme = ShadThemeData(
+  primaryToastTheme: _dismissibleToastTheme,
+  destructiveToastTheme: _dismissibleToastTheme,
   colorScheme: const ShadOrangeColorScheme.dark(
     background: Color(0xFF0F172A),
     foreground: Color(0xFFF8FAFC),
