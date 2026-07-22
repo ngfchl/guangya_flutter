@@ -29,6 +29,7 @@ const _githubReleasesPage = 'https://github.com/$_githubRepo/releases';
 const _upgradeIgnoreVersionKey = 'app_upgrade_ignore_version';
 const _upgradeUseGithubProxyKey = 'app_upgrade_use_github_proxy';
 const _upgradeGithubProxyKey = 'app_upgrade_github_proxy';
+const _upgradeGithubProxyResultsKey = 'app_upgrade_github_proxy_results';
 
 Future<void> showAppUpgradeDialog(BuildContext context) => showShadDialog<void>(
   context: context,
@@ -302,6 +303,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
   bool _testingGithubProxy = false;
 
   GithubProxyResponse? _githubProxy;
+  List<GithubProxyResponse> _githubProxyResults = const [];
   Future<GithubProxyResponse?>? _githubProxyRequest;
 
   @override
@@ -324,6 +326,22 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
       _githubProxy = GithubProxyResponse.fromJson(
         Map<String, dynamic>.from(savedProxy),
       );
+    }
+    final savedResults = StorageManager.get<dynamic>(
+      _upgradeGithubProxyResultsKey,
+    );
+    if (savedResults is List) {
+      _githubProxyResults =
+          savedResults
+              .whereType<Map>()
+              .map(
+                (item) => GithubProxyResponse.fromJson(
+                  Map<String, dynamic>.from(item),
+                ),
+              )
+              .where((item) => item.available && item.url.isNotEmpty)
+              .toList()
+            ..sort((a, b) => a.time.compareTo(b.time));
     }
     _loadingLatest = true;
     _refreshUi();
@@ -505,6 +523,18 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     if (_githubProxy != null) return _githubProxy;
     try {
       final result = await fetchFasterGithubProxy(dio: _createDio());
+      _githubProxyResults =
+          result.results
+              .where((item) => item.available && item.url.isNotEmpty)
+              .toList()
+            ..sort((a, b) => a.time.compareTo(b.time));
+      if (_githubProxyResults.length > 10) {
+        _githubProxyResults = _githubProxyResults.take(10).toList();
+      }
+      await StorageManager.set(
+        _upgradeGithubProxyResultsKey,
+        _githubProxyResults.map((item) => item.toJson()).toList(),
+      );
       if (result.success) {
         _githubProxy = result.data;
         if (_githubProxy != null) {
@@ -537,6 +567,21 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     _refreshUi();
     await _findGithubProxy();
     _testingGithubProxy = false;
+    _refreshUi();
+  }
+
+  Future<void> _selectGithubProxy(String url) async {
+    GithubProxyResponse? selected;
+    for (final item in _githubProxyResults) {
+      if (item.url == url) {
+        selected = item;
+        break;
+      }
+    }
+    if (selected == null) return;
+    _githubProxy = selected;
+    _githubProxyRequest = Future.value(selected);
+    await StorageManager.set(_upgradeGithubProxyKey, selected.toJson());
     _refreshUi();
   }
 
@@ -714,50 +759,145 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            ShadCheckbox(value: _useGithubProxy, onChanged: _setUseGithubProxy),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'GitHub 下载加速',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: cs.foreground,
-                    ),
+            Row(
+              children: [
+                ShadCheckbox(
+                  value: _useGithubProxy,
+                  onChanged: _setUseGithubProxy,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'GitHub 下载加速',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: cs.foreground,
+                        ),
+                      ),
+                      Text(
+                        !_useGithubProxy
+                            ? '使用 GitHub 原始下载地址'
+                            : _testingGithubProxy
+                            ? '正在测速可用节点'
+                            : proxy == null
+                            ? '下载时自动选择最快节点'
+                            : '${Uri.tryParse(proxy.url)?.host ?? proxy.url} · ${proxy.time} ms',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ],
                   ),
-                  Text(
-                    !_useGithubProxy
-                        ? '使用 GitHub 原始下载地址'
-                        : _testingGithubProxy
-                        ? '正在测速可用节点'
-                        : proxy == null
-                        ? '下载时自动选择最快节点'
-                        : '${Uri.tryParse(proxy.url)?.host ?? proxy.url} · ${proxy.time} ms',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                ),
+                if (_useGithubProxy)
+                  ShadButton.outline(
+                    size: ShadButtonSize.sm,
+                    onPressed: _testingGithubProxy ? null : _testGithubProxy,
+                    leading: _testingGithubProxy
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh_rounded, size: 15),
+                    child: Text(_testingGithubProxy ? '测速中' : '测速'),
                   ),
-                ],
-              ),
+              ],
             ),
-            if (_useGithubProxy)
-              ShadButton.outline(
-                size: ShadButtonSize.sm,
-                onPressed: _testingGithubProxy ? null : _testGithubProxy,
-                leading: _testingGithubProxy
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.speed_rounded, size: 15),
-                child: Text(_testingGithubProxy ? '测速中' : '重新测速'),
+            if (_useGithubProxy && _githubProxyResults.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              ShadSelect<String>(
+                key: ValueKey(proxy?.url),
+                initialValue: proxy?.url,
+                minWidth: 240,
+                maxHeight: 360,
+                placeholder: const Text('选择 GitHub 加速节点'),
+                selectedOptionBuilder: (context, value) {
+                  final selected = _githubProxyResults.firstWhere(
+                    (item) => item.url == value,
+                    orElse: () => _githubProxyResults.first,
+                  );
+                  return Row(
+                    children: [
+                      const Icon(Icons.speed_rounded, size: 15),
+                      const SizedBox(width: 8),
+                      Text('${selected.time} ms'),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          selected.url,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+                options: [
+                  for (
+                    var index = 0;
+                    index < _githubProxyResults.length;
+                    index++
+                  )
+                    ShadOption(
+                      value: _githubProxyResults[index].url,
+                      child: Row(
+                        children: [
+                          Icon(
+                            proxy?.url == _githubProxyResults[index].url
+                                ? Icons.check_rounded
+                                : index == 0
+                                ? Icons.bolt_rounded
+                                : Icons.public_rounded,
+                            size: 16,
+                            color: index == 0 ? cs.primary : cs.mutedForeground,
+                          ),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: 64,
+                            child: Text(
+                              '${_githubProxyResults[index].time} ms',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: index == 0 ? cs.primary : cs.foreground,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              _githubProxyResults[index].url,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (index == 0)
+                            Text(
+                              '最快',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: cs.primary,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+                onChanged: (value) {
+                  if (value != null) unawaited(_selectGithubProxy(value));
+                },
               ),
+            ],
           ],
         ),
       ),
