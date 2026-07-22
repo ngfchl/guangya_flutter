@@ -318,13 +318,9 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                       label: '应用更新',
                       child: ShadButton.outline(
                         size: ShadButtonSize.sm,
-                        onPressed: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const AppUpgradePage(),
-                          ),
-                        ),
+                        onPressed: () => showAppUpgradeDialog(context),
                         leading: const Icon(
-                          Icons.open_in_new_rounded,
+                          Icons.system_update_rounded,
                           size: 15,
                         ),
                         child: const Text('检查更新'),

@@ -31,6 +31,7 @@ import '../widgets/share_link_dialog.dart';
 import '../widgets/side_panel.dart';
 import '../widgets/sort_menu.dart';
 import 'media_library_page.dart';
+import 'app_upgrade_page.dart';
 import 'search_results_page.dart';
 import 'settings_page.dart';
 import 'workspace_tools_page.dart';
@@ -1817,11 +1818,13 @@ class _TopBarIconButton extends StatelessWidget {
   final String tooltip;
   final IconData icon;
   final VoidCallback? onTap;
+  final Color? color;
 
   const _TopBarIconButton({
     required this.tooltip,
     required this.icon,
     required this.onTap,
+    this.color,
   });
 
   @override
@@ -1834,7 +1837,7 @@ class _TopBarIconButton extends StatelessWidget {
         height: 38,
         padding: EdgeInsets.zero,
         onPressed: onTap,
-        child: Icon(icon, size: 18, color: cs.mutedForeground),
+        child: Icon(icon, size: 18, color: color ?? cs.mutedForeground),
       ),
     );
   }
@@ -2636,7 +2639,7 @@ class _SidebarSectionLabel extends StatelessWidget {
   }
 }
 
-class _SidebarBrand extends StatelessWidget {
+class _SidebarBrand extends ConsumerWidget {
   final IconData icon;
   final String title;
   final String subtitle;
@@ -2654,8 +2657,10 @@ class _SidebarBrand extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = ShadTheme.of(context).colorScheme;
+    final hasAppUpgrade =
+        ref.watch(appUpgradeStatusProvider).value?.hasNewVersion == true;
     final brand = Row(
       children: [
         Container(
@@ -2733,12 +2738,20 @@ class _SidebarBrand extends StatelessWidget {
             ),
           ),
         ),
-        if (onSettings != null)
+        if (onSettings != null) ...[
+          if (hasAppUpgrade)
+            _TopBarIconButton(
+              tooltip: '发现新版本',
+              icon: Icons.system_update_alt_rounded,
+              color: cs.primary,
+              onTap: () => showAppUpgradeDialog(context),
+            ),
           _TopBarIconButton(
             tooltip: '设置',
             icon: Icons.settings_rounded,
             onTap: onSettings!,
           ),
+        ],
       ],
     );
   }
