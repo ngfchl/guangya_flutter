@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -3348,22 +3349,49 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           .map((item) => _parentCloudPath(item.file.cloudPath))
           .where((value) => value.isNotEmpty)
           .toSet();
-      final refreshed =
-          _MediaWork.fromItems(ref.read(mediaLibraryProvider).items)
-              .where(
-                (work) => work.resources.any(
-                  (item) =>
-                      selectedIDs.contains(item.id) ||
-                      (item.file.gcid != null &&
-                          selectedGCIDs.contains(item.file.gcid)) ||
-                      selectedParentPaths.contains(
-                        _parentCloudPath(item.file.cloudPath),
-                      ),
-                ),
-              )
-              .firstOrNull;
+      final selectedPaths = resources
+          .map((item) => item.file.cloudPath)
+          .where((value) => value.isNotEmpty)
+          .toSet();
+      final refreshedWorks = _MediaWork.fromItems(
+        ref.read(mediaLibraryProvider).allItems,
+      );
+      int matchScore(_MediaWork work) {
+        var score = 0;
+        for (final item in work.resources) {
+          if (selectedIDs.contains(item.id)) score = math.max(score, 400);
+          final gcid = item.file.gcid;
+          if (gcid != null && selectedGCIDs.contains(gcid)) {
+            score = math.max(score, 300);
+          }
+          if (selectedPaths.contains(item.file.cloudPath)) {
+            score = math.max(score, 200);
+          }
+          if (selectedParentPaths.contains(
+            _parentCloudPath(item.file.cloudPath),
+          )) {
+            score = math.max(score, 100);
+          }
+        }
+        return score;
+      }
+
+      final ranked =
+          refreshedWorks
+              .map((work) => (work: work, score: matchScore(work)))
+              .where((entry) => entry.score > 0)
+              .toList()
+            ..sort((left, right) => right.score.compareTo(left.score));
+      final refreshed = ranked.firstOrNull?.work;
       if (refreshed != null) {
         setState(() => _detailWork = refreshed);
+        _setDetailHeader(
+          MediaDetailHeader(
+            title: refreshed.primary.title,
+            mediaKind: refreshed.primary.mediaKind,
+            year: refreshed.primary.year,
+          ),
+        );
       } else if (mounted) {
         _closeDetail();
       }
