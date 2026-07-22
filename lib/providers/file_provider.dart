@@ -14,15 +14,50 @@ import '../models/fast_transfer.dart';
 
 enum FileSort { name, size, modifiedAt, createdAt, type }
 
+enum ExternalPlayerLaunchMode {
+  macOSBundle,
+  executable,
+  androidPackage,
+  urlScheme,
+}
+
 class ExternalPlayer {
   final String name;
   final String bundleID;
   final String? applicationPath;
+  final ExternalPlayerLaunchMode launchMode;
+  final String? urlScheme;
 
-  const ExternalPlayer(this.name, this.bundleID, {this.applicationPath});
+  const ExternalPlayer(
+    this.name,
+    this.bundleID, {
+    this.applicationPath,
+    this.launchMode = ExternalPlayerLaunchMode.macOSBundle,
+    this.urlScheme,
+  });
 
-  ExternalPlayer withApplicationPath(String value) =>
-      ExternalPlayer(name, bundleID, applicationPath: value);
+  ExternalPlayer withApplicationPath(String value) => ExternalPlayer(
+    name,
+    bundleID,
+    applicationPath: value,
+    launchMode: launchMode,
+    urlScheme: urlScheme,
+  );
+}
+
+Uri externalPlayerURL(ExternalPlayer player, Uri mediaURL) {
+  final source = Uri.encodeComponent(mediaURL.toString());
+  if (player.bundleID == 'nplayer') {
+    return Uri.parse('nplayer-${mediaURL.toString()}');
+  }
+  return switch (player.urlScheme) {
+    'vlc-x-callback' => Uri.parse(
+      'vlc-x-callback://x-callback-url/stream?url=$source',
+    ),
+    'infuse' => Uri.parse('infuse://x-callback-url/play?url=$source'),
+    final scheme when scheme != null => Uri.parse('$scheme://play?url=$source'),
+    _ => mediaURL,
+  };
 }
 
 String? preferredExternalPlayerApplicationPath(
@@ -48,6 +83,18 @@ String? preferredExternalPlayerApplicationPath(
     (path) => path.startsWith('/Applications/'),
     orElse: () => paths.first,
   );
+}
+
+String? firstExistingExecutablePath(
+  Iterable<String?> candidates,
+  bool Function(String path) exists,
+) {
+  for (final candidate in candidates) {
+    if (candidate != null && candidate.isNotEmpty && exists(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 class _FastTransferSource {
@@ -1072,7 +1119,7 @@ class FileNotifier extends StateNotifier<FileState> {
     );
   }
 
-  static const supportedExternalPlayers = [
+  static const _macOSExternalPlayers = [
     ExternalPlayer('IINA', 'com.colliderli.iina'),
     ExternalPlayer('VLC', 'org.videolan.vlc'),
     ExternalPlayer('Infuse', 'com.firecore.Infuse'),
@@ -1085,10 +1132,124 @@ class FileNotifier extends StateNotifier<FileState> {
     ExternalPlayer('mpv', 'io.mpv'),
   ];
 
+  static const _windowsExternalPlayers = [
+    ExternalPlayer(
+      'VLC',
+      'vlc.exe',
+      launchMode: ExternalPlayerLaunchMode.executable,
+    ),
+    ExternalPlayer(
+      'mpv',
+      'mpv.exe',
+      launchMode: ExternalPlayerLaunchMode.executable,
+    ),
+    ExternalPlayer(
+      'PotPlayer',
+      'PotPlayerMini64.exe',
+      launchMode: ExternalPlayerLaunchMode.executable,
+    ),
+    ExternalPlayer(
+      'MPC-HC',
+      'mpc-hc64.exe',
+      launchMode: ExternalPlayerLaunchMode.executable,
+    ),
+  ];
+
+  static const _linuxExternalPlayers = [
+    ExternalPlayer(
+      'VLC',
+      'vlc',
+      launchMode: ExternalPlayerLaunchMode.executable,
+    ),
+    ExternalPlayer(
+      'mpv',
+      'mpv',
+      launchMode: ExternalPlayerLaunchMode.executable,
+    ),
+    ExternalPlayer(
+      'Celluloid',
+      'celluloid',
+      launchMode: ExternalPlayerLaunchMode.executable,
+    ),
+    ExternalPlayer(
+      'SMPlayer',
+      'smplayer',
+      launchMode: ExternalPlayerLaunchMode.executable,
+    ),
+  ];
+
+  static const _androidExternalPlayers = [
+    ExternalPlayer(
+      'VLC',
+      'org.videolan.vlc',
+      launchMode: ExternalPlayerLaunchMode.androidPackage,
+    ),
+    ExternalPlayer(
+      'MX Player',
+      'com.mxtech.videoplayer.ad',
+      launchMode: ExternalPlayerLaunchMode.androidPackage,
+    ),
+    ExternalPlayer(
+      'mpv',
+      'is.xyz.mpv',
+      launchMode: ExternalPlayerLaunchMode.androidPackage,
+    ),
+    ExternalPlayer(
+      'Nova Video Player',
+      'org.courville.nova',
+      launchMode: ExternalPlayerLaunchMode.androidPackage,
+    ),
+    ExternalPlayer(
+      'Just Player',
+      'com.brouken.player',
+      launchMode: ExternalPlayerLaunchMode.androidPackage,
+    ),
+  ];
+
+  static const _iOSExternalPlayers = [
+    ExternalPlayer(
+      'VLC',
+      'vlc-x-callback',
+      launchMode: ExternalPlayerLaunchMode.urlScheme,
+      urlScheme: 'vlc-x-callback',
+    ),
+    ExternalPlayer(
+      'Infuse',
+      'infuse',
+      launchMode: ExternalPlayerLaunchMode.urlScheme,
+      urlScheme: 'infuse',
+    ),
+    ExternalPlayer(
+      'nPlayer',
+      'nplayer',
+      launchMode: ExternalPlayerLaunchMode.urlScheme,
+      urlScheme: 'nplayer-https',
+    ),
+  ];
+
+  static const _externalPlayerChannel = MethodChannel(
+    'com.ptools.guangya/external_player',
+  );
+
   Future<List<ExternalPlayer>> availableExternalPlayers() async {
-    if (!Platform.isMacOS) return const [];
+    if (Platform.isMacOS) return _availableMacOSExternalPlayers();
+    if (Platform.isWindows) {
+      return _availableWindowsExternalPlayers();
+    }
+    if (Platform.isLinux) {
+      return _availableExecutablePlayers(
+        _linuxExternalPlayers,
+        lookupCommand: 'which',
+      );
+    }
+    if (Platform.isAndroid) return _availableAndroidExternalPlayers();
+    if (Platform.isIOS) return _availableIOSExternalPlayers();
+    return const [];
+  }
+
+  Future<List<ExternalPlayer>> _availableMacOSExternalPlayers() async {
     final installed = <ExternalPlayer>[];
-    for (final player in supportedExternalPlayers) {
+    for (final player in _macOSExternalPlayers) {
       try {
         final result = await Process.run('/usr/bin/mdfind', [
           "kMDItemCFBundleIdentifier == '${player.bundleID}'",
@@ -1109,6 +1270,116 @@ class FileNotifier extends StateNotifier<FileState> {
     return installed;
   }
 
+  Future<List<ExternalPlayer>> _availableExecutablePlayers(
+    List<ExternalPlayer> players, {
+    required String lookupCommand,
+  }) async {
+    final installed = <ExternalPlayer>[];
+    for (final player in players) {
+      try {
+        final result = await Process.run(lookupCommand, [player.bundleID]);
+        if (result.exitCode != 0) continue;
+        String? path;
+        for (final value in result.stdout.toString().split(
+          RegExp(r'[\r\n]+'),
+        )) {
+          final candidate = value.trim();
+          if (candidate.isNotEmpty) {
+            path = candidate;
+            break;
+          }
+        }
+        if (path != null) installed.add(player.withApplicationPath(path));
+      } catch (_) {
+        // A missing executable is expected.
+      }
+    }
+    return installed;
+  }
+
+  Future<List<ExternalPlayer>> _availableWindowsExternalPlayers() async {
+    final programFiles = Platform.environment['ProgramFiles'];
+    final programFilesX86 = Platform.environment['ProgramFiles(x86)'];
+    final localAppData = Platform.environment['LOCALAPPDATA'];
+    final knownPaths = <String, List<String?>>{
+      'vlc.exe': [
+        if (programFiles != null) '$programFiles\\VideoLAN\\VLC\\vlc.exe',
+        if (programFilesX86 != null) '$programFilesX86\\VideoLAN\\VLC\\vlc.exe',
+      ],
+      'PotPlayerMini64.exe': [
+        if (programFiles != null)
+          '$programFiles\\DAUM\\PotPlayer\\PotPlayerMini64.exe',
+        if (programFilesX86 != null)
+          '$programFilesX86\\DAUM\\PotPlayer\\PotPlayerMini64.exe',
+      ],
+      'mpc-hc64.exe': [
+        if (programFiles != null) '$programFiles\\MPC-HC\\mpc-hc64.exe',
+        if (programFilesX86 != null) '$programFilesX86\\MPC-HC\\mpc-hc64.exe',
+      ],
+      'mpv.exe': [
+        if (localAppData != null) '$localAppData\\Programs\\mpv\\mpv.exe',
+      ],
+    };
+    final installed = <ExternalPlayer>[];
+    for (final player in _windowsExternalPlayers) {
+      var path = firstExistingExecutablePath(
+        knownPaths[player.bundleID] ?? const [],
+        (candidate) => File(candidate).existsSync(),
+      );
+      if (path == null) {
+        try {
+          final result = await Process.run('where.exe', [player.bundleID]);
+          if (result.exitCode == 0) {
+            path = firstExistingExecutablePath(
+              result.stdout
+                  .toString()
+                  .split(RegExp(r'[\r\n]+'))
+                  .map((value) => value.trim()),
+              (candidate) => candidate.isNotEmpty,
+            );
+          }
+        } catch (_) {
+          // A missing executable is expected.
+        }
+      }
+      if (path != null) installed.add(player.withApplicationPath(path));
+    }
+    return installed;
+  }
+
+  Future<List<ExternalPlayer>> _availableAndroidExternalPlayers() async {
+    try {
+      final packages = await _externalPlayerChannel.invokeMethod<List<dynamic>>(
+        'availablePlayers',
+        {
+          'packages': _androidExternalPlayers
+              .map((item) => item.bundleID)
+              .toList(),
+        },
+      );
+      final available =
+          packages?.map((value) => value.toString()).toSet() ?? {};
+      return _androidExternalPlayers
+          .where((player) => available.contains(player.bundleID))
+          .toList(growable: false);
+    } catch (error) {
+      AppLogger.warning('Player', '检测 Android 外部播放器失败：$error');
+      return const [];
+    }
+  }
+
+  Future<List<ExternalPlayer>> _availableIOSExternalPlayers() async {
+    final installed = <ExternalPlayer>[];
+    for (final player in _iOSExternalPlayers) {
+      final scheme = player.urlScheme;
+      if (scheme == null) continue;
+      try {
+        if (await canLaunchUrl(Uri.parse('$scheme://'))) installed.add(player);
+      } catch (_) {}
+    }
+    return installed;
+  }
+
   Future<void> playWithExternalPlayer(
     CloudFile file, [
     ExternalPlayer? player,
@@ -1123,13 +1394,15 @@ class FileNotifier extends StateNotifier<FileState> {
         statusMessage: player == null ? '正在准备外部播放…' : '正在使用 ${player.name} 播放…',
       );
       final url = await _resolveOpenUrl(file);
-      if (Platform.isMacOS && player != null) {
-        final applicationPath = player.applicationPath;
+      final selectedPlayer = player;
+      if (selectedPlayer != null &&
+          selectedPlayer.launchMode == ExternalPlayerLaunchMode.macOSBundle) {
+        final applicationPath = selectedPlayer.applicationPath;
         final iinaCLI = applicationPath == null
             ? null
             : '$applicationPath/Contents/MacOS/iina-cli';
         final useIINACommand =
-            player.bundleID == 'com.colliderli.iina' &&
+            selectedPlayer.bundleID == 'com.colliderli.iina' &&
             iinaCLI != null &&
             await File(iinaCLI).exists();
         final result = useIINACommand
@@ -1140,12 +1413,32 @@ class FileNotifier extends StateNotifier<FileState> {
                   applicationPath,
                 ] else ...[
                   '-b',
-                  player.bundleID,
+                  selectedPlayer.bundleID,
                 ],
                 url.toString(),
               ]);
         if (result.exitCode != 0) {
-          throw Exception('无法启动 ${player.name}：${result.stderr}');
+          throw Exception('无法启动 ${selectedPlayer.name}：${result.stderr}');
+        }
+      } else if (player?.launchMode == ExternalPlayerLaunchMode.executable) {
+        final executable = player?.applicationPath;
+        if (executable == null || executable.isEmpty) {
+          throw Exception('未找到 ${player?.name ?? '外部播放器'} 可执行文件');
+        }
+        await Process.start(executable, [
+          url.toString(),
+        ], mode: ProcessStartMode.detached);
+      } else if (player?.launchMode ==
+          ExternalPlayerLaunchMode.androidPackage) {
+        final opened = await _externalPlayerChannel.invokeMethod<bool>(
+          'openPlayer',
+          {'package': player!.bundleID, 'url': url.toString()},
+        );
+        if (opened != true) throw Exception('无法启动 ${player.name}');
+      } else if (player?.launchMode == ExternalPlayerLaunchMode.urlScheme) {
+        final target = externalPlayerURL(player!, url);
+        if (!await launchUrl(target, mode: LaunchMode.externalApplication)) {
+          throw Exception('无法启动 ${player.name}');
         }
       } else if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
         throw Exception('无法调用系统默认外部播放器');

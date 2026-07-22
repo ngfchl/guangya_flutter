@@ -1504,46 +1504,47 @@ class _ExternalPlayerDialogState extends ConsumerState<ExternalPlayerDialog> {
               );
             }
             final players = snapshot.data!;
-            if (players.isEmpty) {
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (players.isEmpty) ...[
                   Text(
                     '未发现支持的外部播放器',
                     style: TextStyle(color: cs.mutedForeground),
                   ),
                   const SizedBox(height: 12),
-                  ShadButton.outline(
-                    onPressed: () {
-                      ref
-                          .read(fileProvider.notifier)
-                          .playWithExternalPlayer(widget.file);
-                      Navigator.of(context).pop();
-                    },
-                    leading: const Icon(Icons.play_arrow_rounded, size: 16),
-                    child: const Text('系统播放'),
-                  ),
                 ],
-              );
-            }
-            return Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final player in players)
-                  ShadButton.outline(
-                    onPressed: () {
-                      ref
-                          .read(fileProvider.notifier)
-                          .playWithExternalPlayer(widget.file, player);
-                      Navigator.of(context).pop();
-                    },
-                    leading: const Icon(
-                      Icons.play_circle_outline_rounded,
-                      size: 16,
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final player in players)
+                      ShadButton.outline(
+                        onPressed: () {
+                          ref
+                              .read(fileProvider.notifier)
+                              .playWithExternalPlayer(widget.file, player);
+                          Navigator.of(context).pop();
+                        },
+                        leading: const Icon(
+                          Icons.play_circle_outline_rounded,
+                          size: 16,
+                        ),
+                        child: Text(player.name),
+                      ),
+                    ShadButton.outline(
+                      onPressed: () {
+                        ref
+                            .read(fileProvider.notifier)
+                            .playWithExternalPlayer(widget.file);
+                        Navigator.of(context).pop();
+                      },
+                      leading: const Icon(Icons.play_arrow_rounded, size: 16),
+                      child: const Text('系统默认'),
                     ),
-                    child: Text(player.name),
-                  ),
+                  ],
+                ),
               ],
             );
           },
