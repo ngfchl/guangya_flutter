@@ -1184,16 +1184,23 @@ class FileNotifier extends StateNotifier<FileState> {
           .where((f) => f.isDirectory)
           .map((f) => f.name.toUpperCase())
           .toSet();
+      final selectedName = file.name.trim().toUpperCase();
+      final selectedDiscDirectory =
+          selectedName == 'BDMV' || selectedName == 'VIDEO_TS';
       final isDiscRoot =
-          childNames.contains('BDMV') || childNames.contains('VIDEO_TS');
+          selectedDiscDirectory ||
+          childNames.contains('BDMV') ||
+          childNames.contains('VIDEO_TS');
       if (!isDiscRoot) return null;
       // Walk the disc container before looking for the largest transport
       // stream. BDMV/STREAM is two levels below the selected root, while
       // VIDEO_TS files are often directly inside VIDEO_TS.
       final videoFiles = <CloudFile>[];
       final queue = <(CloudFile file, int depth)>[
-        for (final child in children.where((child) => child.isDirectory))
-          (child, 1),
+        if (selectedDiscDirectory) (file, 0),
+        if (!selectedDiscDirectory)
+          for (final child in children.where((child) => child.isDirectory))
+            (child, 1),
       ];
       while (queue.isNotEmpty) {
         final (directory, depth) = queue.removeAt(0);
