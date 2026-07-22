@@ -2939,10 +2939,12 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         size: compact ? ShadButtonSize.sm : ShadButtonSize.regular,
         onPressed: _running ? null : _chooseTargetDirectory,
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.folder_open_rounded, size: 16),
             const SizedBox(width: 8),
-            Expanded(
+            SizedBox(
+              width: compact ? 180 : 230,
               child: Text(
                 _targetName,
                 maxLines: 1,

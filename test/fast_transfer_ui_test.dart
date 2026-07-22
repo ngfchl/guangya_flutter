@@ -1,10 +1,35 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guangya_flutter/pages/workspace_tools_page.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 void main() {
+  Future<void> importFastTransferTask(WidgetTester tester) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => call.method == 'Clipboard.getData'
+          ? {
+              'text':
+                  '{"files":[{"path":"video.mp4","size":1,"gcid":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}',
+            }
+          : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.tap(find.text('粘贴'));
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 300)),
+    );
+    await tester.pump();
+  }
+
   Future<void> pumpFastTransfer(WidgetTester tester, Size size) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -90,6 +115,18 @@ void main() {
     expect(find.text('本地文件生成秒传 JSON'), findsOneWidget);
     expect(find.text('选择文件'), findsOneWidget);
     expect(find.text('选文件夹'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('ready transfer toolbar lays out after importing JSON', (
+    tester,
+  ) async {
+    await pumpFastTransfer(tester, const Size(1200, 800));
+    await importFastTransferTask(tester);
+
+    expect(find.text('秒传任务'), findsOneWidget);
+    expect(find.text('云盘根目录'), findsNWidgets(2));
+    expect(find.text('秒传 1'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
