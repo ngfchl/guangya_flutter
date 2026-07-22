@@ -13,6 +13,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../app/app_theme.dart';
 import '../core/storage/storage_manager.dart';
+import '../core/utils/guangya_share_link.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
 import '../models/media_navigation.dart';
@@ -28,6 +29,7 @@ import '../widgets/file_detail_dialog.dart';
 import '../widgets/media_player_dialog.dart';
 import '../widgets/file_icon.dart';
 import '../widgets/share_link_dialog.dart';
+import '../widgets/share_restore_dialog.dart';
 import '../widgets/side_panel.dart';
 import '../widgets/sort_menu.dart';
 import 'media_library_page.dart';
@@ -563,9 +565,14 @@ class WorkspacePage extends ConsumerStatefulWidget {
   ConsumerState<WorkspacePage> createState() => _WorkspacePageState();
 }
 
-class _WorkspacePageState extends ConsumerState<WorkspacePage> {
+class _WorkspacePageState extends ConsumerState<WorkspacePage>
+    with WidgetsBindingObserver {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
+  Timer? _clipboardMonitor;
+  String? _lastClipboardText;
+  bool _readingClipboard = false;
+  bool _shareDialogOpen = false;
   WorkspaceMode _mode = WorkspaceMode.cloud;
   bool _isSidePanelOpen = false;
   bool _searchOpen = false;
@@ -582,8 +589,62 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (StorageManager.get<String>(StorageKeys.workspaceMode) == 'media') {
       _mode = WorkspaceMode.media;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _startClipboardMonitor();
+      unawaited(_checkClipboardForShare());
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _startClipboardMonitor();
+      unawaited(_checkClipboardForShare());
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      _clipboardMonitor?.cancel();
+      _clipboardMonitor = null;
+    }
+  }
+
+  void _startClipboardMonitor() {
+    _clipboardMonitor?.cancel();
+    if (defaultTargetPlatform == TargetPlatform.iOS) return;
+    _clipboardMonitor = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_checkClipboardForShare()),
+    );
+  }
+
+  Future<void> _checkClipboardForShare() async {
+    if (!mounted || _readingClipboard || _shareDialogOpen) return;
+    _readingClipboard = true;
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = data?.text?.trim();
+      if (!mounted ||
+          text == null ||
+          text.isEmpty ||
+          text == _lastClipboardText) {
+        return;
+      }
+      _lastClipboardText = text;
+      final share = GuangyaShareLink.tryParse(text);
+      if (share == null) return;
+      _shareDialogOpen = true;
+      await showShareRestoreDialog(context, share);
+    } catch (_) {
+      // Clipboard access can be unavailable while the app is transitioning.
+    } finally {
+      _readingClipboard = false;
+      _shareDialogOpen = false;
     }
   }
 
@@ -615,6 +676,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _clipboardMonitor?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
