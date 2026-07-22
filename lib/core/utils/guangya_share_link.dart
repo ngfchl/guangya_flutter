@@ -12,7 +12,7 @@ class GuangyaShareLink {
   });
 
   static final _urlPattern = RegExp(
-    r'https?://(?:www\.)?guangyapan\.com/s/([A-Za-z0-9_-]+)',
+    r'https?://(?:www\.)?guangyapan\.com/s/([A-Za-z0-9_-]+)(?:\?[^\s]*)?',
     caseSensitive: false,
   );
   static final _codePattern = RegExp(
@@ -24,6 +24,8 @@ class GuangyaShareLink {
     final match = _urlPattern.firstMatch(text);
     if (match == null) return null;
     final shareID = match.group(1)!;
+    final url = match.group(0)!;
+    final queryCode = Uri.tryParse(url)?.queryParameters['code']?.trim();
     final lines = text
         .split(RegExp(r'[\r\n]+'))
         .map((line) => line.trim())
@@ -37,9 +39,11 @@ class GuangyaShareLink {
     }
     return GuangyaShareLink(
       shareID: shareID,
-      url: match.group(0)!,
+      url: url,
       title: title,
-      code: _codePattern.firstMatch(text)?.group(1) ?? '',
+      code: queryCode?.isNotEmpty == true
+          ? queryCode!
+          : _codePattern.firstMatch(text)?.group(1) ?? '',
     );
   }
 }

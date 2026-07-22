@@ -23,6 +23,17 @@ void main() {
     expect(link?.code, 'A8b2');
   });
 
+  test('parses extraction code from URL query parameters', () {
+    final link = GuangyaShareLink.tryParse(
+      'https://www.guangyapan.com/s/'
+      '1927017027028733956_aeWqASa0Twth-NXG?code=nizi',
+    );
+
+    expect(link?.shareID, '1927017027028733956_aeWqASa0Twth-NXG');
+    expect(link?.code, 'nizi');
+    expect(link?.url, endsWith('?code=nizi'));
+  });
+
   test('ignores unrelated clipboard text', () {
     expect(GuangyaShareLink.tryParse('https://example.com/s/123'), isNull);
   });
