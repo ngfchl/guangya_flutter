@@ -1187,31 +1187,40 @@ class FileNotifier extends StateNotifier<FileState> {
       final isDiscRoot =
           childNames.contains('BDMV') || childNames.contains('VIDEO_TS');
       if (!isDiscRoot) return null;
-      // Recursively list BDMV/STREAM or VIDEO_TS children to find the
-      // largest transport stream.
+      // Walk the disc container before looking for the largest transport
+      // stream. BDMV/STREAM is two levels below the selected root, while
+      // VIDEO_TS files are often directly inside VIDEO_TS.
       final videoFiles = <CloudFile>[];
-      for (final child in children) {
-        if (!child.isDirectory) {
-          if (child.isVideo) videoFiles.add(child);
+      final queue = <(CloudFile file, int depth)>[
+        for (final child in children.where((child) => child.isDirectory))
+          (child, 1),
+      ];
+      while (queue.isNotEmpty) {
+        final (directory, depth) = queue.removeAt(0);
+        if (depth > 3) continue;
+        final upper = directory.name.toUpperCase();
+        if (upper != 'BDMV' && upper != 'VIDEO_TS' && upper != 'STREAM') {
           continue;
         }
-        final upper = child.name.toUpperCase();
-        if (upper == 'STREAM' || upper == 'VIDEO_TS') {
-          try {
-            final subResponse = await _api!.fsFiles(
-              parentID: child.id,
-              page: 0,
-              pageSize: 500,
-              orderBy: 0,
-              sortType: 0,
-            );
-            final subChildren = _extractFiles(subResponse);
-            for (final sub in subChildren) {
-              if (sub.isVideo) videoFiles.add(sub);
+        try {
+          final subResponse = await _api!.fsFiles(
+            parentID: directory.id,
+            page: 0,
+            pageSize: 500,
+            orderBy: 0,
+            sortType: 0,
+          );
+          final subChildren = _extractFiles(subResponse);
+          for (final sub in subChildren) {
+            if (sub.isVideo) {
+              videoFiles.add(sub);
+            } else if (sub.isDirectory) {
+              queue.add((sub, depth + 1));
             }
-          } catch (_) {
-            // Ignore sub-directory listing failures.
           }
+        } catch (_) {
+          // Ignore inaccessible optional disc directories and use any stream
+          // files already discovered.
         }
       }
       if (videoFiles.isEmpty) return null;
@@ -1280,19 +1289,29 @@ class FileNotifier extends StateNotifier<FileState> {
   Future<Uri> _resolveOpenUrl(CloudFile file) async {
     String? url;
     if (file.isVideo) {
-      final detail = await _api!.fsDetail(file.id);
-      final gcid =
-          file.gcid ?? JsonDeep.findString(detail, const ['gcid', 'gcId']);
-      if (gcid != null && gcid.isNotEmpty) {
-        final videoResult = await _api!.vodDownloadURL(file.id, gcid);
-        url = JsonDeep.findString(videoResult, const [
-          'signedURL',
-          'signedUrl',
-          'url',
-          'downloadUrl',
-          'download_url',
-          'dlink',
-        ]);
+      try {
+        final detail = await _api!.fsDetail(file.id);
+        final gcid =
+            file.gcid ?? JsonDeep.findString(detail, const ['gcid', 'gcId']);
+        if (gcid != null && gcid.isNotEmpty) {
+          try {
+            final videoResult = await _api!.vodDownloadURL(file.id, gcid);
+            url = JsonDeep.findString(videoResult, const [
+              'signedURL',
+              'signedUrl',
+              'url',
+              'downloadUrl',
+              'download_url',
+              'dlink',
+            ]);
+          } catch (error) {
+            // VOD acceleration may reject m2ts/iso files even though the
+            // regular download endpoint can still issue a playable URL.
+            AppLogger.warning('Player', 'VOD 链接不可用，降级普通下载链接：$error');
+          }
+        }
+      } catch (error) {
+        AppLogger.warning('Player', '获取视频详情失败，降级普通下载链接：$error');
       }
     }
     if (url == null) {
