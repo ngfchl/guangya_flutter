@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:easy_refresh/easy_refresh.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -2211,25 +2212,31 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 ? '发现并入库的资源会立即显示在这里'
                 : '点击扫描读取该媒体库下的视频文件',
           )
-        : RefreshIndicator(
-            onRefresh: () async {
-              await _mediaNotifier.loadContent(
-                home: widget.showHomePanel,
-                filter: _wallFilter,
-                search: widget.searchTitle ?? '',
-                reset: true,
-                force: true,
-              );
-            },
-            child: NotificationListener<ScrollNotification>(
-              onNotification: (notification) {
-                if (notification.metrics.extentAfter < 480 &&
-                    state.hasMoreContent &&
-                    !state.isLoadingMore) {
-                  unawaited(_mediaNotifier.loadNextContentPage());
-                }
-                return false;
+        : ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: const {
+                PointerDeviceKind.touch,
+                PointerDeviceKind.mouse,
+                PointerDeviceKind.stylus,
+                PointerDeviceKind.invertedStylus,
+                PointerDeviceKind.trackpad,
               },
+            ),
+            child: EasyRefresh(
+              header: const ClassicHeader(),
+              footer: const ClassicFooter(),
+              onRefresh: () async {
+                await _mediaNotifier.loadContent(
+                  home: widget.showHomePanel,
+                  filter: _wallFilter,
+                  search: widget.searchTitle ?? '',
+                  reset: true,
+                  force: true,
+                );
+              },
+              onLoad: state.hasMoreContent && !state.isLoadingMore
+                  ? _mediaNotifier.loadNextContentPage
+                  : null,
               child: SingleChildScrollView(
                 controller: _contentScrollController,
                 physics: const AlwaysScrollableScrollPhysics(
@@ -2296,8 +2303,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                   },
                 ), // LayoutBuilder
               ), // SingleChildScrollView
-            ), // NotificationListener
-          ); // RefreshIndicator – end of wallContent statement
+            ), // EasyRefresh
+          ); // ScrollConfiguration – end of wallContent statement
     final content = activeCollection == null
         ? wallContent
         : Column(
@@ -2403,10 +2410,31 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ),
       );
     }
-    return ListView(
-      primary: false,
-      padding: const EdgeInsets.only(bottom: 24),
-      children: sections,
+    return ScrollConfiguration(
+      behavior: ScrollConfiguration.of(context).copyWith(
+        dragDevices: const {
+          PointerDeviceKind.touch,
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.stylus,
+          PointerDeviceKind.invertedStylus,
+          PointerDeviceKind.trackpad,
+        },
+      ),
+      child: EasyRefresh(
+        header: const ClassicHeader(),
+        onRefresh: () => _mediaNotifier.loadContent(
+          home: true,
+          filter: MediaLibraryBrowseFilter.all,
+          reset: true,
+          force: true,
+        ),
+        child: ListView(
+          primary: false,
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.only(bottom: 24),
+          children: sections,
+        ),
+      ),
     );
   }
 
