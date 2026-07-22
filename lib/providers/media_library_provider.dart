@@ -1348,20 +1348,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> _applyImportedBackup(String backupPath) async {
     final stats = await _store.importBackup(backupPath);
-    final libraries = await _loadLibraries();
-    final selectedID = libraries.isEmpty ? null : libraries.first.id;
-    final allItems = await _loadAllItems();
+    // Force a full reload: reset _loaded so load() re-reads everything from DB.
+    _loaded = false;
+    await load();
+    await loadContent(home: true, reset: true, force: true);
     state = state.copyWith(
-      libraries: libraries,
-      selectedLibraryID: selectedID,
-      clearSelectedLibrary: selectedID == null,
-      items: selectedID == null ? const [] : await _loadItems(selectedID),
-      allItems: allItems,
       statusMessage: '刮削数据已覆盖，已回收 ${FormatBytes.format(stats.reclaimedBytes)}',
     );
-    if (selectedID != null) {
-      unawaited(_hydrateMissingArtwork(selectedID, state.items));
-    }
   }
 
   /// Parallel chunk download — splits [totalBytes] into [concurrency] chunks
