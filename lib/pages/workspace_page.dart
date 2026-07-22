@@ -2742,7 +2742,7 @@ class _SidebarBrand extends ConsumerWidget {
           if (hasAppUpgrade)
             _TopBarIconButton(
               tooltip: '发现新版本',
-              icon: Icons.system_update_alt_rounded,
+              icon: Icons.upgrade_rounded,
               color: cs.primary,
               onTap: () => showAppUpgradeDialog(context),
             ),
