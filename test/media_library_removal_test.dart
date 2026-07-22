@@ -384,6 +384,30 @@ void main() {
     },
   );
 
+  test('concurrent bottom notifications load only one next page', () async {
+    final store = _FakeMediaLibraryStore(
+      definitions: const [_libraryA],
+      records: [
+        for (var index = 0; index < 120; index++)
+          _item(_libraryA.id, 'item-$index'),
+      ],
+    );
+    final notifier = MediaLibraryNotifier(store: store);
+    addTearDown(notifier.dispose);
+
+    await notifier.load();
+    await notifier.loadContent();
+    store.itemDelays[_libraryA.id] = const Duration(milliseconds: 20);
+
+    await Future.wait([
+      notifier.loadNextContentPage(),
+      notifier.loadNextContentPage(),
+    ]);
+
+    expect(store.itemPageCalls, 2);
+    expect(notifier.state.items, hasLength(120));
+  });
+
   group('MediaLibraryNotifier.transferMediaRecords', () {
     test(
       'moves a folder worth of records and preserves unrelated items',

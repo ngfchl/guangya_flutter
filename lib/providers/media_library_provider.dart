@@ -459,6 +459,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   bool _contentHome = false;
   int _contentOffset = 0;
   int _contentLoadSerial = 0;
+  bool _nextContentPageInFlight = false;
   Timer? _cloudIndexTimer;
   Completer<bool>? _cloudIndexRefreshCompleter;
 
@@ -620,12 +621,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
   }
 
-  Future<void> loadNextContentPage() => loadContent(
-    home: _contentHome,
-    filter: _contentFilter,
-    search: _contentSearch,
-    reset: false,
-  );
+  Future<void> loadNextContentPage() async {
+    if (_nextContentPageInFlight || !state.hasMoreContent) return;
+    _nextContentPageInFlight = true;
+    try {
+      await loadContent(
+        home: _contentHome,
+        filter: _contentFilter,
+        search: _contentSearch,
+        reset: false,
+      );
+    } finally {
+      _nextContentPageInFlight = false;
+    }
+  }
 
   Future<void> selectLibrary(String id) async {
     final serial = ++_librarySelectionSerial;

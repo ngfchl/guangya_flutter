@@ -2237,70 +2237,96 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               onLoad: state.hasMoreContent && !state.isLoadingMore
                   ? _mediaNotifier.loadNextContentPage
                   : null,
-              childBuilder: (context, physics) => SingleChildScrollView(
-                controller: _contentScrollController,
-                physics: physics,
-                padding: const EdgeInsets.only(bottom: 16),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = MediaQuery.sizeOf(context).width < 720;
-                    final spacing = compact ? 10.0 : 14.0;
-                    final mobileColumns = constraints.maxWidth >= 420 ? 3 : 2;
-                    final cardWidth = compact
-                        ? ((constraints.maxWidth -
-                                  spacing * (mobileColumns - 1)) /
-                              mobileColumns)
-                        : 142.0;
-                    final cardHeight = cardWidth / 0.52;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Wrap(
-                          spacing: spacing,
-                          runSpacing: compact ? 14 : 18,
-                          children: [
-                            for (final work in works)
-                              SizedBox(
-                                width: cardWidth,
-                                height: cardHeight,
-                                child: _MediaPosterTile(
-                                  work: work,
-                                  onOpen: () => _openDetail(work),
-                                  onDownload: () => ref
-                                      .read(fileProvider.notifier)
-                                      .downloadFile(work.primary.file),
-                                  onRecognize: state.isScanning
-                                      ? null
-                                      : () {
+              childBuilder: (context, physics) =>
+                  NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      final isVertical =
+                          axisDirectionToAxis(
+                            notification.metrics.axisDirection,
+                          ) ==
+                          Axis.vertical;
+                      if (notification.depth == 0 &&
+                          isVertical &&
+                          notification.metrics.extentAfter < 480 &&
+                          state.hasMoreContent &&
+                          !state.isLoadingMore) {
+                        unawaited(_mediaNotifier.loadNextContentPage());
+                      }
+                      return false;
+                    },
+                    child: SingleChildScrollView(
+                      controller: _contentScrollController,
+                      physics: physics,
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final compact =
+                              MediaQuery.sizeOf(context).width < 720;
+                          final spacing = compact ? 10.0 : 14.0;
+                          final mobileColumns = constraints.maxWidth >= 420
+                              ? 3
+                              : 2;
+                          final cardWidth = compact
+                              ? ((constraints.maxWidth -
+                                        spacing * (mobileColumns - 1)) /
+                                    mobileColumns)
+                              : 142.0;
+                          final cardHeight = cardWidth / 0.52;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Wrap(
+                                spacing: spacing,
+                                runSpacing: compact ? 14 : 18,
+                                children: [
+                                  for (final work in works)
+                                    SizedBox(
+                                      width: cardWidth,
+                                      height: cardHeight,
+                                      child: _MediaPosterTile(
+                                        work: work,
+                                        onOpen: () => _openDetail(work),
+                                        onDownload: () => ref
+                                            .read(fileProvider.notifier)
+                                            .downloadFile(work.primary.file),
+                                        onRecognize: state.isScanning
+                                            ? null
+                                            : () {
+                                                _openDetail(work);
+                                                unawaited(
+                                                  _refreshAndRecognizeDetail(
+                                                    work,
+                                                  ),
+                                                );
+                                              },
+                                        onManualMatch: () {
                                           _openDetail(work);
                                           unawaited(
-                                            _refreshAndRecognizeDetail(work),
+                                            _showManualTMDBMatch(
+                                              work,
+                                              work.primary,
+                                            ),
                                           );
                                         },
-                                  onManualMatch: () {
-                                    _openDetail(work);
-                                    unawaited(
-                                      _showManualTMDBMatch(work, work.primary),
-                                    );
-                                  },
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              if (state.isLoadingMore)
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 20),
+                                  child: Center(
+                                    child: AppLoadingIndicator(
+                                      size: AppLoadingSize.inline,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                          ],
-                        ),
-                        if (state.isLoadingMore)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 20),
-                            child: Center(
-                              child: AppLoadingIndicator(
-                                size: AppLoadingSize.inline,
-                              ),
-                            ),
-                          ),
-                      ],
-                    );
-                  },
-                ), // LayoutBuilder
-              ), // SingleChildScrollView
+                            ],
+                          );
+                        },
+                      ), // LayoutBuilder
+                    ), // SingleChildScrollView
+                  ), // NotificationListener
             ), // EasyRefresh
           ); // ScrollConfiguration – end of wallContent statement
     final content = activeCollection == null
