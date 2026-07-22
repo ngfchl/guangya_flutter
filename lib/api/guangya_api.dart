@@ -20,6 +20,7 @@ class GuangyaAPI {
   DateTime? tokenExpiresAt;
   final String deviceID;
   final Dio? _tmdbDio;
+  final Dio? _doubanDio;
   final Duration _tmdbRetryBaseDelay;
 
   GuangyaAPI({
@@ -27,9 +28,11 @@ class GuangyaAPI {
     String? refreshToken,
     String? deviceID,
     Dio? tmdbDio,
+    Dio? doubanDio,
     Duration tmdbRetryBaseDelay = const Duration(milliseconds: 300),
   }) : deviceID = deviceID ?? _generateDeviceID(),
        _tmdbDio = tmdbDio,
+       _doubanDio = doubanDio,
        _tmdbRetryBaseDelay = tmdbRetryBaseDelay;
 
   static String _generateDeviceID() {
@@ -1103,15 +1106,34 @@ class GuangyaAPI {
       'apikey': '0ac44ae016490db2204ce0a042db2916',
     };
     final uri = Uri.https('frodo.douban.com', '/api/v2/search/movie', params);
+    return _doubanRequest(uri);
+  }
+
+  Future<Map<String, dynamic>> doubanDetails(String id) {
+    final normalizedID = id.trim();
+    if (!RegExp(r'^\d+$').hasMatch(normalizedID)) {
+      throw ArgumentError.value(id, 'id', '豆瓣 ID 必须为数字');
+    }
+    final uri = Uri.https(
+      'frodo.douban.com',
+      '/api/v2/movie/$normalizedID',
+      const {'apikey': '0ac44ae016490db2204ce0a042db2916'},
+    );
+    return _doubanRequest(uri);
+  }
+
+  Future<Map<String, dynamic>> _doubanRequest(Uri uri) async {
     const maxAttempts = 2;
     // Douban Frodo API does not need the app's auth token.
     // Create a clean Dio instance without interceptors.
-    final dio = Dio(
-      BaseOptions(
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 10),
-      ),
-    );
+    final dio =
+        _doubanDio ??
+        Dio(
+          BaseOptions(
+            connectTimeout: const Duration(seconds: 10),
+            receiveTimeout: const Duration(seconds: 10),
+          ),
+        );
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         final response = await dio.getUri(
