@@ -760,12 +760,8 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
   Widget build(BuildContext context) {
     final progress = widget.progress;
     final active = progress?.isActive == true;
-    final percentage = ((progress?.fraction ?? 0) * 100).round();
     final label = active
-        ? progress!.totalBytes > 0
-              ? '「$percentage%」${progress.phase}'
-                    '${progress.bytesPerSecond > 0 ? ' ${_formatRate(progress.bytesPerSecond)}' : ''}'
-              : progress.phase
+        ? progress!.phase
         : progress?.error != null
         ? '❌ ${progress!.error!.length > 20 ? '${progress.error!.substring(0, 20)}…' : progress.error}'
         : progress?.phase == '同步完成'
@@ -833,6 +829,16 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
               ),
               const SizedBox(height: 6),
             ],
+            if (active && progress!.totalBytes > 0) ...[
+              _progressDetail(
+                context,
+                label: '进度',
+                value:
+                    '${((progress.fraction) * 100).round()}%'
+                    '${progress.bytesPerSecond > 0 ? ' · ${_formatRate(progress.bytesPerSecond)}' : ''}',
+              ),
+              const SizedBox(height: 6),
+            ],
             _item(
               icon: Icons.save_alt_rounded,
               label: '导出数据',
@@ -894,6 +900,39 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
     },
     child: Text(label),
   );
+
+  Widget _progressDetail(
+    BuildContext context, {
+    required String label,
+    required String value,
+  }) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: cs.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: cs.foreground,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class MediaScanMenu extends StatefulWidget {
