@@ -1,9 +1,11 @@
 import 'dart:io';
 import 'dart:ui' show PlatformDispatcher;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'core/storage/storage_manager.dart';
 import 'core/logging/app_logger.dart';
 import 'core/http/dio_client.dart';
@@ -12,6 +14,12 @@ import 'app/app.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+
+  // Init sqflite FFI for desktop platforms (Windows/Linux).
+  // macOS uses sqflite_darwin natively and does not need this.
+  if (!Platform.isMacOS && !Platform.isAndroid && !Platform.isIOS) {
+    databaseFactory = databaseFactoryFfi;
+  }
 
   // Init Hive for persistent storage
   await StorageManager.init();

@@ -31,6 +31,7 @@ dependencies:
   hive: ^2.2.3
   hive_flutter: ^1.1.0
   sqflite: ^2.4.2
+  sqflite_common_ffi: ^2.3.4+4
   adaptive_platform_ui: ^0.1.106
   liquid_glass_easy: ^2.0.1
   window_manager: ^0.5.1
