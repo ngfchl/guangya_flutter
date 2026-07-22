@@ -2175,17 +2175,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 state.isScanning ||
                 _detailSyncing ||
                 _workHasManualMatchOperation(selectedWork),
+            recognizing: _detailSyncing,
           ),
-          if (_detailSyncing)
-            _detailLoadingOverlay(
-              context,
-              message: '正在识别并匹配媒体信息',
-              onCancel: _detailSyncing
-                  ? () => ref
-                        .read(mediaLibraryProvider.notifier)
-                        .cancelDetailSync()
-                  : null,
-            ),
         ],
       );
     }
@@ -3422,35 +3413,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     }.values.toList();
   }
 
-  Widget _detailLoadingOverlay(
-    BuildContext context, {
-    required String message,
-    VoidCallback? onCancel,
-  }) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return Positioned.fill(
-      child: ColoredBox(
-        color: cs.background.withValues(alpha: 0.86),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppLoadingIndicator(size: AppLoadingSize.regular, label: message),
-              if (onCancel != null) ...[
-                const SizedBox(height: 14),
-                ShadButton.destructive(
-                  size: ShadButtonSize.sm,
-                  onPressed: onCancel,
-                  leading: const Icon(Icons.stop_rounded, size: 16),
-                  child: const Text('取消'),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+
 
   Future<void> _showManualTMDBMatch(
     _MediaWork work,
@@ -5760,6 +5723,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final Set<String> manualMatchBusyResourceKeys;
   final Set<String> manualMatchLoadingResourceKeys;
   final bool removalDisabled;
+  final bool recognizing;
 
   const _MediaDetailPanel({
     super.key,
@@ -5778,6 +5742,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     this.manualMatchBusyResourceKeys = const {},
     this.manualMatchLoadingResourceKeys = const {},
     this.removalDisabled = false,
+    this.recognizing = false,
   });
 
   @override
@@ -6513,8 +6478,13 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         ),
         ShadButton.outline(
           size: ShadButtonSize.sm,
-          onPressed: widget.onRecognize,
-          leading: const Icon(Icons.auto_awesome_rounded, size: 16),
+          onPressed: widget.recognizing ? null : widget.onRecognize,
+          leading: widget.recognizing
+              ? const AppLoadingIndicator(
+                  size: AppLoadingSize.inline,
+                  semanticsLabel: '正在识别媒体信息',
+                )
+              : const Icon(Icons.auto_awesome_rounded, size: 16),
           child: const Text('媒体识别'),
         ),
         ShadButton.outline(
