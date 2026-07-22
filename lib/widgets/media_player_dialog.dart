@@ -17,6 +17,7 @@ import '../providers/file_provider.dart';
 import '../providers/watch_history_provider.dart';
 import 'app_dialog.dart';
 import 'app_loading_indicator.dart';
+import 'confirm_dialog.dart';
 
 bool get _isDesktop =>
     Platform.isMacOS || Platform.isWindows || Platform.isLinux;
@@ -188,6 +189,8 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   List<CloudFile> _episodes = const [];
   List<CloudFile> _subtitleCandidates = const [];
   bool _initialSubtitleApplied = false;
+  bool _exitConfirmationVisible = false;
+  bool _allowExit = false;
 
   bool get _isMovie =>
       widget.mediaKind == TMDBMediaKind.movie ||
@@ -322,6 +325,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     unawaited(() async {
       await Future<void>.delayed(Duration.zero);
       if (!mounted) return;
+      _allowExit = true;
       await Navigator.of(context).maybePop();
       await widget.onPlaybackFailure!();
     }());
@@ -359,6 +363,29 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
 
   void _saveCurrentPlaybackProgress() {
     _recordPlaybackProgress(_player.state.position);
+  }
+
+  Future<void> _requestExit() async {
+    if (_allowExit || _exitConfirmationVisible || !mounted) return;
+    _exitConfirmationVisible = true;
+    final wasPlaying = _player.state.playing;
+    if (wasPlaying) await _player.pause();
+    if (!mounted) return;
+    final confirmed = await showConfirmDialog(
+      context,
+      title: '退出播放？',
+      content: '当前播放进度会自动保存。',
+      confirmText: '退出播放',
+      cancelText: '继续播放',
+    );
+    _exitConfirmationVisible = false;
+    if (!mounted) return;
+    if (confirmed) {
+      _allowExit = true;
+      Navigator.of(context, rootNavigator: true).pop();
+    } else if (wasPlaying) {
+      await _player.play();
+    }
   }
 
   void _updateVideoDimensions(VideoParams params) {
@@ -453,8 +480,16 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     final cs = ShadTheme.of(context).colorScheme;
     final screen = MediaQuery.sizeOf(context);
     final compact = screen.width < 600;
-    if (_isDesktop) return _buildDesktop(cs, screen, compact);
-    return _buildMobile(cs, screen, compact);
+    final content = _isDesktop
+        ? _buildDesktop(cs, screen, compact)
+        : _buildMobile(cs, screen, compact);
+    return PopScope<void>(
+      canPop: _allowExit,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_requestExit());
+      },
+      child: content,
+    );
   }
 
   Widget _buildDesktop(ShadColorScheme cs, Size screen, bool compact) {
@@ -521,10 +556,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
             leading: const Icon(Icons.format_list_bulleted_rounded, size: 16),
             child: const Text('剧集'),
           ),
-        ShadButton.outline(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
-        ),
+        ShadButton.outline(onPressed: _requestExit, child: const Text('关闭')),
       ],
       child: _buildVideoContent(
         cs,
@@ -582,6 +614,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
                                 _searchDirectorySubtitles,
                             onLoadLocalSubtitle: _loadLocalSubtitle,
                             onToggleFullscreen: videoState.toggleFullscreen,
+                            onRequestExit: _requestExit,
                             isDesktop: isDesktop,
                             title: _currentFile.name,
                             isMovie: _isMovie,
@@ -686,6 +719,7 @@ class _MediaPlaybackControls extends StatefulWidget {
   final Future<void> Function() onSearchDirectorySubtitles;
   final Future<void> Function() onLoadLocalSubtitle;
   final Future<void> Function() onToggleFullscreen;
+  final Future<void> Function() onRequestExit;
   final bool isDesktop;
   final String title;
   final bool isMovie;
@@ -702,6 +736,7 @@ class _MediaPlaybackControls extends StatefulWidget {
     required this.onSearchDirectorySubtitles,
     required this.onLoadLocalSubtitle,
     required this.onToggleFullscreen,
+    required this.onRequestExit,
     this.isDesktop = false,
     this.title = '',
     this.isMovie = false,
@@ -723,12 +758,42 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
   final _subtitlePopover = ShadPopoverController();
   bool _controlsVisible = true;
   Timer? _hideTimer;
+  StreamSubscription<bool>? _playingSubscription;
 
   static const _hideDelay = Duration(seconds: 5);
 
+  @override
+  void initState() {
+    super.initState();
+    _listenToPlaying();
+  }
+
+  void _listenToPlaying() {
+    _playingSubscription?.cancel();
+    _playingSubscription = widget.player.stream.playing.listen(
+      _handlePlayingChanged,
+    );
+    if (widget.player.state.playing) _startHideTimer();
+  }
+
+  void _handlePlayingChanged(bool playing) {
+    if (!mounted) return;
+    if (playing) {
+      _startHideTimer();
+      return;
+    }
+    _hideTimer?.cancel();
+    if (!_controlsVisible) setState(() => _controlsVisible = true);
+  }
+
+  @override
+  void didUpdateWidget(covariant _MediaPlaybackControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.player != widget.player) _listenToPlaying();
+  }
+
   void _startHideTimer() {
     _hideTimer?.cancel();
-    if (!widget.isDesktop) return;
     _hideTimer = Timer(_hideDelay, () {
       if (mounted && widget.player.state.playing) {
         setState(() => _controlsVisible = false);
@@ -766,6 +831,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _playingSubscription?.cancel();
     _ratePopover.dispose();
     _audioPopover.dispose();
     _subtitlePopover.dispose();
@@ -1023,7 +1089,6 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
         final current = _scrubbingValue ?? position.inMilliseconds.toDouble();
         final value = max <= 0 ? 0.0 : current.clamp(0.0, max);
         final cs = ShadTheme.of(context).colorScheme;
-        if (widget.player.state.playing) _startHideTimer();
         return CallbackShortcuts(
           bindings: {
             const SingleActivator(LogicalKeyboardKey.space):
@@ -1034,18 +1099,22 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                 _seekBy(5),
             const SingleActivator(LogicalKeyboardKey.keyF):
                 widget.onToggleFullscreen,
+            const SingleActivator(LogicalKeyboardKey.escape):
+                widget.onRequestExit,
           },
           child: Focus(
             autofocus: true,
             child: GestureDetector(
               behavior: HitTestBehavior.translucent,
               onDoubleTap: widget.onToggleFullscreen,
-              onTap: widget.isDesktop
-                  ? () {
-                      widget.player.playOrPause();
-                      _resetHideTimer();
-                    }
-                  : () => widget.player.playOrPause(),
+              onTap: () {
+                if (!_controlsVisible) {
+                  _resetHideTimer();
+                  return;
+                }
+                widget.player.playOrPause();
+                _resetHideTimer();
+              },
               child: MouseRegion(
                 onHover: widget.isDesktop ? (_) => _resetHideTimer() : null,
                 child: Stack(
@@ -1207,8 +1276,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                                       if (widget.isDesktop)
                                         _controlButton(
                                           Icons.close_rounded,
-                                          () async =>
-                                              Navigator.of(context).pop(),
+                                          widget.onRequestExit,
                                         ),
                                     ],
                                   ),
