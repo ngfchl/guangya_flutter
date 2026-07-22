@@ -66,6 +66,10 @@ class CloudFile {
     return supportedVideoExtensions.contains(ext);
   }
 
+  bool get isIso => !isDirectory && name.toLowerCase().endsWith('.iso');
+
+  bool get isPlayableVideo => isVideo && !isIso;
+
   bool get isImage => fileType == 1;
   bool get isAudio => fileType == 3;
   bool get isDocument => fileType == 4;

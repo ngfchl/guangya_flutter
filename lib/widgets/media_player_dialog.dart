@@ -114,6 +114,17 @@ Future<void> showMediaPlayerDialog(
   CloudFile? initialSubtitle,
   TMDBMediaKind? mediaKind,
 }) async {
+  if (file.isIso) {
+    ShadSonner.maybeOf(context)?.show(
+      const ShadToast.destructive(
+        title: Text('不支持播放 ISO 文件'),
+        description: Text('ISO 文件仍可用于媒体识别和下载。'),
+        showCloseIconOnlyWhenHovered: false,
+      ),
+    );
+    return;
+  }
+
   Future<void> openExternalPlayer() async {
     await Future<void>.delayed(Duration.zero);
     if (!context.mounted) return;

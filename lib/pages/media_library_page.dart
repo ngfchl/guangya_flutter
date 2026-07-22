@@ -6470,18 +6470,20 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       spacing: 8,
       runSpacing: 8,
       children: [
-        ShadButton(
-          size: ShadButtonSize.sm,
-          onPressed: () => widget.onPlay(_resource),
-          leading: const Icon(Icons.play_arrow_rounded, size: 16),
-          child: const Text('播放'),
-        ),
-        ShadButton.outline(
-          size: ShadButtonSize.sm,
-          onPressed: () => widget.onExternalPlay(_resource),
-          leading: const Icon(Icons.launch_rounded, size: 16),
-          child: const Text('外部播放'),
-        ),
+        if (!_resource.file.isIso) ...[
+          ShadButton(
+            size: ShadButtonSize.sm,
+            onPressed: () => widget.onPlay(_resource),
+            leading: const Icon(Icons.play_arrow_rounded, size: 16),
+            child: const Text('播放'),
+          ),
+          ShadButton.outline(
+            size: ShadButtonSize.sm,
+            onPressed: () => widget.onExternalPlay(_resource),
+            leading: const Icon(Icons.launch_rounded, size: 16),
+            child: const Text('外部播放'),
+          ),
+        ],
         ShadButton.outline(
           size: ShadButtonSize.sm,
           onPressed: () => widget.onDownload(_resource),
@@ -7226,15 +7228,16 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                   ),
                 ],
                 const SizedBox(height: 10),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: ShadButton(
-                    size: ShadButtonSize.sm,
-                    onPressed: () => widget.onPlay(_resource),
-                    leading: const Icon(Icons.play_arrow_rounded, size: 16),
-                    child: const Text('播放本集'),
+                if (!_resource.file.isIso)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: ShadButton(
+                      size: ShadButtonSize.sm,
+                      onPressed: () => widget.onPlay(_resource),
+                      leading: const Icon(Icons.play_arrow_rounded, size: 16),
+                      child: const Text('播放本集'),
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -7254,16 +7257,18 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       child: ShadContextMenuRegion(
         tapEnabled: false,
         items: [
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.play, size: 16),
-            onPressed: () => widget.onPlay(resource),
-            child: const Text('播放'),
-          ),
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.monitorPlay, size: 16),
-            onPressed: () => widget.onExternalPlay(resource),
-            child: const Text('外部播放'),
-          ),
+          if (!resource.file.isIso) ...[
+            ShadContextMenuItem.inset(
+              leading: const Icon(LucideIcons.play, size: 16),
+              onPressed: () => widget.onPlay(resource),
+              child: const Text('播放'),
+            ),
+            ShadContextMenuItem.inset(
+              leading: const Icon(LucideIcons.monitorPlay, size: 16),
+              onPressed: () => widget.onExternalPlay(resource),
+              child: const Text('外部播放'),
+            ),
+          ],
           ShadContextMenuItem.inset(
             leading: const Icon(LucideIcons.download, size: 16),
             onPressed: () => widget.onDownload(resource),
@@ -7348,12 +7353,13 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                       color: cs.primary,
                     ),
                   const SizedBox(width: 10),
-                  ShadButton.outline(
-                    size: ShadButtonSize.sm,
-                    onPressed: () => widget.onPlay(resource),
-                    leading: const Icon(Icons.play_arrow_rounded, size: 15),
-                    child: const Text('播放'),
-                  ),
+                  if (!resource.file.isIso)
+                    ShadButton.outline(
+                      size: ShadButtonSize.sm,
+                      onPressed: () => widget.onPlay(resource),
+                      leading: const Icon(Icons.play_arrow_rounded, size: 15),
+                      child: const Text('播放'),
+                    ),
                 ],
               ),
             ),

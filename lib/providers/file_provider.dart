@@ -1061,6 +1061,10 @@ class FileNotifier extends StateNotifier<FileState> {
   }
 
   Future<void> playFile(CloudFile file) async {
+    if (file.isIso) {
+      state = state.copyWith(errorMessage: '不支持播放 ISO 文件');
+      return;
+    }
     await _openRemoteFile(
       file,
       preparingMessage: '正在准备播放…',
@@ -1110,6 +1114,10 @@ class FileNotifier extends StateNotifier<FileState> {
     ExternalPlayer? player,
   ]) async {
     if (_api == null) return;
+    if (file.isIso) {
+      state = state.copyWith(errorMessage: '不支持播放 ISO 文件');
+      return;
+    }
     try {
       state = state.copyWith(
         statusMessage: player == null ? '正在准备外部播放…' : '正在使用 ${player.name} 播放…',
@@ -1150,7 +1158,10 @@ class FileNotifier extends StateNotifier<FileState> {
     }
   }
 
-  Future<Uri> playbackUrl(CloudFile file) => _resolveOpenUrl(file);
+  Future<Uri> playbackUrl(CloudFile file) {
+    if (file.isIso) throw UnsupportedError('不支持播放 ISO 文件');
+    return _resolveOpenUrl(file);
+  }
 
   Future<List<CloudFile>> siblingFiles(CloudFile file) async {
     final siblings = await FileMetadataCache.siblingFiles(file.id);

@@ -221,8 +221,18 @@ class _FolderMoveTargetState extends State<_FolderMoveTarget> {
 }
 
 void _openCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
-  if (file.isVideo) {
+  if (file.isPlayableVideo) {
     unawaited(showMediaPlayerDialog(context, file));
+    return;
+  }
+  if (file.isIso) {
+    ShadSonner.maybeOf(context)?.show(
+      const ShadToast.destructive(
+        title: Text('不支持播放 ISO 文件'),
+        description: Text('可通过右键菜单下载该文件。'),
+        showCloseIconOnlyWhenHovered: false,
+      ),
+    );
     return;
   }
   ref.read(fileProvider.notifier).downloadFile(file);
