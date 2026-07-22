@@ -32,6 +32,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   final _cloudIndexConcurrencyController = TextEditingController();
   final _cloudIndexRefreshController = TextEditingController();
   final _pageSizeController = TextEditingController();
+  final _mediaLibraryPageSizeController = TextEditingController();
 
   @override
   void initState() {
@@ -56,6 +57,8 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         '30';
     _pageSizeController.text =
         StorageManager.get<String>(StorageKeys.defaultFilePageSize) ?? '50';
+    _mediaLibraryPageSizeController.text =
+        StorageManager.get<String>(StorageKeys.mediaLibraryPageSize) ?? '100';
   }
 
   @override
@@ -70,6 +73,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     _cloudIndexConcurrencyController.dispose();
     _cloudIndexRefreshController.dispose();
     _pageSizeController.dispose();
+    _mediaLibraryPageSizeController.dispose();
     super.dispose();
   }
 
@@ -143,8 +147,13 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                     ),
                     _SettingsRow(
                       icon: Icons.format_list_numbered_rounded,
-                      label: '默认分页大小',
+                      label: '文件列表分页大小',
                       child: _numberInput(_pageSizeController),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.video_library_outlined,
+                      label: '媒体库分页大小',
+                      child: _numberInput(_mediaLibraryPageSizeController),
                     ),
                   ],
                 ),
@@ -305,7 +314,10 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                             builder: (_) => const AppUpgradePage(),
                           ),
                         ),
-                        leading: const Icon(Icons.open_in_new_rounded, size: 15),
+                        leading: const Icon(
+                          Icons.open_in_new_rounded,
+                          size: 15,
+                        ),
                         child: const Text('检查更新'),
                       ),
                     ),
@@ -382,6 +394,10 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       StorageManager.set(
         StorageKeys.defaultFilePageSize,
         _pageSizeController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.mediaLibraryPageSize,
+        _mediaLibraryPageSizeController.text.trim(),
       ),
     ]);
     DioClient.updateNetworkProxy();

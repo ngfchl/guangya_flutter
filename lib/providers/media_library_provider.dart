@@ -450,6 +450,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   String _contentSearch = '';
   bool _contentHome = false;
   int _contentOffset = 0;
+  int _contentLoadSerial = 0;
   Timer? _cloudIndexTimer;
   Completer<bool>? _cloudIndexRefreshCompleter;
 
@@ -501,17 +502,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     String search = '',
     bool reset = true,
   }) async {
+    final serial = reset ? ++_contentLoadSerial : _contentLoadSerial;
     await load();
+    if (serial != _contentLoadSerial) return;
     final selectedID = state.selectedLibraryID;
     final normalizedSearch = search.trim().toLowerCase();
-    final global = home ||
+    final global =
+        home ||
         normalizedSearch.isNotEmpty ||
         filter == MediaLibraryBrowseFilter.movies ||
         filter == MediaLibraryBrowseFilter.series ||
         filter == MediaLibraryBrowseFilter.unmatched;
     final key = '$selectedID|$home|${filter.name}|$normalizedSearch';
     if (!reset && (_contentKey != key || !state.hasMoreContent)) return;
-    if (reset && _contentKey == key &&
+    if (reset &&
+        _contentKey == key &&
         (global ? state.allItems : state.items).isNotEmpty) {
       return;
     }
@@ -526,6 +531,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         isLoading: true,
         isLoadingMore: false,
         hasMoreContent: false,
+        searchQuery: normalizedSearch,
         items: global ? state.items : const [],
         allItems: global ? const [] : state.allItems,
         clearError: true,
@@ -537,18 +543,23 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       if (home) {
         final pages = await Future.wait(
           state.libraries.map(
-            (library) => _store.itemsPage(libraryID: library.id, limit: 15),
+            (library) =>
+                _store.workPreviewPage(libraryID: library.id, limit: 15),
           ),
         );
-        if (_contentKey != key) return;
+        if (serial != _contentLoadSerial || _contentKey != key) return;
         final values = pages.expand((page) => page).toList(growable: false);
+        AppLogger.info(
+          'Media',
+          '首页预览已加载：${[for (var index = 0; index < state.libraries.length; index++) '${state.libraries[index].name} ${pages[index].length} 条'].join('，')}',
+        );
         state = state.copyWith(
           allItems: values,
           allItemsLoaded: false,
           hasMoreContent: false,
         );
       } else {
-        const pageSize = 100;
+        final pageSize = StorageManager.configuredMediaLibraryPageSize;
         final page = await _store.itemsPage(
           libraryID: global ? null : selectedID,
           mediaKind: filter == MediaLibraryBrowseFilter.movies
@@ -561,7 +572,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           limit: pageSize,
           offset: _contentOffset,
         );
-        if (_contentKey != key) return;
+        if (serial != _contentLoadSerial || _contentKey != key) return;
         _contentOffset += page.length;
         if (global) {
           state = state.copyWith(
@@ -581,9 +592,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         }
       }
     } catch (error) {
+      if (serial != _contentLoadSerial) return;
       state = state.copyWith(errorMessage: error.toString());
     } finally {
-      state = state.copyWith(isLoading: false, isLoadingMore: false);
+      if (serial == _contentLoadSerial) {
+        state = state.copyWith(isLoading: false, isLoadingMore: false);
+      }
     }
   }
 
@@ -593,19 +607,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     search: _contentSearch,
     reset: false,
   );
-
-  Future<void> _refreshAllItemsState() async {
-    try {
-      await _store.initialize();
-      final allItems = await _loadAllItems();
-      if (allItems.isNotEmpty || state.allItems.isEmpty) {
-        state = state.copyWith(allItems: allItems);
-      }
-    } catch (_) {
-      // The normal load path reports initialization failures. This compatibility
-      // refresh is best effort for an already-mounted provider instance.
-    }
-  }
 
   Future<void> selectLibrary(String id) async {
     final serial = ++_librarySelectionSerial;
@@ -659,6 +660,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       library,
     ];
     _librarySelectionSerial += 1;
+    _contentLoadSerial += 1;
     state = state.copyWith(
       libraries: libraries,
       selectedLibraryID: library.id,
@@ -1334,23 +1336,33 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
 
     // Probe: try a small Range request to see if the server supports it.
-    final dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 30),
-      headers: {'Range': 'bytes=0-0'},
-    ));
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 30),
+        headers: {'Range': 'bytes=0-0'},
+      ),
+    );
     try {
       final probe = await dio.get<Uint8List>(url);
       if (probe.statusCode != 206) {
         // Server doesn't support Range — fall back to single connection.
         _appendBackupLog('$logPrefix：服务器不支持分片，退回单连接');
-        await _singleDownload(url: url, destination: destination, onProgress: onProgress);
+        await _singleDownload(
+          url: url,
+          destination: destination,
+          onProgress: onProgress,
+        );
         return;
       }
     } on DioException {
       // Range not supported or network issue — fall back to single.
       _appendBackupLog('$logPrefix：Range 探测失败，退回单连接');
-      await _singleDownload(url: url, destination: destination, onProgress: onProgress);
+      await _singleDownload(
+        url: url,
+        destination: destination,
+        onProgress: onProgress,
+      );
       return;
     }
 
@@ -1366,10 +1378,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final end = (start + _chunkSize - 1).clamp(0, totalBytes - 1);
       final chunkPath = '${tempDir.path}/chunk_$index';
       chunkPaths.add(chunkPath);
-      final chunkDio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(minutes: 10),
-      ));
+      final chunkDio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(minutes: 10),
+        ),
+      );
       await chunkDio.download(
         url,
         chunkPath,
@@ -2878,11 +2892,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   void setSearchQuery(String query) {
     state = state.copyWith(searchQuery: query);
     unawaited(
-      loadContent(
-        home: _contentHome,
-        filter: _contentFilter,
-        search: query,
-      ),
+      loadContent(home: _contentHome, filter: _contentFilter, search: query),
     );
   }
 
@@ -6049,10 +6059,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           final discFolder = batch[index];
           final discFile = CloudFile(
             id: discFolder.id ?? 'disc:${discFolder.path}',
-            name: discFolder.path.split(RegExp(r'[/\\]+')).lastWhere(
-              (part) => part.isNotEmpty,
-              orElse: () => discFolder.path,
-            ),
+            name: discFolder.path
+                .split(RegExp(r'[/\\]+'))
+                .lastWhere(
+                  (part) => part.isNotEmpty,
+                  orElse: () => discFolder.path,
+                ),
             isDirectory: true,
             size: files.fold<int>(0, (sum, f) => sum + (f.size ?? 0)),
             cloudPath: discFolder.path,
@@ -6195,10 +6207,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           // Treat the disc root folder itself as a single playable media item.
           final discFile = CloudFile(
             id: folder.id ?? 'disc:${folder.path}',
-            name: folder.path.split(RegExp(r'[/\\]+')).lastWhere(
-              (part) => part.isNotEmpty,
-              orElse: () => folder.path,
-            ),
+            name: folder.path
+                .split(RegExp(r'[/\\]+'))
+                .lastWhere(
+                  (part) => part.isNotEmpty,
+                  orElse: () => folder.path,
+                ),
             isDirectory: true,
             size: files.fold<int>(0, (sum, f) => sum + (f.size ?? 0)),
             cloudPath: folder.path,

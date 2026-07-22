@@ -43,7 +43,7 @@ class MediaLibraryStore {
         }
       },
     );
-      await _createSchema(_database!);
+    await _createSchema(_database!);
     try {
       final migration = await _migrateArtworkBlobSchema(_database!);
       await _createSchema(_database!);
@@ -168,7 +168,9 @@ class MediaLibraryStore {
       args.add(mediaKind);
     }
     if (unmatchedOnly) {
-      where.add('(media_kind IS NULL OR (tmdb_id IS NULL AND douban_id IS NULL))');
+      where.add(
+        '(media_kind IS NULL OR (tmdb_id IS NULL AND douban_id IS NULL))',
+      );
     }
     final query = search.trim().toLowerCase();
     if (query.isNotEmpty) {
@@ -208,12 +210,56 @@ class MediaLibraryStore {
     return rows.map(_itemFromRow).toList(growable: false);
   }
 
+  Future<List<MediaLibraryItem>> workPreviewPage({
+    required String libraryID,
+    int limit = 15,
+    int offset = 0,
+  }) async {
+    final db = await _db;
+    await _ensureMediaItemLocationColumns(db);
+    final rows = await db.rawQuery(
+      '''
+      WITH keyed_items AS (
+        SELECT
+          rowid AS item_rowid,
+          LOWER(COALESCE(title, cloud_name, '')) AS sort_title,
+          COALESCE(media_kind, 'unknown') || ':' || CASE
+            WHEN tmdb_id IS NOT NULL THEN 'tmdb:' || tmdb_id
+            WHEN douban_id IS NOT NULL AND douban_id != ''
+              THEN 'douban:' || douban_id
+            ELSE 'title:' || LOWER(REPLACE(REPLACE(
+              COALESCE(title, cloud_name, ''), ' ', ''), ',', '')) ||
+              ':' || SUBSTR(COALESCE(release_date, ''), 1, 4)
+          END AS work_key
+        FROM media_items
+        WHERE library_id = ?
+      ), preview_works AS (
+        SELECT
+          work_key,
+          MIN(item_rowid) AS item_rowid,
+          MIN(sort_title) AS sort_title
+        FROM keyed_items
+        GROUP BY work_key
+        ORDER BY sort_title, work_key
+        LIMIT ? OFFSET ?
+      )
+      SELECT media_items.*
+      FROM preview_works
+      JOIN media_items ON media_items.rowid = preview_works.item_rowid
+      ORDER BY preview_works.sort_title, preview_works.work_key
+      ''',
+      [libraryID, limit.clamp(1, 100), offset.clamp(0, 1 << 31)],
+    );
+    return rows.map(_itemFromRow).toList(growable: false);
+  }
+
   Future<
     ({
       Map<String, MediaLibraryStatistics> libraries,
       MediaLibraryStatistics global,
     })
-  > statistics() async {
+  >
+  statistics() async {
     final db = await _db;
     final byLibrary = <String, MediaLibraryStatistics>{};
 
@@ -1464,46 +1510,6 @@ class MediaLibraryStore {
       _mediaItemLocationColumnsCheck = null;
     }
   }
-}
-
-class _MediaStatisticsAccumulator {
-  final _works = <String, String?>{};
-  final _unmatched = <String>{};
-  final _collections = <String>{};
-
-  void add(Map<String, Object?> row) {
-    final kind = row['media_kind']?.toString();
-    final tmdbID = row['tmdb_id'];
-    final doubanID = row['douban_id']?.toString();
-    final title = (row['title']?.toString() ?? '').toLowerCase().replaceAll(
-      RegExp(r'[^a-z0-9\u4e00-\u9fff]'),
-      '',
-    );
-    final releaseDate = row['release_date']?.toString() ?? '';
-    final year = releaseDate.length >= 4 ? releaseDate.substring(0, 4) : '';
-    final workKey = tmdbID != null
-        ? '${kind ?? 'unknown'}:tmdb:$tmdbID'
-        : doubanID != null && doubanID.isNotEmpty
-        ? '${kind ?? 'unknown'}:douban:$doubanID'
-        : '${kind ?? 'unknown'}:$title:$year';
-    _works[workKey] = kind;
-    if (kind == null || (tmdbID == null && (doubanID?.isEmpty ?? true))) {
-      _unmatched.add(workKey);
-    }
-    final collection = row['collection_id']?.toString() ??
-        row['collection_name']?.toString();
-    if (collection != null && collection.isNotEmpty) {
-      _collections.add(collection);
-    }
-  }
-
-  MediaLibraryStatistics get result => MediaLibraryStatistics(
-    total: _works.length,
-    movies: _works.values.where((kind) => kind == 'movie').length,
-    series: _works.values.where((kind) => kind == 'tv').length,
-    unmatched: _unmatched.length,
-    collections: _collections.length,
-  );
 }
 
 class MediaLibraryStorageStats {

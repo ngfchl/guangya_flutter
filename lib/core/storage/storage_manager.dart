@@ -28,6 +28,7 @@ class StorageKeys {
       'guangya.fastTransferConcurrency';
   static const String fileCacheTTLMinutes = 'guangya.fileCacheTTLMinutes';
   static const String defaultFilePageSize = 'guangya.defaultFilePageSize';
+  static const String mediaLibraryPageSize = 'guangya.mediaLibraryPageSize';
   static const String fastTransferSession = 'guangya.fastTransferSession';
   static const String mediaScanHistory = 'guangya.mediaScanHistory';
   static const String mediaScanTaskHistory = 'guangya.mediaScanTaskHistory';
@@ -70,6 +71,10 @@ class StorageManager {
       _nonEmptyString(StorageKeys.httpProxyPort) ??
       _nonEmptyString(StorageKeys.tmdbProxyPort) ??
       '';
+
+  static int get configuredMediaLibraryPageSize =>
+      (int.tryParse(get<String>(StorageKeys.mediaLibraryPageSize) ?? '') ?? 100)
+          .clamp(1, 500);
 
   static String? _nonEmptyString(String key) {
     final value = get<String>(key)?.trim();

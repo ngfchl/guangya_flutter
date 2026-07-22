@@ -42,6 +42,24 @@ MediaLibraryItem _item(String libraryID, String fileID) {
   );
 }
 
+MediaLibraryItem _episode(String libraryID, int work, int episode) {
+  return MediaLibraryItem(
+    libraryID: libraryID,
+    file: CloudFile(
+      id: '$libraryID-$work-$episode',
+      name: 'Series.$work.S01E${episode.toString().padLeft(2, '0')}.mkv',
+      isDirectory: false,
+      cloudPath: '/$libraryID/Series $work/episode-$episode.mkv',
+      fileType: 2,
+    ),
+    tmdbID: 1000 + work,
+    mediaKind: TMDBMediaKind.tv,
+    title: 'Series $work',
+    originalTitle: 'Series $work',
+    updatedAt: DateTime(2026),
+  );
+}
+
 class _FakeMediaLibraryStore extends MediaLibraryStore {
   final List<MediaLibraryDefinition> definitions;
   final List<MediaLibraryItem> records;
@@ -87,6 +105,84 @@ class _FakeMediaLibraryStore extends MediaLibraryStore {
     return records
         .where((item) => libraryID == null || item.libraryID == libraryID)
         .toList(growable: false);
+  }
+
+  @override
+  Future<List<MediaLibraryItem>> itemsPage({
+    String? libraryID,
+    String? mediaKind,
+    bool unmatchedOnly = false,
+    String search = '',
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    final delay = libraryID == null ? null : itemDelays[libraryID];
+    if (delay != null) await Future<void>.delayed(delay);
+    final query = search.trim().toLowerCase();
+    final values = records
+        .where((item) {
+          if (libraryID != null && item.libraryID != libraryID) {
+            return false;
+          }
+          if (mediaKind != null && item.mediaKind?.name != mediaKind) {
+            return false;
+          }
+          if (unmatchedOnly && item.isMatched) {
+            return false;
+          }
+          if (query.isNotEmpty && !item.matchesSearch(query)) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
+    return values.skip(offset).take(limit).toList(growable: false);
+  }
+
+  @override
+  Future<List<MediaLibraryItem>> workPreviewPage({
+    required String libraryID,
+    int limit = 15,
+    int offset = 0,
+  }) async {
+    final delay = itemDelays[libraryID];
+    if (delay != null) await Future<void>.delayed(delay);
+    final works = <String, MediaLibraryItem>{};
+    for (final item in records.where((item) => item.libraryID == libraryID)) {
+      final kind = item.mediaKind?.name ?? 'unknown';
+      final title = item.title.toLowerCase().replaceAll(
+        RegExp(r'[^a-z0-9\u4e00-\u9fff]'),
+        '',
+      );
+      final key = item.tmdbID != null
+          ? '$kind:tmdb:${item.tmdbID}'
+          : item.doubanID?.isNotEmpty == true
+          ? '$kind:douban:${item.doubanID}'
+          : '$kind:$title:${item.year}';
+      works.putIfAbsent(key, () => item);
+    }
+    final values = works.values.toList(growable: false)
+      ..sort((a, b) => a.title.compareTo(b.title));
+    return values.skip(offset).take(limit).toList(growable: false);
+  }
+
+  @override
+  Future<
+    ({
+      Map<String, MediaLibraryStatistics> libraries,
+      MediaLibraryStatistics global,
+    })
+  >
+  statistics() async {
+    return (
+      libraries: {
+        for (final library in definitions)
+          library.id: MediaLibraryStatistics.fromItems(
+            records.where((item) => item.libraryID == library.id),
+          ),
+      },
+      global: MediaLibraryStatistics.fromItems(records),
+    );
   }
 
   @override
@@ -141,6 +237,43 @@ class _FakeMediaLibraryStore extends MediaLibraryStore {
 }
 
 void main() {
+  test(
+    'loads SQL statistics first and limits home previews per library',
+    () async {
+      final records = [
+        for (var work = 0; work < 20; work++)
+          for (var episode = 1; episode <= 3; episode++)
+            _episode(_libraryA.id, work, episode),
+        for (var index = 0; index < 18; index++)
+          _item(_libraryB.id, 'b-$index'),
+      ];
+      final store = _FakeMediaLibraryStore(
+        definitions: const [_libraryA, _libraryB],
+        records: records,
+      );
+      final notifier = MediaLibraryNotifier(store: store);
+      addTearDown(notifier.dispose);
+
+      await notifier.load();
+
+      expect(notifier.state.allItems, isEmpty);
+      expect(notifier.state.globalStatistics.total, 38);
+
+      await notifier.loadContent(home: true);
+
+      expect(notifier.state.allItems, hasLength(30));
+      expect(
+        notifier.state.allItems.where((item) => item.libraryID == _libraryA.id),
+        hasLength(15),
+      );
+      expect(
+        notifier.state.allItems.where((item) => item.libraryID == _libraryB.id),
+        hasLength(15),
+      );
+      expect(notifier.state.globalStatistics.total, 38);
+    },
+  );
+
   group('MediaLibraryNotifier.transferMediaRecords', () {
     test(
       'moves a folder worth of records and preserves unrelated items',
@@ -484,6 +617,7 @@ void main() {
     final notifier = MediaLibraryNotifier(store: store);
     addTearDown(notifier.dispose);
     await notifier.load();
+    await notifier.loadContent();
 
     await notifier.updateLibrary(_libraryB.copyWith(name: 'Updated B'));
 
