@@ -37,15 +37,26 @@ void main() {
     expect(find.text('粘贴'), findsOneWidget);
     expect(find.text('选择'), findsOneWidget);
     expect(find.text('生成'), findsOneWidget);
+    expect(find.byType(SegmentedButton<bool>), findsNothing);
+    final pasteCenter = tester.getCenter(find.text('粘贴'));
+    final chooseCenter = tester.getCenter(find.text('选择'));
+    final generateCenter = tester.getCenter(find.text('生成'));
+    expect(pasteCenter.dy, chooseCenter.dy);
+    expect(chooseCenter.dy, generateCenter.dy);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('fast transfer source selection fits a narrow window', (
     tester,
   ) async {
-    await pumpFastTransfer(tester, const Size(520, 680));
+    await pumpFastTransfer(tester, const Size(390, 844));
 
     expect(find.text('导入秒传任务'), findsOneWidget);
+    final pasteCenter = tester.getCenter(find.text('粘贴'));
+    final chooseCenter = tester.getCenter(find.text('选择'));
+    final generateCenter = tester.getCenter(find.text('生成'));
+    expect(pasteCenter.dy, lessThan(chooseCenter.dy));
+    expect(chooseCenter.dy, lessThan(generateCenter.dy));
     expect(tester.takeException(), isNull);
   });
 
@@ -63,6 +74,11 @@ void main() {
     expect(find.text('选文件夹'), findsOneWidget);
     expect(find.text('复制'), findsOneWidget);
     expect(find.text('尚未生成 JSON'), findsOneWidget);
+    expect(find.text('返回'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('返回').last);
+    await tester.pump();
+    expect(find.text('导入秒传任务'), findsOneWidget);
   });
 }

@@ -2740,7 +2740,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         ),
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
+            constraints: const BoxConstraints(maxWidth: 680),
             child: Padding(
               padding: const EdgeInsets.all(30),
               child: Column(
@@ -2809,31 +2809,62 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                           ),
                         ],
                         const SizedBox(height: 18),
-                        Wrap(
-                          spacing: 14,
-                          runSpacing: 14,
-                          alignment: WrapAlignment.center,
-                          children: [
-                            _fastTransferSourceButton(
-                              cs,
-                              title: '粘贴',
-                              icon: Icons.content_paste_rounded,
-                              onPressed: _pasteJSON,
-                            ),
-                            _fastTransferSourceButton(
-                              cs,
-                              title: '选择',
-                              icon: Icons.folder_open_rounded,
-                              onPressed: _chooseJSONFile,
-                            ),
-                            _fastTransferSourceButton(
-                              cs,
-                              title: '生成',
-                              icon: Icons.fingerprint_rounded,
-                              onPressed: () =>
-                                  setState(() => _generateMode = true),
-                            ),
-                          ],
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final compact = constraints.maxWidth < 600;
+                            final buttons = [
+                              _fastTransferSourceButton(
+                                cs,
+                                title: '粘贴',
+                                icon: Icons.content_paste_rounded,
+                                compact: compact,
+                                onPressed: _pasteJSON,
+                              ),
+                              _fastTransferSourceButton(
+                                cs,
+                                title: '选择',
+                                icon: Icons.folder_open_rounded,
+                                compact: compact,
+                                onPressed: _chooseJSONFile,
+                              ),
+                              _fastTransferSourceButton(
+                                cs,
+                                title: '生成',
+                                icon: Icons.fingerprint_rounded,
+                                compact: compact,
+                                onPressed: () =>
+                                    setState(() => _generateMode = true),
+                              ),
+                            ];
+                            if (compact) {
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  for (
+                                    var index = 0;
+                                    index < buttons.length;
+                                    index++
+                                  ) ...[
+                                    if (index > 0) const SizedBox(height: 8),
+                                    buttons[index],
+                                  ],
+                                ],
+                              );
+                            }
+                            return Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                for (
+                                  var index = 0;
+                                  index < buttons.length;
+                                  index++
+                                ) ...[
+                                  if (index > 0) const SizedBox(width: 14),
+                                  buttons[index],
+                                ],
+                              ],
+                            );
+                          },
                         ),
                       ],
               ),
@@ -2856,20 +2887,25 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     ShadColorScheme cs, {
     required String title,
     required IconData icon,
+    required bool compact,
     required VoidCallback onPressed,
   }) => SizedBox(
-    width: 190,
-    height: 132,
+    width: compact ? double.infinity : 190,
+    height: compact ? 56 : 132,
     child: ShadButton.outline(
       onPressed: onPressed,
-      child: Column(
+      child: Flex(
+        direction: compact ? Axis.horizontal : Axis.vertical,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 26),
-          const SizedBox(height: 12),
+          Icon(icon, size: compact ? 20 : 26),
+          SizedBox(width: compact ? 10 : 0, height: compact ? 0 : 12),
           Text(
             title,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: compact ? 14 : 15,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
@@ -2976,6 +3012,13 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     List<FastTransferEntry> pendingEntries,
   ) {
     return _buildFastTransferControlRow([
+      ShadButton.outline(
+        onPressed: _generating || _running
+            ? null
+            : () => setState(() => _generateMode = false),
+        leading: const Icon(Icons.arrow_back_rounded, size: 16),
+        child: const Text('返回'),
+      ),
       ShadButton.outline(
         onPressed: _generating || _running ? null : _generateLocalJson,
         leading: Icon(
@@ -3534,28 +3577,6 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Align(
-            alignment: Alignment.center,
-            child: SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment(
-                  value: false,
-                  icon: Icon(Icons.data_object_rounded, size: 16),
-                  label: Text('秒传'),
-                ),
-                ButtonSegment(
-                  value: true,
-                  icon: Icon(Icons.fingerprint_rounded, size: 16),
-                  label: Text('生成'),
-                ),
-              ],
-              selected: {_generateMode},
-              onSelectionChanged: _running
-                  ? null
-                  : (value) => setState(() => _generateMode = value.first),
-            ),
-          ),
-          const SizedBox(height: 12),
           _ToolSection(
             title: _generateMode ? '本地文件生成秒传 JSON' : '秒传任务',
             description: _generateMode
