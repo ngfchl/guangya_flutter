@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +18,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/logging/app_logger.dart';
 import '../core/storage/storage_manager.dart';
 import '../core/utils/fetch_faster_github_proxy.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
 
 const _githubRepo = 'ngfchl/guangya_flutter';
@@ -24,6 +27,13 @@ const _githubApiLatest =
 const _githubApiReleases = 'https://api.github.com/repos/$_githubRepo/releases';
 const _githubReleasesPage = 'https://github.com/$_githubRepo/releases';
 const _upgradeIgnoreVersionKey = 'app_upgrade_ignore_version';
+const _upgradeUseGithubProxyKey = 'app_upgrade_use_github_proxy';
+const _upgradeGithubProxyKey = 'app_upgrade_github_proxy';
+
+Future<void> showAppUpgradeDialog(BuildContext context) => showShadDialog<void>(
+  context: context,
+  builder: (_) => const AppUpgradePage(),
+);
 
 // ---------------------------------------------------------------------------
 // Data model
@@ -100,13 +110,38 @@ class AppUpdateAsset {
   }
 }
 
+class AppUpgradeStatus {
+  final String currentVersion;
+  final AppUpdateInfo latest;
+  final bool hasNewVersion;
+  final bool ignored;
+  final String macosArch;
+
+  const AppUpgradeStatus({
+    required this.currentVersion,
+    required this.latest,
+    required this.hasNewVersion,
+    required this.ignored,
+    required this.macosArch,
+  });
+
+  bool get shouldPrompt => hasNewVersion && !ignored;
+}
+
 // ---------------------------------------------------------------------------
 // Version comparison
 // ---------------------------------------------------------------------------
 
-int _compareVersions(String a, String b) {
-  final partsA = a.split('.').map(int.tryParse).whereType<int>().toList();
-  final partsB = b.split('.').map(int.tryParse).whereType<int>().toList();
+int compareAppVersions(String a, String b) {
+  List<int> parts(String value) => value
+      .replaceFirst(RegExp(r'^[vV]'), '')
+      .split('+')
+      .first
+      .split('.')
+      .map((part) => int.tryParse(RegExp(r'^\d+').stringMatch(part) ?? '') ?? 0)
+      .toList();
+  final partsA = parts(a);
+  final partsB = parts(b);
   final length = partsA.length > partsB.length ? partsA.length : partsB.length;
   for (var i = 0; i < length; i++) {
     final va = i < partsA.length ? partsA[i] : 0;
@@ -120,6 +155,93 @@ String _formatCurrentVersion(PackageInfo info) {
   final build = info.buildNumber.isNotEmpty ? '+${info.buildNumber}' : '';
   return '${info.version}$build';
 }
+
+Future<String> _detectCurrentMacosArch() async {
+  if (kIsWeb || !Platform.isMacOS) return 'x86_64';
+  try {
+    final arch = (await DeviceInfoPlugin().macOsInfo).arch.toLowerCase();
+    if (arch.contains('arm64') || arch.contains('aarch64')) return 'arm64';
+  } catch (error) {
+    AppLogger.warning('Upgrade', '识别 macOS 架构失败：$error');
+  }
+  return 'x86_64';
+}
+
+bool _matchesPlatformAsset(AppUpdateAsset asset, {required String macosArch}) {
+  final text = '${asset.name} ${asset.url}'.toLowerCase();
+  bool any(Iterable<String> values) => values.any(text.contains);
+  final windows = any(['windows', '.exe', '.msi', 'setup']);
+  final macos = any(['macos', 'mac-os', 'mac_os', '.pkg', '.dmg']);
+  final linux = any(['linux', '.appimage', '.deb', '.rpm']);
+  final android = any(['android', '.apk']);
+  final ios = any(['ios', '.ipa']);
+  if (Platform.isWindows) {
+    return windows && !macos && !linux && !android && !ios;
+  }
+  if (Platform.isMacOS) {
+    if (!macos || windows || linux || android || ios) return false;
+    final arm64 = any(['arm64', 'aarch64']);
+    final x64 = any(['x86_64', 'x64', 'amd64']);
+    return macosArch == 'arm64'
+        ? arm64 || (!arm64 && !x64)
+        : x64 || (!arm64 && !x64);
+  }
+  if (Platform.isLinux) return linux && !windows && !macos && !android && !ios;
+  if (Platform.isAndroid) {
+    return android && !windows && !macos && !linux && !ios;
+  }
+  if (Platform.isIOS) return ios && !windows && !macos && !linux && !android;
+  return false;
+}
+
+AppUpdateAsset? _preferredAssetForPlatform(
+  AppUpdateInfo info, {
+  required String macosArch,
+}) {
+  final current = info.assets
+      .where((asset) => _matchesPlatformAsset(asset, macosArch: macosArch))
+      .toList();
+  if (current.isEmpty) return null;
+  final priorities = Platform.isAndroid
+      ? const ['.apk']
+      : Platform.isWindows
+      ? const ['setup.exe', '.exe', '.msi', '.zip']
+      : Platform.isMacOS
+      ? const ['.pkg', '.dmg', '.zip']
+      : Platform.isIOS
+      ? const ['.ipa']
+      : const ['.appimage', '.deb', '.rpm', '.tar.gz', '.zip'];
+  for (final pattern in priorities) {
+    for (final asset in current) {
+      if (asset.name.toLowerCase().contains(pattern)) return asset;
+    }
+  }
+  return current.first;
+}
+
+final appUpgradeStatusProvider = FutureProvider<AppUpgradeStatus>((ref) async {
+  final packageInfo = await PackageInfo.fromPlatform();
+  final currentVersion = _formatCurrentVersion(packageInfo);
+  final response = await _createDio().get<Map<String, dynamic>>(
+    _githubApiLatest,
+  );
+  final latest = AppUpdateInfo.fromGitHubJson(response.data ?? {});
+  final ignored =
+      StorageManager.get<String>(_upgradeIgnoreVersionKey)?.trim() ==
+      latest.version.trim();
+  final arch = await _detectCurrentMacosArch();
+  final hasAsset = _preferredAssetForPlatform(latest, macosArch: arch) != null;
+  return AppUpgradeStatus(
+    currentVersion: currentVersion,
+    latest: latest,
+    hasNewVersion:
+        latest.version.isNotEmpty &&
+        compareAppVersions(latest.version, currentVersion) > 0 &&
+        hasAsset,
+    ignored: ignored,
+    macosArch: arch,
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Proxy helpers
@@ -142,7 +264,7 @@ Dio _createDio() {
       createHttpClient: () {
         final client = HttpClient()
           ..connectionTimeout = const Duration(seconds: 15)
-          ..badCertificateCallback = (_, __, ___) => true;
+          ..badCertificateCallback = (certificate, host, port) => true;
         client.findProxy = (_) => 'PROXY $proxyHost:$proxyPort';
         return client;
       },
@@ -174,6 +296,10 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
   String? _activeDownloadPath;
   String? _currentVersion;
   bool _ignoredLatest = false;
+  String _macosArch = 'x86_64';
+  int _dialogTab = 0;
+  bool _useGithubProxy = true;
+  bool _testingGithubProxy = false;
 
   GithubProxyResponse? _githubProxy;
   Future<GithubProxyResponse?>? _githubProxyRequest;
@@ -191,12 +317,29 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
   }
 
   Future<void> _init() async {
-    final info = await PackageInfo.fromPlatform();
-    _currentVersion = _formatCurrentVersion(info);
-    final ignored = StorageManager.get<String>(_upgradeIgnoreVersionKey) ?? '';
-    _ignoredLatest = ignored == _latest?.version;
+    _useGithubProxy =
+        StorageManager.get<bool>(_upgradeUseGithubProxyKey) ?? true;
+    final savedProxy = StorageManager.get<dynamic>(_upgradeGithubProxyKey);
+    if (savedProxy is Map) {
+      _githubProxy = GithubProxyResponse.fromJson(
+        Map<String, dynamic>.from(savedProxy),
+      );
+    }
+    _loadingLatest = true;
     _refreshUi();
-    await _checkLatest(silent: true);
+    try {
+      final status = await ref.read(appUpgradeStatusProvider.future);
+      _currentVersion = status.currentVersion;
+      _latest = status.latest;
+      _ignoredLatest = status.ignored;
+      _macosArch = status.macosArch;
+    } catch (error) {
+      _error = '检查更新失败：${_friendlyError(error)}';
+      AppLogger.error('检查更新失败', error.toString());
+    } finally {
+      _loadingLatest = false;
+      _refreshUi();
+    }
   }
 
   void _refreshUi() {
@@ -205,9 +348,12 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
 
   bool get _hasNewVersion {
     final latest = _latest?.version.trim();
-    if (latest == null || latest.isEmpty || _currentVersion == null)
+    if (latest == null || latest.isEmpty || _currentVersion == null) {
       return false;
-    return _compareVersions(latest, _currentVersion!) > 0;
+    }
+    return compareAppVersions(latest, _currentVersion!) > 0 &&
+        _latest != null &&
+        _preferredAsset(_latest!) != null;
   }
 
   // ---- GitHub API ----
@@ -223,6 +369,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
       final ignored =
           StorageManager.get<String>(_upgradeIgnoreVersionKey) ?? '';
       _ignoredLatest = ignored == _latest?.version;
+      ref.invalidate(appUpgradeStatusProvider);
     } catch (e) {
       _error = '检查更新失败：${_friendlyError(e)}';
       AppLogger.error('检查更新失败', e.toString());
@@ -266,29 +413,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
   // ---- Download ----
 
   AppUpdateAsset? _preferredAsset(AppUpdateInfo info) {
-    if (info.assets.isEmpty) return null;
-    final candidates = <String>[];
-    if (Platform.isMacOS) {
-      candidates.addAll(['.dmg', '.tar.gz', '.zip']);
-      // detect arch
-      final arch = Platform.version.contains('arm64') ? 'arm64' : 'x64';
-      candidates.insert(0, arch);
-    } else if (Platform.isWindows) {
-      candidates.addAll(['.exe', '.msi', '.zip']);
-    } else if (Platform.isLinux) {
-      candidates.addAll(['.AppImage', '.deb', '.tar.gz', '.zip']);
-    } else if (Platform.isAndroid) {
-      candidates.addAll(['.apk']);
-    }
-    // match by priority
-    for (final pattern in candidates) {
-      for (final asset in info.assets) {
-        if (asset.name.toLowerCase().contains(pattern.toLowerCase())) {
-          return asset;
-        }
-      }
-    }
-    return info.assets.first;
+    return _preferredAssetForPlatform(info, macosArch: _macosArch);
   }
 
   Future<void> _downloadAsset(
@@ -370,7 +495,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
   }
 
   Future<String> _acceleratedDownloadUrl(String url) async {
-    if (!isGithubDownloadUrl(url)) return url;
+    if (!_useGithubProxy || !isGithubDownloadUrl(url)) return url;
     final proxy = await (_githubProxyRequest ??= _findGithubProxy());
     if (proxy == null) return url;
     return buildGithubProxyUrl(proxy.url, url);
@@ -380,13 +505,39 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     if (_githubProxy != null) return _githubProxy;
     try {
       final result = await fetchFasterGithubProxy(dio: _createDio());
-      if (result.success) _githubProxy = result.data;
+      if (result.success) {
+        _githubProxy = result.data;
+        if (_githubProxy != null) {
+          await StorageManager.set(
+            _upgradeGithubProxyKey,
+            _githubProxy!.toJson(),
+          );
+        }
+      }
       return _githubProxy;
     } catch (error, stackTrace) {
       AppLogger.warning('Upgrade', 'GitHub 加速测速失败，使用原始下载地址：$error');
       AppLogger.debug('Upgrade', '$stackTrace');
       return null;
     }
+  }
+
+  Future<void> _setUseGithubProxy(bool value) async {
+    _useGithubProxy = value;
+    await StorageManager.set(_upgradeUseGithubProxyKey, value);
+    _refreshUi();
+    if (value && _githubProxy == null) await _testGithubProxy();
+  }
+
+  Future<void> _testGithubProxy() async {
+    if (_testingGithubProxy) return;
+    _testingGithubProxy = true;
+    _githubProxy = null;
+    _githubProxyRequest = null;
+    _refreshUi();
+    await _findGithubProxy();
+    _testingGithubProxy = false;
+    _refreshUi();
   }
 
   Future<void> _openInstaller(String path) async {
@@ -439,6 +590,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
       await StorageManager.set(_upgradeIgnoreVersionKey, _latest!.version);
       _ignoredLatest = true;
     }
+    ref.invalidate(appUpgradeStatusProvider);
     _refreshUi();
   }
 
@@ -461,47 +613,158 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('应用更新'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded, size: 20),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
+    final size = MediaQuery.sizeOf(context);
+    final compact = size.width < 600;
+    final dialogWidth = compact ? size.width - 32 : 620.0;
+    final dialogHeight = (size.height * (compact ? 0.68 : 0.72)).clamp(
+      380.0,
+      640.0,
+    );
+    return ShadDialog(
+      title: Row(
         children: [
-          // Current version + check button
-          _buildVersionCard(cs),
-          const SizedBox(height: 16),
-          // Latest version
-          if (_loadingLatest && _latest == null)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: AppLoadingIndicator(size: AppLoadingSize.inline),
-              ),
-            )
-          else if (_error != null && _latest == null)
-            _buildErrorCard(cs)
-          else if (_latest != null) ...[
-            _buildLatestCard(cs),
-            const SizedBox(height: 16),
-          ],
-          // Download progress
-          if (_downloading) ...[
-            _buildProgressCard(cs),
-            const SizedBox(height: 16),
-          ],
-          // Versions list
-          _buildVersionsSection(cs),
+          Icon(
+            _hasNewVersion
+                ? Icons.system_update_alt_rounded
+                : Icons.verified_rounded,
+            size: 20,
+            color: _hasNewVersion ? cs.primary : const Color(0xFF22A559),
+          ),
+          const SizedBox(width: 8),
+          Text(_hasNewVersion ? '发现新版本' : '应用更新'),
         ],
+      ),
+      description: Text(
+        _hasNewVersion
+            ? '当前 v${_currentVersion ?? '-'}，可更新至 v${_latest?.version ?? '-'}'
+            : '当前版本 v${_currentVersion ?? '-'}',
+      ),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+      child: SizedBox(
+        width: dialogWidth,
+        height: dialogHeight,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SegmentedButton<int>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 0, label: Text('最新版本')),
+                ButtonSegment(value: 1, label: Text('历史版本')),
+              ],
+              selected: {_dialogTab},
+              onSelectionChanged: (value) {
+                setState(() => _dialogTab = value.first);
+                if (_dialogTab == 1 && _versions.isEmpty) {
+                  unawaited(_loadVersions());
+                }
+              },
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: IndexedStack(
+                index: _dialogTab,
+                children: [
+                  ListView(
+                    padding: EdgeInsets.only(right: compact ? 0 : 4),
+                    children: [
+                      _buildVersionCard(cs),
+                      const SizedBox(height: 10),
+                      if (_loadingLatest && _latest == null)
+                        const Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Center(
+                            child: AppLoadingIndicator(
+                              size: AppLoadingSize.inline,
+                            ),
+                          ),
+                        )
+                      else if (_error != null && _latest == null)
+                        _buildErrorCard(cs)
+                      else if (_latest != null)
+                        _buildLatestCard(cs),
+                      const SizedBox(height: 10),
+                      _buildProxyOptions(cs),
+                      if (_downloading) ...[
+                        const SizedBox(height: 10),
+                        _buildProgressCard(cs),
+                      ],
+                    ],
+                  ),
+                  ListView(
+                    padding: EdgeInsets.only(right: compact ? 0 : 4),
+                    children: [_buildVersionsSection(cs)],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildVersionCard(cs) {
+  Widget _buildProxyOptions(ShadColorScheme cs) {
+    final proxy = _githubProxy;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            ShadCheckbox(value: _useGithubProxy, onChanged: _setUseGithubProxy),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'GitHub 下载加速',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: cs.foreground,
+                    ),
+                  ),
+                  Text(
+                    !_useGithubProxy
+                        ? '使用 GitHub 原始下载地址'
+                        : _testingGithubProxy
+                        ? '正在测速可用节点'
+                        : proxy == null
+                        ? '下载时自动选择最快节点'
+                        : '${Uri.tryParse(proxy.url)?.host ?? proxy.url} · ${proxy.time} ms',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                  ),
+                ],
+              ),
+            ),
+            if (_useGithubProxy)
+              ShadButton.outline(
+                size: ShadButtonSize.sm,
+                onPressed: _testingGithubProxy ? null : _testGithubProxy,
+                leading: _testingGithubProxy
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.speed_rounded, size: 15),
+                child: Text(_testingGithubProxy ? '测速中' : '重新测速'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVersionCard(ShadColorScheme cs) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -571,7 +834,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     );
   }
 
-  Widget _buildErrorCard(cs) {
+  Widget _buildErrorCard(ShadColorScheme cs) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -591,8 +854,11 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     );
   }
 
-  Widget _buildLatestCard(cs) {
+  Widget _buildLatestCard(ShadColorScheme cs) {
     final latest = _latest!;
+    final platformAssets = latest.assets
+        .where((asset) => _matchesPlatformAsset(asset, macosArch: _macosArch))
+        .toList();
     final published = latest.publishedAt != null
         ? '${latest.publishedAt!.year}-${latest.publishedAt!.month.toString().padLeft(2, '0')}-${latest.publishedAt!.day.toString().padLeft(2, '0')}'
         : '';
@@ -664,7 +930,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
             ],
             const SizedBox(height: 12),
             // Assets
-            if (latest.assets.isNotEmpty) ...[
+            if (platformAssets.isNotEmpty) ...[
               Text(
                 '安装包',
                 style: TextStyle(
@@ -674,7 +940,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
                 ),
               ),
               const SizedBox(height: 8),
-              for (final asset in latest.assets)
+              for (final asset in platformAssets)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Row(
@@ -736,7 +1002,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     );
   }
 
-  Widget _buildProgressCard(cs) {
+  Widget _buildProgressCard(ShadColorScheme cs) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -782,7 +1048,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     );
   }
 
-  Widget _buildVersionsSection(cs) {
+  Widget _buildVersionsSection(ShadColorScheme cs) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -842,13 +1108,16 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     );
   }
 
-  Widget _buildVersionItem(AppUpdateInfo version, cs) {
+  Widget _buildVersionItem(AppUpdateInfo version, ShadColorScheme cs) {
     final published = version.publishedAt != null
         ? '${version.publishedAt!.year}-${version.publishedAt!.month.toString().padLeft(2, '0')}-${version.publishedAt!.day.toString().padLeft(2, '0')}'
         : '';
     final isCurrent =
         _currentVersion != null &&
-        _compareVersions(version.version, _currentVersion!) == 0;
+        compareAppVersions(version.version, _currentVersion!) == 0;
+    final platformAssets = version.assets
+        .where((asset) => _matchesPlatformAsset(asset, macosArch: _macosArch))
+        .toList();
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
@@ -908,13 +1177,13 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
                 ),
               ),
             ],
-            if (version.assets.isNotEmpty) ...[
+            if (platformAssets.isNotEmpty) ...[
               const SizedBox(height: 8),
               Wrap(
                 spacing: 6,
                 runSpacing: 4,
                 children: [
-                  for (final asset in version.assets.take(5))
+                  for (final asset in platformAssets.take(5))
                     ActionChip(
                       label: Text(
                         '${asset.name} (${asset.formattedSize})',

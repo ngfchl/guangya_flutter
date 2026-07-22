@@ -153,5 +153,14 @@ class GithubProxyResponse {
     required this.status,
   });
 
+  factory GithubProxyResponse.fromJson(Map<String, dynamic> json) =>
+      GithubProxyResponse(
+        url: json['url']?.toString() ?? '',
+        time: int.tryParse('${json['time']}') ?? 0,
+        status: int.tryParse('${json['status']}') ?? 0,
+      );
+
+  Map<String, dynamic> toJson() => {'url': url, 'time': time, 'status': status};
+
   bool get available => status >= 200 && status < 500;
 }
