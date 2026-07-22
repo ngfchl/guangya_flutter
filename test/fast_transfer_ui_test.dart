@@ -81,4 +81,15 @@ void main() {
     await tester.pump();
     expect(find.text('导入秒传任务'), findsOneWidget);
   });
+
+  testWidgets('generator toolbar fits a mobile viewport', (tester) async {
+    await pumpFastTransfer(tester, const Size(390, 844));
+    await tester.tap(find.text('生成'));
+    await tester.pump();
+
+    expect(find.text('本地文件生成秒传 JSON'), findsOneWidget);
+    expect(find.text('选择文件'), findsOneWidget);
+    expect(find.text('选文件夹'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -2891,15 +2891,16 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     required VoidCallback onPressed,
   }) => SizedBox(
     width: compact ? double.infinity : 190,
-    height: compact ? 56 : 132,
+    height: compact ? 44 : 132,
     child: ShadButton.outline(
+      size: compact ? ShadButtonSize.sm : ShadButtonSize.regular,
       onPressed: onPressed,
       child: Flex(
         direction: compact ? Axis.horizontal : Axis.vertical,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: compact ? 20 : 26),
-          SizedBox(width: compact ? 10 : 0, height: compact ? 0 : 12),
+          Icon(icon, size: compact ? 18 : 26),
+          SizedBox(width: compact ? 8 : 0, height: compact ? 0 : 12),
           Text(
             title,
             style: TextStyle(
@@ -2927,18 +2928,21 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     );
   }
 
-  Widget _buildTargetDirectoryButton(ShadColorScheme cs) {
+  Widget _buildTargetDirectoryButton(
+    ShadColorScheme cs, {
+    double width = 320,
+    bool compact = false,
+  }) {
     return SizedBox(
-      width: 320,
+      width: width,
       child: ShadButton.outline(
+        size: compact ? ShadButtonSize.sm : ShadButtonSize.regular,
         onPressed: _running ? null : _chooseTargetDirectory,
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.folder_open_rounded, size: 16),
             const SizedBox(width: 8),
-            SizedBox(
-              width: 230,
+            Expanded(
               child: Text(
                 _targetName,
                 maxLines: 1,
@@ -2962,57 +2966,94 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     ShadColorScheme cs,
     List<FastTransferEntry> pendingEntries,
   ) {
-    return _buildFastTransferControlRow([
-      _buildTargetDirectoryButton(cs),
-      ShadCheckbox(
-        value: _createDirectories,
-        label: const Text('创建目录'),
-        onChanged: _running
-            ? null
-            : (value) => setState(() => _createDirectories = value),
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    final createDirectories = ShadCheckbox(
+      value: _createDirectories,
+      label: const Text('创建目录'),
+      onChanged: _running
+          ? null
+          : (value) => setState(() => _createDirectories = value),
+    );
+    final skipExisting = ShadCheckbox(
+      value: _skipExisting,
+      label: const Text('跳过同名'),
+      onChanged: _running
+          ? null
+          : (value) => setState(() => _skipExisting = value),
+    );
+    final concurrency = SizedBox(
+      width: 110,
+      child: ShadSelect<int>(
+        initialValue: _concurrency,
+        enabled: !_running,
+        minWidth: 110,
+        selectedOptionBuilder: (_, value) => Text('并发 $value'),
+        options: [
+          for (var value = 1; value <= 20; value++)
+            ShadOption(value: value, child: Text('并发 $value')),
+        ],
+        onChanged: (value) {
+          if (value != null) unawaited(_setConcurrency(value));
+        },
       ),
-      ShadCheckbox(
-        value: _skipExisting,
-        label: const Text('跳过同名'),
-        onChanged: _running
-            ? null
-            : (value) => setState(() => _skipExisting = value),
+    );
+    final reset = ShadTooltip(
+      builder: (_) => const Text('重新选择 JSON'),
+      child: ShadButton.outline(
+        size: compact ? ShadButtonSize.sm : ShadButtonSize.regular,
+        onPressed: _running ? null : _clearFastTransferSession,
+        child: const Icon(Icons.undo_rounded, size: 16),
       ),
-      SizedBox(
-        width: 110,
-        child: ShadSelect<int>(
-          initialValue: _concurrency,
-          enabled: !_running,
-          minWidth: 110,
-          selectedOptionBuilder: (_, value) => Text('并发 $value'),
-          options: [
-            for (var value = 1; value <= 20; value++)
-              ShadOption(value: value, child: Text('并发 $value')),
+    );
+    final run = _buildTransferRunControl(pendingEntries, compact: compact);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 720) {
+          return _buildFastTransferControlRow([
+            _buildTargetDirectoryButton(cs, compact: compact),
+            createDirectories,
+            skipExisting,
+            concurrency,
+            reset,
+            run,
+          ]);
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildTargetDirectoryButton(
+              cs,
+              width: double.infinity,
+              compact: compact,
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 18,
+              runSpacing: 8,
+              children: [createDirectories, skipExisting],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [concurrency, reset, run],
+            ),
           ],
-          onChanged: (value) {
-            if (value != null) {
-              unawaited(_setConcurrency(value));
-            }
-          },
-        ),
-      ),
-      ShadTooltip(
-        builder: (_) => const Text('重新选择 JSON'),
-        child: ShadButton.outline(
-          onPressed: _running ? null : _clearFastTransferSession,
-          child: const Icon(Icons.undo_rounded, size: 16),
-        ),
-      ),
-      _buildTransferRunControl(pendingEntries),
-    ]);
+        );
+      },
+    );
   }
 
   Widget _buildGenerateCommandRow(
     ShadColorScheme cs,
     List<FastTransferEntry> pendingEntries,
   ) {
-    return _buildFastTransferControlRow([
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    final buttonSize = compact ? ShadButtonSize.sm : ShadButtonSize.regular;
+    final controls = [
       ShadButton.outline(
+        size: buttonSize,
         onPressed: _generating || _running
             ? null
             : () => setState(() => _generateMode = false),
@@ -3020,6 +3061,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         child: const Text('返回'),
       ),
       ShadButton.outline(
+        size: buttonSize,
         onPressed: _generating || _running ? null : _generateLocalJson,
         leading: Icon(
           _generating ? Icons.hourglass_top_rounded : Icons.folder_open_rounded,
@@ -3028,11 +3070,13 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         child: Text(_generating ? '正在生成 JSON' : '选择文件'),
       ),
       ShadButton.outline(
+        size: buttonSize,
         onPressed: _generating || _running ? null : _generateLocalFolderJson,
         leading: const Icon(Icons.create_new_folder_outlined, size: 16),
         child: const Text('选文件夹'),
       ),
       ShadButton.outline(
+        size: buttonSize,
         onPressed: _generating || _json.text.trim().isEmpty
             ? null
             : _copyGeneratedJSON,
@@ -3040,22 +3084,36 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         child: const Text('复制'),
       ),
       ShadButton(
+        size: buttonSize,
         onPressed: _generating || _json.text.trim().isEmpty
             ? null
             : _exportGeneratedJSON,
         leading: const Icon(Icons.download_rounded, size: 16),
         child: const Text('导出'),
       ),
-      _buildTransferRunControl(pendingEntries),
-    ]);
+      _buildTransferRunControl(pendingEntries, compact: compact),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 720) {
+          return _buildFastTransferControlRow(controls);
+        }
+        return Wrap(spacing: 8, runSpacing: 8, children: controls);
+      },
+    );
   }
 
-  Widget _buildTransferRunControl(List<FastTransferEntry> pendingEntries) {
+  Widget _buildTransferRunControl(
+    List<FastTransferEntry> pendingEntries, {
+    bool compact = false,
+  }) {
+    final size = compact ? ShadButtonSize.sm : ShadButtonSize.regular;
     if (_running) {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           ShadButton.outline(
+            size: size,
             onPressed: () => setState(() => _paused = !_paused),
             leading: Icon(
               _paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
@@ -3065,6 +3123,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           ),
           const SizedBox(width: 8),
           ShadButton.destructive(
+            size: size,
             onPressed: () => setState(() => _cancelRequested = true),
             leading: const Icon(Icons.stop_rounded, size: 16),
             child: const Text('终止'),
@@ -3075,6 +3134,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     final canStart =
         _entries.isNotEmpty && pendingEntries.isNotEmpty && !_generating;
     return ShadButton(
+      size: size,
       onPressed: canStart ? _startPending : null,
       leading: const Icon(Icons.bolt_rounded, size: 16),
       child: Text('秒传 ${pendingEntries.length}'),
@@ -3085,7 +3145,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     final text = _json.text.trim();
     final displayText = text.isEmpty ? '尚未生成 JSON' : _json.text;
     return SizedBox(
-      height: 220,
+      height: MediaQuery.sizeOf(context).width < 600 ? 150 : 220,
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: cs.muted.withValues(alpha: 0.18),
@@ -3572,8 +3632,9 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     final visibleTasks = sectionTasks.sublist(pageStart, pageEnd);
     final processed = _latestTaskResults.length.clamp(0, _entries.length);
     final progress = _entries.isEmpty ? 0.0 : processed / _entries.length;
+    final compact = MediaQuery.sizeOf(context).width < 600;
     return Padding(
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.all(compact ? 10 : 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -3583,7 +3644,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                 ? '计算本地文件的 MD5 与 GCID，生成可导入的秒传 JSON。'
                 : _targetName,
             child: Padding(
-              padding: const EdgeInsets.only(top: 12),
+              padding: EdgeInsets.only(top: compact ? 8 : 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
