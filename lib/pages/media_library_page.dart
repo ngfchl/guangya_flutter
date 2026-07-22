@@ -11,6 +11,7 @@ import 'package:easy_refresh/easy_refresh.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../core/utils/format_bytes.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
@@ -876,15 +877,8 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
     );
   }
 
-  String _formatRate(double bytesPerSecond) {
-    if (bytesPerSecond >= 1024 * 1024) {
-      return '${(bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)}MB/s';
-    }
-    if (bytesPerSecond >= 1024) {
-      return '${(bytesPerSecond / 1024).toStringAsFixed(1)}KB/s';
-    }
-    return '${bytesPerSecond.round()}B/s';
-  }
+  String _formatRate(double bytesPerSecond) =>
+      '${FormatBytes.format(bytesPerSecond.round())}/s';
 
   Widget _item({
     required IconData icon,
