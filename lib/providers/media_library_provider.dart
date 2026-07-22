@@ -270,20 +270,15 @@ class CloudBackupSyncProgress {
 class _BackupTransferRate {
   DateTime _lastTime = DateTime.now();
   int _lastBytes = 0;
-  double _smoothed = 0;
-  /// Cap to avoid displaying absurd values from timing glitches.
-  static const double _maxRate = 100 * 1024 * 1024; // 100 MB/s
 
   double update(int bytes) {
     final now = DateTime.now();
     final seconds = now.difference(_lastTime).inMicroseconds / 1000000;
-    if (seconds < 0.5 || bytes <= _lastBytes) return _smoothed;
-    final current = (bytes - _lastBytes) / seconds;
-    final capped = current.clamp(0.0, _maxRate);
-    _smoothed = _smoothed == 0 ? capped : (_smoothed * 0.7 + capped * 0.3);
+    if (seconds < 0.3 || bytes <= _lastBytes) return 0;
+    final rate = (bytes - _lastBytes) / seconds;
     _lastTime = now;
     _lastBytes = bytes;
-    return _smoothed;
+    return rate;
   }
 }
 
