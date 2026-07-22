@@ -6,7 +6,6 @@ SOURCE_BRANCH="dev"
 TARGET_BRANCH="main"
 PUBSPEC_FILE="pubspec.yaml"
 REQUESTED_VERSION=""
-ASSUME_YES=false
 DRY_RUN=false
 RETURN_TO_SOURCE_ON_ERROR=false
 
@@ -20,7 +19,6 @@ usage() {
   --target <分支>     发布目标分支。默认: main
   --remote <远程>     Git 远程仓库。默认: github
   --pubspec <文件>    pubspec.yaml 路径。默认: pubspec.yaml
-  --yes               跳过发布确认
   --dry-run           显示发布计划，不修改文件或 Git 状态
   -h, --help          显示帮助信息
 
@@ -57,29 +55,7 @@ require_option_value() {
   [ -n "$value" ] || die "$option 需要一个参数"
 }
 
-confirm() {
-  local message="$1"
-  local answer=""
-
-  if [ "$ASSUME_YES" = true ]; then
-    return 0
-  fi
-
-  read -r -p "$message [Y/n] " answer
-  case "$answer" in
-    ""|y|Y|yes|YES|Yes) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-print_command() {
-  printf '+ '
-  printf '%q ' "$@"
-  printf '\n'
-}
-
 run() {
-  print_command "$@"
   "$@"
 }
 
@@ -233,10 +209,6 @@ while [ "$#" -gt 0 ]; do
       PUBSPEC_FILE="$2"
       shift 2
       ;;
-    --yes)
-      ASSUME_YES=true
-      shift
-      ;;
     --dry-run)
       DRY_RUN=true
       shift
@@ -283,15 +255,15 @@ if [ "$DRY_RUN" = true ]; then
 
   echo "DRY-RUN：未联网，也不会修改文件或 Git 状态；远程引用以本地缓存为准。"
   print_plan "$OLD_VERSION" "$NEW_VERSION" "$TAG_NAME"
-  print_command git fetch "$REMOTE" --prune --tags
-  echo "+ 更新 $PUBSPEC_FILE 中的版本号为 $NEW_VERSION"
-  print_command git commit -m "chore(release): $NEW_VERSION" -- "$PUBSPEC_FILE"
-  print_command git merge --ff-only "$SOURCE_BRANCH"
-  print_command git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
-  print_command git push --atomic --set-upstream "$REMOTE" \
-    "refs/heads/$SOURCE_BRANCH:refs/heads/$SOURCE_BRANCH" \
-    "refs/heads/$TARGET_BRANCH:refs/heads/$TARGET_BRANCH" \
-    "refs/tags/$TAG_NAME:refs/tags/$TAG_NAME"
+  echo "  git fetch $REMOTE --prune --tags"
+  echo "  更新 $PUBSPEC_FILE 中的版本号为 $NEW_VERSION"
+  echo "  git commit -m \"chore(release): $NEW_VERSION\" -- $PUBSPEC_FILE"
+  echo "  git merge --ff-only $SOURCE_BRANCH"
+  echo "  git tag -a $TAG_NAME -m \"Release $TAG_NAME\""
+  echo "  git push --atomic --set-upstream $REMOTE \\"
+  echo "    refs/heads/$SOURCE_BRANCH:refs/heads/$SOURCE_BRANCH \\"
+  echo "    refs/heads/$TARGET_BRANCH:refs/heads/$TARGET_BRANCH \\"
+  echo "    refs/tags/$TAG_NAME:refs/tags/$TAG_NAME"
   exit 0
 fi
 
@@ -337,7 +309,6 @@ TAG_NAME="v${NEW_VERSION%%+*}"
 git show-ref --verify --quiet "refs/tags/$TAG_NAME" && die "标签已存在: $TAG_NAME"
 
 print_plan "$OLD_VERSION" "$NEW_VERSION" "$TAG_NAME"
-confirm "确认执行以上发布流程？" || die "已取消发布"
 
 update_pubspec_version "$PUBSPEC_FILE" "$NEW_VERSION"
 run git diff --check -- "$PUBSPEC_FILE"
