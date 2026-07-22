@@ -3458,8 +3458,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     }.values.toList();
   }
 
-
-
   Future<void> _showManualTMDBMatch(
     _MediaWork work,
     MediaLibraryItem target,
@@ -3662,7 +3660,7 @@ class _MediaLibraryScanTaskDialogState
     final state = ref.watch(mediaLibraryProvider);
     final cs = ShadTheme.of(context).colorScheme;
     final size = MediaQuery.sizeOf(context);
-    final width = (size.width - 32).clamp(340.0, 920.0).toDouble();
+    final width = (size.width - 32).clamp(340.0, 1000.0).toDouble();
     final height = (size.height - 140).clamp(420.0, 700.0).toDouble();
     final tasks = state.scanTasks;
     return ShadDialog(
@@ -4160,7 +4158,7 @@ class _MediaLibraryManagementDialogState
     final state = ref.watch(mediaLibraryProvider);
     final cs = ShadTheme.of(context).colorScheme;
     final size = MediaQuery.sizeOf(context);
-    final width = (size.width - 32).clamp(320.0, 760.0).toDouble();
+    final width = (size.width - 32).clamp(320.0, 1000.0).toDouble();
     final height = (size.height - 160).clamp(360.0, 620.0).toDouble();
     return ShadDialog(
       title: const Text('媒体库管理'),
@@ -4391,7 +4389,7 @@ class _MediaLibraryManagementDialogState
   }
 }
 
-class _ManagementLibraryRow extends StatelessWidget {
+class _ManagementLibraryRow extends ConsumerWidget {
   final MediaLibraryDefinition library;
   final MediaLibraryStatistics statistics;
   final bool selected;
@@ -4411,7 +4409,7 @@ class _ManagementLibraryRow extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = ShadTheme.of(context).colorScheme;
     return Container(
       decoration: BoxDecoration(
@@ -4484,6 +4482,17 @@ class _ManagementLibraryRow extends StatelessWidget {
                 onPressed: selected ? null : onSelect,
                 child: const Icon(Icons.open_in_new_rounded, size: 16),
               ),
+            ),
+            MediaScanMenu(
+              compact: true,
+              iconOnly: true,
+              disabled: disabled,
+              onScanUnrecognized: () => ref
+                  .read(mediaLibraryProvider.notifier)
+                  .scanLibrary(library.id),
+              onForceAll: () => ref
+                  .read(mediaLibraryProvider.notifier)
+                  .scanLibrary(library.id, mode: MediaLibraryScanMode.forceAll),
             ),
             ShadTooltip(
               builder: (_) => const Text('编辑媒体库'),
@@ -8311,13 +8320,17 @@ class _ManualTMDBMatchDialogState
           const SizedBox(width: 6),
           ShadButton.outline(
             size: ShadButtonSize.sm,
-            onPressed: _loadingDetail ? null : () => unawaited(_loadDirectTMDB()),
+            onPressed: _loadingDetail
+                ? null
+                : () => unawaited(_loadDirectTMDB()),
             child: const Text('TMDB'),
           ),
           const SizedBox(width: 4),
           ShadButton.outline(
             size: ShadButtonSize.sm,
-            onPressed: _loadingDetail ? null : () => unawaited(_loadDirectDouban()),
+            onPressed: _loadingDetail
+                ? null
+                : () => unawaited(_loadDirectDouban()),
             child: const Text('豆瓣'),
           ),
         ],

@@ -115,7 +115,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         ),
       ],
       child: SizedBox(
-        width: compact ? MediaQuery.sizeOf(context).width - 32 : 720,
+        width: compact ? MediaQuery.sizeOf(context).width - 32 : 900,
         height: (MediaQuery.sizeOf(context).height - 180).clamp(360.0, 620.0),
         child: SingleChildScrollView(
           padding: const EdgeInsets.only(top: 4, bottom: 12),
