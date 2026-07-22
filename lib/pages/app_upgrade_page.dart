@@ -398,13 +398,9 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
       _refreshUi();
       if (!silent && mounted) {
         if (_error != null) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(_error!)));
+          _showUpgradeMessage(_error!, destructive: true);
         } else if (!_hasNewVersion) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('当前已是最新版本')));
+          _showUpgradeMessage('当前已是最新版本');
         }
       }
     }
@@ -442,11 +438,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
   ]) async {
     asset ??= _preferredAsset(info);
     if (asset == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('没有找到适合当前平台的安装包')));
-      }
+      _showUpgradeMessage('没有找到适合当前平台的安装包', destructive: true);
       return;
     }
     if (_downloading) return;
@@ -476,26 +468,14 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     } on DioException catch (e) {
       if (CancelToken.isCancel(e)) {
         await _deleteFile(_activeDownloadPath);
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('已取消下载')));
-        }
+        _showUpgradeMessage('已取消下载');
       } else {
         AppLogger.error('下载失败', e.toString());
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('下载失败：${_friendlyError(e)}')));
-        }
+        _showUpgradeMessage('下载失败：${_friendlyError(e)}', destructive: true);
       }
     } catch (e) {
       AppLogger.error('下载失败', e.toString());
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('下载失败：${_friendlyError(e)}')));
-      }
+      _showUpgradeMessage('下载失败：${_friendlyError(e)}', destructive: true);
     } finally {
       _downloading = false;
       _progress = 0;
@@ -551,14 +531,16 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     final message = result is Map ? result['errorMessage']?.toString() : null;
     _showUpgradeMessage(
       message?.trim().isNotEmpty == true ? message!.trim() : '安装失败',
+      destructive: true,
     );
   }
 
-  void _showUpgradeMessage(String message) {
+  void _showUpgradeMessage(String message, {bool destructive = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    final toast = destructive
+        ? ShadToast.destructive(title: Text(message))
+        : ShadToast(title: Text(message));
+    ShadToaster.maybeOf(context)?.show(toast);
   }
 
   Future<String> _acceleratedDownloadUrl(String url) async {
@@ -659,7 +641,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
       }
     } catch (e) {
       AppLogger.warning('打开安装包失败', '$e');
-      _showUpgradeMessage('无法自动打开，安装包已保存到：$path');
+      _showUpgradeMessage('无法自动打开，安装包已保存到：$path', destructive: true);
     }
   }
 
