@@ -1164,6 +1164,10 @@ class _TopBar extends StatelessWidget {
                           hintText: mode == WorkspaceMode.cloud
                               ? '搜索文件'
                               : '搜索影视资源',
+                          hintStyle: TextStyle(
+                            color: cs.mutedForeground.withValues(alpha: 0.7),
+                            fontSize: 13,
+                          ),
                         ),
                         textInputAction: TextInputAction.search,
                         onSubmitted: onSearch,
@@ -1243,6 +1247,10 @@ class _TopBar extends StatelessWidget {
                               hintText: mode == WorkspaceMode.cloud
                                   ? '搜索文件'
                                   : '搜索影视资源',
+                              hintStyle: TextStyle(
+                                color: cs.foreground.withValues(alpha: 0.4),
+                                fontSize: 13,
+                              ),
                             ),
                             textInputAction: TextInputAction.search,
                             onSubmitted: onSearch,
@@ -1316,10 +1324,14 @@ class _TopBar extends StatelessWidget {
             child: TextField(
               controller: searchController,
               focusNode: searchFocusNode,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 border: InputBorder.none,
                 isDense: true,
                 hintText: '搜索影视资源',
+                hintStyle: TextStyle(
+                  color: cs.mutedForeground.withValues(alpha: 0.7),
+                  fontSize: 13,
+                ),
               ),
               textInputAction: TextInputAction.search,
               onSubmitted: onSearch,

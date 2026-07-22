@@ -1805,6 +1805,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     final search = ShadInput(
       controller: _searchController,
       placeholder: const Text('搜索影视库或匹配 TMDB…'),
+      placeholderStyle: TextStyle(
+        color: cs.mutedForeground.withValues(alpha: 0.7),
+        fontSize: 13,
+      ),
       leading: Icon(Icons.search_rounded, size: 16, color: cs.mutedForeground),
       onChanged: (value) =>
           ref.read(mediaLibraryProvider.notifier).setSearchQuery(value),
@@ -1865,6 +1869,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 child: ShadInput(
                   controller: _searchController,
                   placeholder: const Text('搜索影视库或匹配 TMDB…'),
+                  placeholderStyle: TextStyle(
+                    color: cs.mutedForeground.withValues(alpha: 0.7),
+                    fontSize: 13,
+                  ),
                   leading: Icon(
                     Icons.search_rounded,
                     size: 16,
@@ -1908,6 +1916,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           child: ShadInput(
             controller: _searchController,
             placeholder: const Text('搜索影视库或匹配 TMDB…'),
+            placeholderStyle: TextStyle(
+              color: cs.mutedForeground.withValues(alpha: 0.7),
+              fontSize: 13,
+            ),
             leading: Icon(
               Icons.search_rounded,
               size: 16,
