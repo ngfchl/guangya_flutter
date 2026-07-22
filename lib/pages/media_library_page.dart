@@ -7404,6 +7404,8 @@ class _ManualTMDBMatchDialogState
   late final TextEditingController _yearController;
   late final TextEditingController _seasonController;
   late final TextEditingController _episodeController;
+  late final TextEditingController _tmdbIDController;
+  late final TextEditingController _doubanIDController;
   late String _mediaKind;
   bool _searching = false;
   bool _loadingDetail = false;
@@ -7426,6 +7428,8 @@ class _ManualTMDBMatchDialogState
     _episodeController = TextEditingController(
       text: widget.initialEpisode?.toString() ?? '1',
     );
+    _tmdbIDController = TextEditingController();
+    _doubanIDController = TextEditingController();
     _mediaKind = widget.initialMediaKind;
     if (widget.initialResults != null) {
       _results = widget.initialResults!;
@@ -7440,7 +7444,124 @@ class _ManualTMDBMatchDialogState
     _yearController.dispose();
     _seasonController.dispose();
     _episodeController.dispose();
+    _tmdbIDController.dispose();
+    _doubanIDController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadDirectTMDB() async {
+    final id = int.tryParse(_tmdbIDController.text.trim());
+    if (id == null || id <= 0) {
+      setState(() => _error = '请输入有效的 TMDB ID');
+      return;
+    }
+    if (_mediaKind != 'movie' && _mediaKind != 'tv') {
+      setState(() => _error = '使用 TMDB ID 时请先选择电影或电视剧');
+      return;
+    }
+    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    if (apiKey.isEmpty) {
+      setState(() => _error = '请先在设置中配置 TMDB API Key');
+      return;
+    }
+    final requestSerial = ++_detailRequestSerial;
+    setState(() {
+      _loadingDetail = true;
+      _error = null;
+    });
+    try {
+      final details = await ref
+          .read(authProvider.notifier)
+          .api
+          .tmdbDetails(
+            id,
+            mediaKind: _mediaKind,
+            apiKey: apiKey,
+            proxyHost:
+                StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+            proxyPort:
+                StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+          );
+      if (!mounted || requestSerial != _detailRequestSerial) return;
+      setState(() {
+        _detailCandidate = {
+          ...details,
+          'id': id,
+          'media_type': _mediaKind,
+          '_source': 'tmdb',
+        };
+      });
+    } catch (error) {
+      if (mounted && requestSerial == _detailRequestSerial) {
+        setState(() => _error = '获取 TMDB ID $id 失败：$error');
+      }
+    } finally {
+      if (mounted && requestSerial == _detailRequestSerial) {
+        setState(() => _loadingDetail = false);
+      }
+    }
+  }
+
+  Future<void> _loadDirectDouban() async {
+    final id = _doubanIDController.text.trim();
+    if (!RegExp(r'^\d+$').hasMatch(id)) {
+      setState(() => _error = '请输入有效的豆瓣 ID');
+      return;
+    }
+    final requestSerial = ++_detailRequestSerial;
+    setState(() {
+      _loadingDetail = true;
+      _error = null;
+    });
+    try {
+      final details = await ref
+          .read(authProvider.notifier)
+          .api
+          .doubanDetails(id);
+      if (!mounted || requestSerial != _detailRequestSerial) return;
+      final episodeText =
+          (details['episodes_count'] ?? details['episodes_info'] ?? '')
+              .toString();
+      final episodes =
+          int.tryParse(episodeText) ??
+          int.tryParse(RegExp(r'\d+').firstMatch(episodeText)?.group(0) ?? '');
+      final doubanType = (details['subtype'] ?? details['type'] ?? '')
+          .toString()
+          .toLowerCase();
+      final inferredKind = _mediaKind == 'movie' || _mediaKind == 'tv'
+          ? _mediaKind
+          : ((episodes != null && episodes > 1) ||
+                doubanType == 'tv' ||
+                doubanType.contains('电视剧'))
+          ? 'tv'
+          : 'movie';
+      final year = details['year']?.toString() ?? '';
+      final rating = details['rating'];
+      setState(() {
+        _detailCandidate = {
+          ...details,
+          'id': id,
+          'media_type': inferredKind,
+          '_source': 'douban',
+          if (year.length >= 4) 'release_date': '${year.substring(0, 4)}-01-01',
+          'poster_path': doubanPosterPath(details),
+          'overview':
+              details['intro']?.toString() ??
+              details['card_subtitle']?.toString() ??
+              '',
+          if (rating is Map) 'vote_average': rating['value'],
+          if (rating is Map) 'vote_count': rating['count'],
+        };
+      });
+    } catch (error) {
+      if (mounted && requestSerial == _detailRequestSerial) {
+        setState(() => _error = '获取豆瓣 ID $id 失败：$error');
+      }
+    } finally {
+      if (mounted && requestSerial == _detailRequestSerial) {
+        setState(() => _loadingDetail = false);
+      }
+    }
   }
 
   Future<void> _search() async {
@@ -7580,7 +7701,7 @@ class _ManualTMDBMatchDialogState
       // the workspace route and leave the page blank.  Closing is handled by
       // the explicit 取消/返回 actions and the popover's outside-tap logic.
       closeIcon: const SizedBox.shrink(),
-      title: Text(detail == null ? '手动匹配 TMDB' : 'TMDB 详情'),
+      title: Text(detail == null ? '手动匹配' : '匹配详情'),
       description: Text(
         detail == null ? '查看或选中匹配结果后，会应用到该作品的全部资源版本。' : '确认信息无误后使用此匹配项。',
       ),
@@ -7588,7 +7709,7 @@ class _ManualTMDBMatchDialogState
           ? [
               ShadButton.outline(onPressed: _dismiss, child: const Text('取消')),
               ShadButton(
-                onPressed: _searching ? null : _search,
+                onPressed: _searching || _loadingDetail ? null : _search,
                 leading: const Icon(Icons.search_rounded, size: 16),
                 child: const Text('搜索'),
               ),
@@ -7627,6 +7748,8 @@ class _ManualTMDBMatchDialogState
                   const SizedBox(height: 10),
                   _matchFilters(cs),
                   const SizedBox(height: 10),
+                  _directIDMatchFields(cs),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
                       Expanded(
@@ -7654,11 +7777,11 @@ class _ManualTMDBMatchDialogState
                   ),
                   const SizedBox(height: 12),
                   Expanded(
-                    child: _searching
+                    child: _searching || _loadingDetail
                         ? const Center(
                             child: AppLoadingIndicator(
                               size: AppLoadingSize.page,
-                              label: '正在搜索匹配结果',
+                              label: '正在加载匹配信息',
                             ),
                           )
                         : _error != null
@@ -7906,6 +8029,7 @@ class _ManualTMDBMatchDialogState
         .toString();
     final mediaType = detail['media_type'] == 'tv' ? '电视剧' : '电影';
     final posterPath = detail['poster_path']?.toString();
+    final sourceName = detail['_source'] == 'douban' ? '豆瓣' : 'TMDB';
     final genres = _detailList(detail['genres'], 'name');
     final cast = _detailList(
       detail['credits'] is Map ? detail['credits']['cast'] : null,
@@ -7920,7 +8044,7 @@ class _ManualTMDBMatchDialogState
       '语言': detail['original_language']?.toString() ?? '未知',
       '评分': detail['vote_average']?.toString() ?? '暂无',
       '投票': detail['vote_count']?.toString() ?? '0',
-      'TMDB': detail['id']?.toString() ?? '-',
+      sourceName: detail['id']?.toString() ?? '-',
     };
     return SingleChildScrollView(
       padding: const EdgeInsets.only(right: 4),
@@ -8136,6 +8260,62 @@ class _ManualTMDBMatchDialogState
             Expanded(child: _mediaKindPills(cs)),
             const SizedBox(width: 12),
             yearInput,
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _directIDMatchFields(ShadColorScheme cs) {
+    Widget input({
+      required String label,
+      required TextEditingController controller,
+      required VoidCallback onPressed,
+    }) {
+      return _manualMatchField(
+        label: label,
+        child: Row(
+          children: [
+            Expanded(
+              child: ShadInput(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                placeholder: const Text('输入 ID'),
+                onSubmitted: (_) => onPressed(),
+              ),
+            ),
+            const SizedBox(width: 6),
+            ShadButton.outline(
+              size: ShadButtonSize.sm,
+              onPressed: _loadingDetail ? null : onPressed,
+              leading: const Icon(Icons.arrow_forward_rounded, size: 15),
+              child: const Text('直达'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tmdb = input(
+          label: 'TMDB ID',
+          controller: _tmdbIDController,
+          onPressed: () => unawaited(_loadDirectTMDB()),
+        );
+        final douban = input(
+          label: '豆瓣 ID',
+          controller: _doubanIDController,
+          onPressed: () => unawaited(_loadDirectDouban()),
+        );
+        if (constraints.maxWidth < 520) {
+          return Column(children: [tmdb, const SizedBox(height: 8), douban]);
+        }
+        return Row(
+          children: [
+            Expanded(child: tmdb),
+            const SizedBox(width: 10),
+            Expanded(child: douban),
           ],
         );
       },
