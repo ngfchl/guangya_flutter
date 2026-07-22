@@ -1105,7 +1105,7 @@ class ParsedMediaName {
         (directoryName == null ? null : _repairSpacedYear(directoryName)) ??
         (directoryPath == null ? null : _repairSpacedYear(directoryPath));
     final source =
-        first(r'\b(?:WEB[- ]?DL|WEBRip|BluRay|BDRip|REMUX|HDTV|DVD|UHD)\b') ??
+        first(r'\b(?:WEB[- ]?DL|WEBRip|BluRay|BDRip|REMUX|HDTV|DVD|UHD|原盘)\b') ??
         metadataParent?.source;
     final videoCodec =
         first(r'\b(?:x26[45]|h\.?26[45]|AVC|HEVC|AV1|VC-1)\b') ??

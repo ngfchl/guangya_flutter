@@ -44,6 +44,24 @@ bool isMediaScanDiscLayout(Iterable<CloudFile> children) {
   return directoryNames.contains('BDMV') || directoryNames.contains('VIDEO_TS');
 }
 
+/// Returns `true` when the given file is an ISO disc image.
+/// ISO files are treated as single playable works during scanning,
+/// similar to disc root folders (BDMV / VIDEO_TS).
+bool isMediaScanIsoFile(CloudFile file) {
+  if (file.isDirectory) return false;
+  return file.name.toLowerCase().endsWith('.iso');
+}
+
+/// Returns `true` when the file or its path indicates a Blu-ray or DVD disc
+/// structure (BDMV folder, VIDEO_TS folder, or ISO disc image).
+bool isMediaScanDiscItem(CloudFile file, {String? cloudPath}) {
+  if (isMediaScanIsoFile(file)) return true;
+  if (isMediaScanDiscLayout([file])) return true;
+  final path = cloudPath ?? file.cloudPath;
+  if (path != null && isMediaScanDiscInternalPath(path)) return true;
+  return false;
+}
+
 bool isConfirmedCloudFileMissingError(Object error) {
   bool isMissingStatus(int? status) => status == 404 || status == 410;
 
