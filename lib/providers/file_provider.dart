@@ -17,8 +17,37 @@ enum FileSort { name, size, modifiedAt, createdAt, type }
 class ExternalPlayer {
   final String name;
   final String bundleID;
+  final String? applicationPath;
 
-  const ExternalPlayer(this.name, this.bundleID);
+  const ExternalPlayer(this.name, this.bundleID, {this.applicationPath});
+
+  ExternalPlayer withApplicationPath(String value) =>
+      ExternalPlayer(name, bundleID, applicationPath: value);
+}
+
+String? preferredExternalPlayerApplicationPath(
+  Iterable<String> candidates, {
+  required String currentExecutable,
+}) {
+  final appMarker = '.app/Contents/MacOS/';
+  final markerIndex = currentExecutable.indexOf(appMarker);
+  final currentAppPath = markerIndex < 0
+      ? null
+      : currentExecutable.substring(0, markerIndex + 4);
+  final paths = candidates
+      .map((path) => path.trim())
+      .where((path) => path.endsWith('.app'))
+      .where(
+        (path) =>
+            currentAppPath == null ||
+            !path.startsWith('$currentAppPath/Contents/'),
+      )
+      .toList(growable: false);
+  if (paths.isEmpty) return null;
+  return paths.firstWhere(
+    (path) => path.startsWith('/Applications/'),
+    orElse: () => paths.first,
+  );
 }
 
 class _FastTransferSource {
@@ -1060,9 +1089,14 @@ class FileNotifier extends StateNotifier<FileState> {
         final result = await Process.run('/usr/bin/mdfind', [
           "kMDItemCFBundleIdentifier == '${player.bundleID}'",
         ]);
-        if (result.exitCode == 0 &&
-            result.stdout.toString().trim().isNotEmpty) {
-          installed.add(player);
+        if (result.exitCode == 0) {
+          final path = preferredExternalPlayerApplicationPath(
+            result.stdout.toString().split('\n'),
+            currentExecutable: Platform.resolvedExecutable,
+          );
+          if (path != null && await Directory(path).exists()) {
+            installed.add(player.withApplicationPath(path));
+          }
         }
       } catch (_) {
         // A missing application is expected and should not affect playback.
@@ -1082,11 +1116,26 @@ class FileNotifier extends StateNotifier<FileState> {
       );
       final url = await _resolveOpenUrl(file);
       if (Platform.isMacOS && player != null) {
-        final result = await Process.run('/usr/bin/open', [
-          '-b',
-          player.bundleID,
-          url.toString(),
-        ]);
+        final applicationPath = player.applicationPath;
+        final iinaCLI = applicationPath == null
+            ? null
+            : '$applicationPath/Contents/MacOS/iina-cli';
+        final useIINACommand =
+            player.bundleID == 'com.colliderli.iina' &&
+            iinaCLI != null &&
+            await File(iinaCLI).exists();
+        final result = useIINACommand
+            ? await Process.run(iinaCLI, [url.toString()])
+            : await Process.run('/usr/bin/open', [
+                if (applicationPath != null) ...[
+                  '-a',
+                  applicationPath,
+                ] else ...[
+                  '-b',
+                  player.bundleID,
+                ],
+                url.toString(),
+              ]);
         if (result.exitCode != 0) {
           throw Exception('无法启动 ${player.name}：${result.stderr}');
         }
@@ -1167,9 +1216,7 @@ class FileNotifier extends StateNotifier<FileState> {
       }
       if (videoFiles.isEmpty) return null;
       // Return the largest file (main feature).
-      videoFiles.sort(
-        (a, b) => (b.size ?? 0).compareTo(a.size ?? 0),
-      );
+      videoFiles.sort((a, b) => (b.size ?? 0).compareTo(a.size ?? 0));
       return videoFiles.first;
     } catch (_) {
       return null;
