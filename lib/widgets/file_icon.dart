@@ -6,14 +6,17 @@ class FileIcon extends StatelessWidget {
   final CloudFile file;
   final double size;
 
-  const FileIcon({
-    super.key,
-    required this.file,
-    this.size = 28,
-  });
+  const FileIcon({super.key, required this.file, this.size = 28});
 
   @override
   Widget build(BuildContext context) {
+    if (file.fileType == 8 && file.shareIsDirectory == true) {
+      return Icon(
+        LucideIcons.folder,
+        size: size,
+        color: const Color(0xFFF59E0B),
+      );
+    }
     if (file.isDirectory) {
       return Icon(
         LucideIcons.folder,
@@ -25,11 +28,7 @@ class FileIcon extends StatelessWidget {
     final iconData = _getIconForFileType(file.fileType);
     final color = _getColorForFileType(file.fileType);
 
-    return Icon(
-      iconData,
-      size: size,
-      color: color,
-    );
+    return Icon(iconData, size: size, color: color);
   }
 
   IconData _getIconForFileType(int fileType) {
@@ -45,6 +44,8 @@ class FileIcon extends StatelessWidget {
       case 5:
       case 9:
         return LucideIcons.archive;
+      case 8:
+        return LucideIcons.share2;
       default:
         return LucideIcons.file;
     }
@@ -63,6 +64,8 @@ class FileIcon extends StatelessWidget {
       case 5:
       case 9:
         return const Color(0xFF6B7280);
+      case 8:
+        return const Color(0xFF0EA5E9);
       default:
         return const Color(0xFF6B7280);
     }

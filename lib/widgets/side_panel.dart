@@ -261,6 +261,7 @@ class SidePanel extends ConsumerWidget {
             label: '分享',
             onTap: () => showShareLinkDialog(
               context,
+              title: file.name,
               createLink: () => fp.createShare(file),
             ),
           ),

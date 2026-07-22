@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../api/guangya_api.dart';
+import '../core/http/http_error.dart';
 import '../core/logging/app_logger.dart';
 import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/storage_manager.dart';
@@ -322,12 +323,16 @@ class FileNotifier extends StateNotifier<FileState> {
     final generation = ++_detailGeneration;
     final resolvedParentID = parentID ?? _currentParentID;
     final cacheKey =
-        'v2|${state.section.name}|${resolvedParentID ?? 'root'}|${state.currentPage}|${state.pageSize}|${state.serverSort.name}|${state.serverSortDirection.name}';
+        'v3|${state.section.name}|${resolvedParentID ?? 'root'}|${state.currentPage}|${state.pageSize}|${state.serverSort.name}|${state.serverSortDirection.name}';
     if (!forceRefresh) {
       final cached = _readCachedFiles(cacheKey);
       if (cached != null) {
         state = state.copyWith(files: cached, clearError: true);
-        unawaited(_enrichFolderSizes(cached, generation));
+        if (state.section == WorkspaceSection.shares) {
+          unawaited(_enrichShareSizes(cached, generation));
+        } else {
+          unawaited(_enrichFolderSizes(cached, generation));
+        }
         return;
       }
     }
@@ -340,7 +345,11 @@ class FileNotifier extends StateNotifier<FileState> {
       state = state.copyWith(files: extracted, totalPages: totalPages);
       await _writeCachedFiles(cacheKey, extracted);
       await FileMetadataCache.cacheFolderChildren(resolvedParentID, extracted);
-      unawaited(_enrichFolderSizes(extracted, generation));
+      if (state.section == WorkspaceSection.shares) {
+        unawaited(_enrichShareSizes(extracted, generation));
+      } else {
+        unawaited(_enrichFolderSizes(extracted, generation));
+      }
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
     } finally {
@@ -478,6 +487,168 @@ class FileNotifier extends StateNotifier<FileState> {
     }
   }
 
+  /// Enrich share records with recursive total size.
+  Future<void> _enrichShareSizes(List<CloudFile> shares, int generation) async {
+    if (_api == null || shares.isEmpty) return;
+    final spCache = _readMetadataCache();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final ttl = Duration(
+      minutes:
+          (int.tryParse(
+                    StorageManager.get<String>(
+                          StorageKeys.fileCacheTTLMinutes,
+                        ) ??
+                        '3',
+                  ) ??
+                  3)
+              .clamp(1, 60),
+    ).inMilliseconds;
+
+    void apply(Map<String, int> sizes) {
+      if (generation != _detailGeneration || sizes.isEmpty) return;
+      final updated = state.files
+          .map(
+            (file) => sizes.containsKey(file.id)
+                ? file.copyWith(size: sizes[file.id])
+                : file,
+          )
+          .toList();
+      state = state.copyWith(files: updated);
+    }
+
+    final known = <String, int>{};
+    final pending = <CloudFile>[];
+    for (final share in shares) {
+      final entry = spCache['share_${share.id}'];
+      final cachedAt = int.tryParse(entry?['cachedAt']?.toString() ?? '');
+      final cachedSize = int.tryParse(entry?['size']?.toString() ?? '');
+      if (cachedAt != null &&
+          cachedSize != null &&
+          cachedSize >= 0 &&
+          now - cachedAt <= ttl) {
+        known[share.id] = cachedSize;
+        continue;
+      }
+      pending.add(share);
+    }
+
+    apply(known);
+    if (pending.isEmpty) return;
+
+    final queue = List<CloudFile>.from(pending);
+    const concurrency = 4;
+    final resolved = <String, int>{};
+    await Future.wait(
+      List.generate(concurrency, (_) async {
+        while (queue.isNotEmpty) {
+          final share = queue.removeLast();
+          try {
+            final size = await _loadShareSize(share);
+            if (size == null) continue;
+            spCache['share_${share.id}'] = {'size': size, 'cachedAt': now};
+            resolved[share.id] = size;
+            apply({share.id: size});
+          } catch (e) {
+            AppLogger.debug(
+              'Storage',
+              '分享 size enrichment 失败：id=${share.id}，shareId=${share.shareID}，$e',
+            );
+          }
+        }
+      }),
+    );
+    if (resolved.isNotEmpty || known.isNotEmpty) {
+      await StorageManager.set(StorageKeys.fileMetadataCache, spCache);
+    }
+  }
+
+  Future<int?> _loadShareSize(CloudFile share) async {
+    final shareID = share.shareID?.trim();
+    if (shareID == null || shareID.isEmpty) return null;
+    final accessResponse = await _api!.shareAccessToken(
+      shareID,
+      share.shareCode?.trim() ?? '',
+    );
+    final accessToken = JsonDeep.findString(accessResponse, const [
+      'accessToken',
+      'access_token',
+    ]);
+    if (accessToken == null) return null;
+
+    final rootEntries = await _loadShareEntries(accessToken, parentID: '');
+    if (rootEntries.isEmpty) return 0;
+    final sizeTargetIDs = <String>[];
+    for (final entry in rootEntries) {
+      final id = _shareEntryID(entry);
+      if (id == null) continue;
+      if (!_shareEntryIsDirectory(entry)) {
+        sizeTargetIDs.add(id);
+        continue;
+      }
+      final children = await _loadShareEntries(accessToken, parentID: id);
+      final childIDs = children.map(_shareEntryID).whereType<String>().toList();
+      sizeTargetIDs.addAll(childIDs.isEmpty ? [id] : childIDs);
+    }
+    if (sizeTargetIDs.isEmpty) return 0;
+    try {
+      final response = await _api!.shareFilesSize(
+        accessToken,
+        sizeTargetIDs,
+        download: false,
+      );
+      return JsonDeep.findInt(response, const ['totalSize', 'total_size']);
+    } on ApiException catch (error) {
+      if (error.status == 216) return 0;
+      rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadShareEntries(
+    String accessToken, {
+    required String parentID,
+  }) async {
+    const pageSize = 500;
+    final result = <Map<String, dynamic>>[];
+    for (var page = 1; ; page += 1) {
+      final response = await _api!.shareFilesList(
+        accessToken,
+        parentID: parentID,
+        page: page,
+        pageSize: pageSize,
+      );
+      final values = JsonDeep.findArray(response, const [
+        'list',
+        'files',
+        'items',
+      ]);
+      final pageEntries =
+          values
+              ?.whereType<Map>()
+              .map((value) => Map<String, dynamic>.from(value))
+              .toList() ??
+          const <Map<String, dynamic>>[];
+      result.addAll(pageEntries);
+      final total = JsonDeep.findInt(response, const ['total', 'totalCount']);
+      if (pageEntries.isEmpty ||
+          (total != null
+              ? result.length >= total
+              : pageEntries.length < pageSize)) {
+        break;
+      }
+    }
+    return result;
+  }
+
+  String? _shareEntryID(Map<String, dynamic> entry) =>
+      JsonDeep.findString(entry, const ['fileId', 'file_id', 'id']);
+
+  bool _shareEntryIsDirectory(Map<String, dynamic> entry) {
+    final resType = JsonDeep.findInt(entry, const ['resType', 'res_type']);
+    if (resType != null) return resType == 2;
+    final dirType = JsonDeep.findInt(entry, const ['dirType', 'dir_type']);
+    return dirType == 1;
+  }
+
   Map<String, Map<String, dynamic>> _readMetadataCache() {
     final raw = StorageManager.get<dynamic>(StorageKeys.fileMetadataCache);
     if (raw is! Map) return <String, Map<String, dynamic>>{};
@@ -541,7 +712,10 @@ class FileNotifier extends StateNotifier<FileState> {
       case WorkspaceSection.cloud:
         return await _api!.cloudTaskList();
       case WorkspaceSection.shares:
-        return await _api!.shareUserList();
+        return await _api!.shareUserList(
+          page: state.currentPage,
+          pageSize: state.pageSize,
+        );
       case WorkspaceSection.recycle:
         return await _api!.fsFiles(orderBy: 10, dirType: 4);
       case WorkspaceSection.mediaLibrary:
@@ -822,22 +996,31 @@ class FileNotifier extends StateNotifier<FileState> {
 
   Future<bool> deleteFiles(List<CloudFile> files) async {
     if (_api == null || files.isEmpty) return false;
-    state = state.copyWith(statusMessage: '正在删除…');
+    final deletingShares = state.section == WorkspaceSection.shares;
+    state = state.copyWith(statusMessage: deletingShares ? '正在删除分享…' : '正在删除…');
     try {
-      await _api!.fsDelete(files.map((f) => f.id).toList());
-      await FileMetadataCache.removeFilesFromAllFolders(
-        files.map((file) => file.id),
-      );
-      await FileMetadataCache.updateFolderChildren(
-        _currentParentID,
-        removeIDs: files.map((file) => file.id),
-      );
+      final ids = files.map((file) => file.id).toList();
+      if (deletingShares) {
+        await _api!.shareDelete(ids);
+      } else {
+        await _api!.fsDelete(ids);
+        await FileMetadataCache.removeFilesFromAllFolders(ids);
+        await FileMetadataCache.updateFolderChildren(
+          _currentParentID,
+          removeIDs: ids,
+        );
+      }
       await _invalidateListCache(_currentParentID);
       state = state.copyWith(
-        statusMessage: '已删除 ${files.length} 个项目',
+        files: deletingShares
+            ? state.files.where((file) => !ids.contains(file.id)).toList()
+            : state.files,
+        statusMessage: deletingShares
+            ? '已删除 ${files.length} 条分享'
+            : '已删除 ${files.length} 个项目',
         selectedIDs: {},
       );
-      await loadFiles(parentID: _currentParentID);
+      await loadFiles(parentID: _currentParentID, forceRefresh: true);
       return true;
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
@@ -1597,6 +1780,21 @@ class FileNotifier extends StateNotifier<FileState> {
     }
   }
 
+  /// Keys used to search for a downloadable URL in API responses.
+  static const _downloadUrlKeys = [
+    'url',
+    'dlink',
+    'downloadUrl',
+    'download_url',
+    'downloadlink',
+    'download_link',
+    'signedUrl',
+    'signedURL',
+    'signed_url',
+    'signedlink',
+    'signed_link',
+  ];
+
   Future<Uri> _resolveOpenUrl(CloudFile file) async {
     String? url;
     if (file.isVideo) {
@@ -1607,14 +1805,7 @@ class FileNotifier extends StateNotifier<FileState> {
         if (gcid != null && gcid.isNotEmpty) {
           try {
             final videoResult = await _api!.vodDownloadURL(file.id, gcid);
-            url = JsonDeep.findString(videoResult, const [
-              'signedURL',
-              'signedUrl',
-              'url',
-              'downloadUrl',
-              'download_url',
-              'dlink',
-            ]);
+            url = JsonDeep.findString(videoResult, _downloadUrlKeys);
           } catch (error) {
             // VOD acceleration may reject m2ts/iso files even though the
             // regular download endpoint can still issue a playable URL.
@@ -1627,15 +1818,13 @@ class FileNotifier extends StateNotifier<FileState> {
     }
     if (url == null) {
       final result = await _api!.downloadURL(file.id);
-      url = JsonDeep.findString(result, const [
-        'url',
-        'downloadUrl',
-        'download_url',
-        'dlink',
-      ]);
+      AppLogger.info('File', '下载链接响应: $result');
+      url = JsonDeep.findString(result, _downloadUrlKeys);
     }
     final uri = url == null ? null : Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme) throw Exception('响应缺少可打开的签名链接');
+    if (uri == null || !uri.hasScheme) {
+      throw Exception('响应缺少可打开的签名链接');
+    }
     return uri;
   }
 
@@ -1804,8 +1993,16 @@ class FileNotifier extends StateNotifier<FileState> {
     final raw = StorageManager.get<dynamic>(StorageKeys.fileListCache);
     if (raw is! Map) return;
     final cache = Map<dynamic, dynamic>.from(raw);
-    final prefix = '${state.section.name}:${parentID ?? 'root'}:';
-    cache.removeWhere((key, _) => key.toString().startsWith(prefix));
+    final location = parentID ?? 'root';
+    final currentPrefix = 'v3|${state.section.name}|$location|';
+    final previousPrefix = 'v2|${state.section.name}|$location|';
+    final legacyPrefix = '${state.section.name}:$location:';
+    cache.removeWhere((key, _) {
+      final value = key.toString();
+      return value.startsWith(currentPrefix) ||
+          value.startsWith(previousPrefix) ||
+          value.startsWith(legacyPrefix);
+    });
     await StorageManager.set(StorageKeys.fileListCache, cache);
   }
 

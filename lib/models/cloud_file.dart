@@ -44,6 +44,14 @@ class CloudFile {
   final String? fullParentIDs;
   final int fileType;
 
+  // Share-specific fields (fileType == 8)
+  final String? originalFileId; // underlying file ID in the share record
+  final String? shareID;
+  final String? shareCode;
+  final String? shareUrl;
+  final bool? shareIsDirectory;
+  final int? downloadCount;
+
   const CloudFile({
     required this.id,
     required this.name,
@@ -57,6 +65,12 @@ class CloudFile {
     this.parentID,
     this.fullParentIDs,
     this.fileType = 0,
+    this.originalFileId,
+    this.shareID,
+    this.shareCode,
+    this.shareUrl,
+    this.shareIsDirectory,
+    this.downloadCount,
   });
 
   bool get isVideo {
@@ -73,6 +87,8 @@ class CloudFile {
   bool get isImage => fileType == 1;
   bool get isAudio => fileType == 3;
   bool get isDocument => fileType == 4;
+  bool get isShareRecord => fileType == 8;
+  String get shareKindName => shareIsDirectory == true ? '文件夹分享' : '文件分享';
 
   String get icon {
     if (isDirectory) return 'folder';
@@ -89,6 +105,8 @@ class CloudFile {
       case 5:
       case 9:
         return 'archive';
+      case 8:
+        return 'share';
       default:
         return 'insert_drive_file';
     }
@@ -97,7 +115,15 @@ class CloudFile {
   String get typeName {
     if (isDirectory) return '文件夹';
     if (isVideo) return '视频';
-    const names = {1: '图片', 2: '视频', 3: '音频', 4: '文档', 5: '压缩包', 9: 'BT种子'};
+    const names = {
+      1: '图片',
+      2: '视频',
+      3: '音频',
+      4: '文档',
+      5: '压缩包',
+      8: '分享',
+      9: 'BT种子',
+    };
     return names[fileType] ?? '文件';
   }
 
@@ -139,6 +165,12 @@ class CloudFile {
     String? fullParentIDs,
     bool clearFullParentIDs = false,
     int? fileType,
+    String? originalFileId,
+    String? shareID,
+    String? shareCode,
+    String? shareUrl,
+    bool? shareIsDirectory,
+    int? downloadCount,
   }) {
     return CloudFile(
       id: id ?? this.id,
@@ -155,6 +187,12 @@ class CloudFile {
           ? null
           : (fullParentIDs ?? this.fullParentIDs),
       fileType: fileType ?? this.fileType,
+      originalFileId: originalFileId ?? this.originalFileId,
+      shareID: shareID ?? this.shareID,
+      shareCode: shareCode ?? this.shareCode,
+      shareUrl: shareUrl ?? this.shareUrl,
+      shareIsDirectory: shareIsDirectory ?? this.shareIsDirectory,
+      downloadCount: downloadCount ?? this.downloadCount,
     );
   }
 
@@ -167,22 +205,55 @@ class CloudFile {
         json['res_name'] ??
         json['dirName'] ??
         json['dir_name'] ??
+        json['title'] ??
         '';
-    final id = _extractId(json);
+    final rawShareUrl = _extractString(json, [
+      'shareUrl',
+      'share_url',
+      'link',
+      'url',
+    ]);
+    final shareID =
+        _extractString(json, ['shareId', 'share_id']) ??
+        _shareIDFromUrl(rawShareUrl);
+    final persistedType = _extractInt(json, ['fileType', 'type']);
+    final isShareRecord =
+        shareID?.isNotEmpty == true ||
+        persistedType == 8 ||
+        rawShareUrl?.isNotEmpty == true;
+    // delete_share expects the numeric list-record id. The public shareId is
+    // retained separately for links and share-content APIs.
+    final id = isShareRecord
+        ? (_extractString(json, ['id']) ?? shareID ?? '')
+        : _extractId(json);
     if (id.isEmpty) throw FormatException('Missing file ID');
 
     final resourceType = _extractInt(json, ['resType']);
-    final type = _extractInt(json, ['fileType', 'type']) ?? 0;
+    final type = isShareRecord ? 8 : persistedType ?? 0;
+    final shareIsDirectory = isShareRecord
+        ? (resourceType == null
+              ? _extractBool(json, [
+                  'shareIsDirectory',
+                  'share_is_directory',
+                  'isMultiFileShare',
+                  'is_multi_file_share',
+                ])
+              : resourceType == 2)
+        : null;
 
     bool isDir;
-    final explicitDir = json['isDir'] ?? json['dir'] ?? json['directoryType'];
-    if (explicitDir != null) {
-      isDir = _truthyDirectoryFlag(explicitDir);
-    } else if (resourceType != null) {
-      isDir = resourceType == 2;
+    if (isShareRecord) {
+      isDir = false;
     } else {
-      isDir =
-          type == 0 && (json['dirName'] != null || json['children'] != null);
+      final explicitDir = json['isDir'] ?? json['dir'] ?? json['directoryType'];
+      if (explicitDir != null) {
+        isDir = _truthyDirectoryFlag(explicitDir);
+      } else if (resourceType != null) {
+        isDir = resourceType == 2;
+      } else {
+        isDir =
+            type == 0 && (json['dirName'] != null || json['children'] != null);
+      }
     }
 
     int? fileSize = _extractIntDeep(json, [
@@ -214,10 +285,12 @@ class CloudFile {
         'fileCount',
       ]),
       modifiedAt:
-          json['updateTime']?.toString() ??
-          json['updatedAt']?.toString() ??
-          json['modifyTime']?.toString() ??
-          json['createTime']?.toString() ??
+          _formatTimestamp(json, [
+            'updateTime',
+            'updatedAt',
+            'modifyTime',
+            'createTime',
+          ]) ??
           (epoch == null ? null : _formatEpoch(epoch)) ??
           '',
       cloudPath:
@@ -230,6 +303,23 @@ class CloudFile {
         'full_parent_ids',
       ]),
       fileType: type,
+      originalFileId: isShareRecord
+          ? _extractString(json, ['fileId', 'file_id'])
+          : null,
+      shareID: isShareRecord ? shareID : null,
+      shareCode: isShareRecord
+          ? (_extractString(json, ['shareCode', 'share_code', 'code']) ??
+                _shareCodeFromUrl(rawShareUrl))
+          : null,
+      shareUrl: isShareRecord ? rawShareUrl : null,
+      shareIsDirectory: shareIsDirectory,
+      downloadCount: isShareRecord
+          ? _extractIntDeep(json, [
+              'downloadCount',
+              'download_count',
+              'downloads',
+            ])
+          : null,
     );
   }
 
@@ -246,10 +336,25 @@ class CloudFile {
     'parentId': parentID,
     'fullParentIds': fullParentIDs,
     'fileType': fileType,
+    if (originalFileId != null) 'fileId': originalFileId,
+    if (shareID != null) 'shareId': shareID,
+    if (shareCode != null) 'shareCode': shareCode,
+    if (shareUrl != null) 'shareUrl': shareUrl,
+    if (shareIsDirectory != null) 'shareIsDirectory': shareIsDirectory,
+    if (downloadCount != null) 'downloadCount': downloadCount,
   };
 
   static String _extractId(Map<String, dynamic> json) {
-    for (final key in ['fileId', 'file_id', 'resId', 'res_id', 'fid', 'id']) {
+    for (final key in [
+      'fileId',
+      'file_id',
+      'resId',
+      'res_id',
+      'shareId',
+      'share_id',
+      'fid',
+      'id',
+    ]) {
       final v = json[key];
       if (v != null && v.toString().isNotEmpty) return v.toString();
     }
@@ -269,6 +374,19 @@ class CloudFile {
       final v = json[key];
       final value = _toInt(v);
       if (value != null) return value;
+    }
+    return null;
+  }
+
+  static bool? _extractBool(Map<String, dynamic> json, List<String> keys) {
+    for (final key in keys) {
+      final v = json[key];
+      if (v == null) continue;
+      if (v is bool) return v;
+      if (v is num) return v != 0;
+      final text = v.toString().trim().toLowerCase();
+      if (text == 'true' || text == '1') return true;
+      if (text == 'false' || text == '0') return false;
     }
     return null;
   }
@@ -323,6 +441,24 @@ class CloudFile {
     return int.tryParse(value.toString());
   }
 
+  static String? _shareIDFromUrl(String? value) {
+    if (value == null || value.isEmpty) return null;
+    final uri = Uri.tryParse(value);
+    if (uri == null) return null;
+    final shareIndex = uri.pathSegments.indexOf('s');
+    if (shareIndex < 0 || shareIndex + 1 >= uri.pathSegments.length) {
+      return null;
+    }
+    final shareID = uri.pathSegments[shareIndex + 1].trim();
+    return shareID.isEmpty ? null : shareID;
+  }
+
+  static String? _shareCodeFromUrl(String? value) {
+    if (value == null || value.isEmpty) return null;
+    final code = Uri.tryParse(value)?.queryParameters['code']?.trim();
+    return code == null || code.isEmpty ? null : code;
+  }
+
   static bool _truthyDirectoryFlag(dynamic value) {
     if (value is bool) return value;
     if (value is num) return value == 1;
@@ -335,6 +471,27 @@ class CloudFile {
     return DateFormat(
       'yyyy-MM-dd HH:mm',
     ).format(DateTime.fromMillisecondsSinceEpoch(seconds * 1000));
+  }
+
+  /// Extract a timestamp field from JSON and format it. Handles both epoch
+  /// numbers (int/double) and pre-formatted date strings.
+  static String? _formatTimestamp(
+    Map<String, dynamic> json,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      final v = json[key];
+      if (v == null) continue;
+      if (v is num) return _formatEpoch(v.toInt());
+      final s = v.toString().trim();
+      if (s.isEmpty) continue;
+      // Try parsing as epoch number (pure digits)
+      final parsed = int.tryParse(s);
+      if (parsed != null) return _formatEpoch(parsed);
+      // Already a formatted string like "2024-07-22 10:30:00"
+      return s;
+    }
+    return null;
   }
 
   @override

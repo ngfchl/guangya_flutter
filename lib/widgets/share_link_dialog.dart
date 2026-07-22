@@ -1,53 +1,62 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
 import 'app_dialog.dart';
+import 'share_qr_code_panel.dart';
 
 Future<void> showShareLinkDialog(
   BuildContext context, {
   required Future<String?> Function() createLink,
+  String? title,
 }) async {
   final link = await createLink();
   if (!context.mounted || link == null || link.isEmpty) return;
   await showShadDialog<void>(
     context: context,
-    builder: (_) => _ShareResultDialog(link: link),
+    builder: (_) => _ShareResultDialog(link: link, title: title),
   );
 }
 
-class _ShareResultDialog extends StatefulWidget {
+class _ShareResultDialog extends StatelessWidget {
   final String link;
+  final String? title;
 
-  const _ShareResultDialog({required this.link});
-
-  @override
-  State<_ShareResultDialog> createState() => _ShareResultDialogState();
-}
-
-class _ShareResultDialogState extends State<_ShareResultDialog> {
-  var _showQRCode = false;
+  const _ShareResultDialog({required this.link, this.title});
 
   @override
   Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
     return ShadDialog(
-      title: Text(_showQRCode ? '分享二维码已生成' : '分享链接已生成'),
+      title: const Text('分享二维码已生成'),
       description: const Text('有效期与访问权限以云盘分享设置为准。'),
       actions: [
         ShadButton.outline(
           onPressed: () async {
-            await Clipboard.setData(ClipboardData(text: widget.link));
-            if (context.mounted) Navigator.of(context).pop();
+            await copyShareQRCodeToClipboard(link, title: title);
+            if (context.mounted) {
+              ShadToaster.of(
+                context,
+              ).show(const ShadToast(title: Text('二维码已复制')));
+            }
           },
-          leading: const Icon(Icons.copy_rounded, size: 16),
-          child: const Text('复制'),
+          leading: const Icon(Icons.qr_code_2_rounded, size: 16),
+          child: const Text('复制二维码'),
         ),
         ShadButton.outline(
-          onPressed: () =>
-              SharePlus.instance.share(ShareParams(text: widget.link)),
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: link));
+            if (context.mounted) {
+              ShadToaster.of(
+                context,
+              ).show(const ShadToast(title: Text('链接已复制')));
+            }
+          },
+          leading: const Icon(Icons.copy_rounded, size: 16),
+          child: const Text('复制链接'),
+        ),
+        ShadButton.outline(
+          onPressed: () => SharePlus.instance.share(ShareParams(text: link)),
           leading: const Icon(Icons.ios_share_rounded, size: 16),
           child: const Text('分享'),
         ),
@@ -58,75 +67,9 @@ class _ShareResultDialogState extends State<_ShareResultDialog> {
       ],
       child: SizedBox(
         width: (MediaQuery.sizeOf(context).width - 48).clamp(260.0, 460.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SegmentedButton<bool>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(
-                  value: false,
-                  icon: Icon(Icons.link_rounded, size: 16),
-                  label: Text('链接'),
-                ),
-                ButtonSegment(
-                  value: true,
-                  icon: Icon(Icons.qr_code_2_rounded, size: 16),
-                  label: Text('二维码'),
-                ),
-              ],
-              selected: {_showQRCode},
-              onSelectionChanged: (value) =>
-                  setState(() => _showQRCode = value.first),
-            ),
-            const SizedBox(height: 10),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              child: _showQRCode
-                  ? Container(
-                      key: const ValueKey('share-qr-code'),
-                      padding: const EdgeInsets.all(18),
-                      alignment: Alignment.center,
-                      child: Container(
-                        width: 230,
-                        height: 230,
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: cs.border),
-                        ),
-                        child: QrImageView(
-                          data: widget.link,
-                          backgroundColor: Colors.white,
-                          eyeStyle: const QrEyeStyle(
-                            eyeShape: QrEyeShape.square,
-                            color: Colors.black,
-                          ),
-                          dataModuleStyle: const QrDataModuleStyle(
-                            dataModuleShape: QrDataModuleShape.square,
-                            color: Colors.black,
-                          ),
-                        ),
-                      ),
-                    )
-                  : Container(
-                      key: const ValueKey('share-link'),
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(top: 8),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: cs.muted,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: cs.border),
-                      ),
-                      child: SelectableText(
-                        widget.link,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: ShareQRCodePanel(link: link, title: title, size: 230),
         ),
       ),
     );

@@ -29,6 +29,7 @@ import '../widgets/file_detail_dialog.dart';
 import '../widgets/media_player_dialog.dart';
 import '../widgets/file_icon.dart';
 import '../widgets/share_link_dialog.dart';
+import '../widgets/share_list_tile.dart';
 import '../widgets/share_qr_scanner_dialog.dart';
 import '../widgets/share_restore_dialog.dart';
 import '../widgets/side_panel.dart';
@@ -548,13 +549,18 @@ class _ClipboardPasteButton extends ConsumerWidget {
 Future<void> _confirmDeleteCloudFiles(
   BuildContext context,
   List<CloudFile> files,
-  Future<void> Function() onConfirm,
-) async {
+  Future<void> Function() onConfirm, {
+  bool shareRecords = false,
+}) async {
   if (files.isEmpty) return;
   final confirmed = await showDeleteFilesConfirmDialog(
     context,
     files,
-    warning: '此操作会将项目移入回收站。',
+    title: shareRecords ? '删除 ${files.length} 条分享？' : null,
+    description: shareRecords
+        ? (files.length == 1 ? files.first.name : '将删除所选分享记录。')
+        : null,
+    warning: shareRecords ? '删除后原分享链接将立即失效。' : '此操作会将项目移入回收站。',
   );
   if (confirmed) await onConfirm();
 }
@@ -566,12 +572,9 @@ class WorkspacePage extends ConsumerStatefulWidget {
   ConsumerState<WorkspacePage> createState() => _WorkspacePageState();
 }
 
-class _WorkspacePageState extends ConsumerState<WorkspacePage>
-    with WidgetsBindingObserver {
+class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
-  Timer? _clipboardMonitor;
-  String? _lastClipboardText;
   bool _readingClipboard = false;
   bool _shareDialogOpen = false;
   WorkspaceMode _mode = WorkspaceMode.cloud;
@@ -590,61 +593,50 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     if (StorageManager.get<String>(StorageKeys.workspaceMode) == 'media') {
       _mode = WorkspaceMode.media;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _startClipboardMonitor();
-      unawaited(_checkClipboardForShare());
-    });
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _startClipboardMonitor();
-      unawaited(_checkClipboardForShare());
-    } else if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.detached ||
-        state == AppLifecycleState.hidden) {
-      _clipboardMonitor?.cancel();
-      _clipboardMonitor = null;
-    }
-  }
-
-  void _startClipboardMonitor() {
-    _clipboardMonitor?.cancel();
-    if (defaultTargetPlatform == TargetPlatform.iOS) return;
-    _clipboardMonitor = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) => unawaited(_checkClipboardForShare()),
-    );
-  }
-
-  Future<void> _checkClipboardForShare() async {
+  Future<void> _pasteShareLink() async {
     if (!mounted || _readingClipboard || _shareDialogOpen) return;
-    _readingClipboard = true;
+    setState(() => _readingClipboard = true);
+    String? text;
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
-      final text = data?.text?.trim();
-      if (!mounted ||
-          text == null ||
-          text.isEmpty ||
-          text == _lastClipboardText) {
-        return;
-      }
-      _lastClipboardText = text;
-      final share = GuangyaShareLink.tryParse(text);
-      if (share == null) return;
-      _shareDialogOpen = true;
-      await showShareRestoreDialog(context, share);
+      text = data?.text?.trim();
     } catch (_) {
-      // Clipboard access can be unavailable while the app is transitioning.
+      if (mounted) {
+        ShadToaster.maybeOf(
+          context,
+        )?.show(const ShadToast(description: Text('无法读取剪贴板')));
+      }
+      return;
     } finally {
-      _readingClipboard = false;
+      if (mounted) {
+        setState(() => _readingClipboard = false);
+      } else {
+        _readingClipboard = false;
+      }
+    }
+    if (!mounted) return;
+    if (text == null || text.isEmpty) {
+      ShadToaster.maybeOf(
+        context,
+      )?.show(const ShadToast(description: Text('剪贴板为空')));
+      return;
+    }
+    final share = GuangyaShareLink.tryParse(text);
+    if (share == null) {
+      ShadToaster.maybeOf(
+        context,
+      )?.show(const ShadToast(description: Text('未识别到分享链接')));
+      return;
+    }
+    _shareDialogOpen = true;
+    try {
+      await showShareRestoreDialog(context, share);
+    } finally {
       _shareDialogOpen = false;
     }
   }
@@ -689,8 +681,6 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _clipboardMonitor?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -746,6 +736,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage>
                 onSearch: _submitSearch,
                 onToggleSearch: _toggleSearch,
                 onScanShare: _scanShareQRCode,
+                onPasteShare: _readingClipboard ? null : _pasteShareLink,
                 onOpenMenu: () => _showMobileMenu(context),
                 mediaState: media,
                 mediaFilter: _mediaBrowseFilter,
@@ -1182,6 +1173,7 @@ class _TopBar extends StatelessWidget {
   final ValueChanged<String> onSearch;
   final VoidCallback onToggleSearch;
   final VoidCallback onScanShare;
+  final VoidCallback? onPasteShare;
   final VoidCallback onOpenMenu;
   final MediaLibraryState mediaState;
   final MediaLibraryBrowseFilter mediaFilter;
@@ -1204,6 +1196,7 @@ class _TopBar extends StatelessWidget {
     required this.onSearch,
     required this.onToggleSearch,
     required this.onScanShare,
+    required this.onPasteShare,
     required this.onOpenMenu,
     required this.mediaState,
     required this.mediaFilter,
@@ -1285,27 +1278,23 @@ class _TopBar extends StatelessWidget {
                   ),
                   const Spacer(),
                   if (mode == WorkspaceMode.cloud) ...[
-                    OS26Glass(
-                      radius: 12,
-                      opacity: 0.52,
-                      padding: const EdgeInsets.all(3),
-                      child: _TopBarIconButton(
-                        tooltip: '扫描分享二维码',
-                        icon: Icons.qr_code_scanner_rounded,
-                        onTap: onScanShare,
-                      ),
+                    _TopBarIconButton(
+                      tooltip: '粘贴分享链接',
+                      icon: Icons.content_paste_rounded,
+                      onTap: onPasteShare,
+                    ),
+                    const SizedBox(width: 6),
+                    _TopBarIconButton(
+                      tooltip: '扫描分享二维码',
+                      icon: Icons.qr_code_scanner_rounded,
+                      onTap: onScanShare,
                     ),
                     const SizedBox(width: 6),
                   ],
-                  OS26Glass(
-                    radius: 12,
-                    opacity: 0.52,
-                    padding: const EdgeInsets.all(3),
-                    child: _TopBarIconButton(
-                      tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
-                      icon: Icons.search_rounded,
-                      onTap: onToggleSearch,
-                    ),
+                  _TopBarIconButton(
+                    tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
+                    icon: Icons.search_rounded,
+                    onTap: onToggleSearch,
                   ),
                 ],
               ),
@@ -1318,15 +1307,16 @@ class _TopBar extends StatelessWidget {
           const SizedBox(width: 78),
           const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
           if (mode == WorkspaceMode.cloud) ...[
-            OS26Glass(
-              radius: 21,
-              opacity: 0.52,
-              padding: const EdgeInsets.all(2),
-              child: _TopBarIconButton(
-                tooltip: '扫描分享二维码',
-                icon: Icons.qr_code_scanner_rounded,
-                onTap: onScanShare,
-              ),
+            _TopBarIconButton(
+              tooltip: '粘贴分享链接',
+              icon: Icons.content_paste_rounded,
+              onTap: onPasteShare,
+            ),
+            const SizedBox(width: 8),
+            _TopBarIconButton(
+              tooltip: '扫描分享二维码',
+              icon: Icons.qr_code_scanner_rounded,
+              onTap: onScanShare,
             ),
             const SizedBox(width: 8),
             _UploadListTopButton(progress: uploadProgress),
@@ -1336,14 +1326,12 @@ class _TopBar extends StatelessWidget {
             duration: const Duration(milliseconds: 160),
             width: searchOpen ? 280 : 42,
             height: 42,
-            child: OS26Glass(
-              radius: 21,
-              opacity: 0.52,
-              padding: searchOpen
-                  ? const EdgeInsets.symmetric(horizontal: 12)
-                  : EdgeInsets.zero,
-              child: searchOpen
-                  ? Row(
+            child: searchOpen
+                ? OS26Glass(
+                    radius: 21,
+                    opacity: 0.52,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
                       children: [
                         Icon(
                           Icons.search_rounded,
@@ -1380,13 +1368,13 @@ class _TopBar extends StatelessWidget {
                           ),
                         ),
                       ],
-                    )
-                  : InkWell(
-                      borderRadius: BorderRadius.circular(21),
-                      onTap: onToggleSearch,
-                      child: Icon(Icons.search_rounded, color: cs.foreground),
                     ),
-            ),
+                  )
+                : _TopBarIconButton(
+                    tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
+                    icon: Icons.search_rounded,
+                    onTap: onToggleSearch,
+                  ),
           ),
         ],
       ),
@@ -3023,6 +3011,7 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
         final enableCloudDrag =
             !compact &&
             !_isMobilePlatform &&
+            state.section == WorkspaceSection.files &&
             (_primaryViewMode == _FileViewMode.columns ||
                 paneMode == _PaneLayoutMode.dual);
         final workspace = OS26Glass(
@@ -3601,7 +3590,8 @@ class _PrimaryFilePane extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (viewMode == _FileViewMode.columns) {
+    final isShareSection = state.section == WorkspaceSection.shares;
+    if (viewMode == _FileViewMode.columns && !isShareSection) {
       return _ColumnFileBrowser(
         title: title,
         initialPath: state.folderPath,
@@ -3621,20 +3611,32 @@ class _PrimaryFilePane extends ConsumerWidget {
       itemCount: files.length,
       isLoading: state.isLoading,
       errorMessage: state.errorMessage,
-      emptyLabel: state.currentListSearchQuery.isEmpty ? '没有文件' : '当前文件夹没有匹配项',
+      emptyLabel: isShareSection
+          ? '暂无分享'
+          : state.currentListSearchQuery.isEmpty
+          ? '没有文件'
+          : '当前文件夹没有匹配项',
       breadcrumbPath: state.folderPath,
       onBreadcrumbNavigate: (index) =>
           ref.read(fileProvider.notifier).navigateToPathIndex(index),
       header: _FilePaneHeader(
-        trailing: _ClipboardPasteButton(
-          parentID: state.folderPath.isEmpty ? null : state.folderPath.last.id,
-        ),
+        trailing: isShareSection
+            ? const SizedBox.shrink()
+            : _ClipboardPasteButton(
+                parentID: state.folderPath.isEmpty
+                    ? null
+                    : state.folderPath.last.id,
+              ),
       ),
       dropParentID: state.folderPath.isEmpty ? null : state.folderPath.last.id,
-      onMoveCloudFiles: (files, parentID) =>
-          notifier.moveFilesTo(files, parentID: parentID),
-      onUploadLocalFiles: (files, parentID) =>
-          notifier.uploadLocalFiles(files, parentID: parentID),
+      onMoveCloudFiles: isShareSection
+          ? null
+          : (files, parentID) =>
+                notifier.moveFilesTo(files, parentID: parentID),
+      onUploadLocalFiles: isShareSection
+          ? null
+          : (files, parentID) =>
+                notifier.uploadLocalFiles(files, parentID: parentID),
       currentPage: state.currentPage,
       pageSize: state.pageSize,
       totalPages: state.totalPages,
@@ -3671,12 +3673,32 @@ class _PrimaryFilePane extends ConsumerWidget {
                       context,
                       selected,
                       () => notifier.deleteFiles(selected),
+                      shareRecords: isShareSection,
                     ),
                   );
                 },
           itemBuilder: (context, index) {
             final file = files[index];
             final selected = state.selectedIDs.contains(file.id);
+
+            // Share section uses dedicated ShareListTile
+            if (isShareSection) {
+              final tile = ShareListTile(
+                share: file,
+                isSelected: selected,
+                onSelect: () => _selectDesktopFile(notifier, file),
+                onDelete: () => unawaited(
+                  _confirmDeleteCloudFiles(
+                    context,
+                    [file],
+                    () => notifier.deleteFiles([file]),
+                    shareRecords: true,
+                  ),
+                ),
+              );
+              return tile;
+            }
+
             final tile = FileListTile(
               file: file,
               isSelected: selected,
@@ -3710,6 +3732,7 @@ class _PrimaryFilePane extends ConsumerWidget {
               onShare: () => unawaited(
                 showShareLinkDialog(
                   context,
+                  title: file.name,
                   createLink: () => notifier.createShare(file),
                 ),
               ),
@@ -4667,6 +4690,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
                         onShare: (file) => unawaited(
                           showShareLinkDialog(
                             context,
+                            title: file.name,
                             createLink: () => ref
                                 .read(fileProvider.notifier)
                                 .createShare(file),
@@ -5734,6 +5758,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               onShare: () => unawaited(
                 showShareLinkDialog(
                   context,
+                  title: file.name,
                   createLink: () =>
                       ref.read(fileProvider.notifier).createShare(file),
                 ),

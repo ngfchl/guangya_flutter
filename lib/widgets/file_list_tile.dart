@@ -201,30 +201,39 @@ class _FileListTileState extends State<FileListTile> {
               onPressed: widget.onMoveTo,
               child: const Text('移动到…'),
             ),
-          const Divider(height: 8),
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.download, size: 16),
-            trailing: const Icon(LucideIcons.chevronRight),
-            onPressed: widget.onDownload,
-            child: const Text('下载'),
-          ),
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.share2, size: 16),
-            trailing: const Icon(LucideIcons.chevronRight),
-            onPressed: widget.onShare,
-            child: const Text('分享'),
-          ),
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.zap, size: 16),
-            onPressed: widget.onCopyFastTransfer,
-            child: const Text('复制秒传'),
-          ),
-          const Divider(height: 8),
-          ShadContextMenuItem.inset(
-            leading: const Icon(LucideIcons.info, size: 16),
-            onPressed: widget.onDetail,
-            child: const Text('详情'),
-          ),
+          if (widget.onDownload != null ||
+              widget.onShare != null ||
+              widget.onCopyFastTransfer != null) ...[
+            const Divider(height: 8),
+            if (widget.onDownload != null)
+              ShadContextMenuItem.inset(
+                leading: const Icon(LucideIcons.download, size: 16),
+                trailing: const Icon(LucideIcons.chevronRight),
+                onPressed: widget.onDownload,
+                child: const Text('下载'),
+              ),
+            if (widget.onShare != null)
+              ShadContextMenuItem.inset(
+                leading: const Icon(LucideIcons.share2, size: 16),
+                trailing: const Icon(LucideIcons.chevronRight),
+                onPressed: widget.onShare,
+                child: const Text('分享'),
+              ),
+            if (widget.onCopyFastTransfer != null)
+              ShadContextMenuItem.inset(
+                leading: const Icon(LucideIcons.zap, size: 16),
+                onPressed: widget.onCopyFastTransfer,
+                child: const Text('复制秒传'),
+              ),
+          ],
+          if (widget.onDetail != null) ...[
+            const Divider(height: 8),
+            ShadContextMenuItem.inset(
+              leading: const Icon(LucideIcons.info, size: 16),
+              onPressed: widget.onDetail,
+              child: const Text('详情'),
+            ),
+          ],
           const Divider(height: 8),
           ShadContextMenuItem.inset(
             leading: Icon(

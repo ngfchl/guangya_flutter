@@ -417,6 +417,7 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                           onShare: () => unawaited(
                             showShareLinkDialog(
                               context,
+                              title: file.name,
                               createLink: () => notifier.createShare(file),
                             ),
                           ),
