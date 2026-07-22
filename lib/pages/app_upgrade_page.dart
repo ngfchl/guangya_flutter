@@ -511,7 +511,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
               _hasNewVersion
                   ? Icons.system_update_rounded
                   : Icons.check_circle_rounded,
-              color: _hasNewVersion ? cs.primary : cs.chart2,
+              color: _hasNewVersion ? cs.primary : cs.muted,
               size: 24,
             ),
             const SizedBox(width: 12),
@@ -876,12 +876,12 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: cs.chart2.withValues(alpha: 0.15),
+                      color: cs.primary.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       '当前',
-                      style: TextStyle(fontSize: 10, color: cs.chart2),
+                      style: TextStyle(fontSize: 10, color: cs.primary),
                     ),
                   ),
                 ],
