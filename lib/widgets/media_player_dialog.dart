@@ -21,6 +21,91 @@ import 'app_loading_indicator.dart';
 bool get _isDesktop =>
     Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
+const _subtitleExtensions = {'srt', 'ass', 'ssa', 'sub', 'vtt', 'sup'};
+
+String _fileStem(String name) => name.replaceFirst(RegExp(r'\.[^.]+$'), '');
+
+String _normalizedMediaText(String value) =>
+    value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\u4e00-\u9fff]'), '');
+
+int? _subtitleMatchScore(CloudFile video, CloudFile subtitle) {
+  final extension = subtitle.name.split('.').last.toLowerCase();
+  if (subtitle.isDirectory || !_subtitleExtensions.contains(extension)) {
+    return null;
+  }
+
+  final videoStem = _fileStem(video.name);
+  final subtitleStem = _fileStem(subtitle.name);
+  final normalizedVideoStem = _normalizedMediaText(videoStem);
+  final normalizedSubtitleStem = _normalizedMediaText(subtitleStem);
+  final videoInfo = ParsedMediaName.parse(video.name);
+  final subtitleInfo = ParsedMediaName.parse('$subtitleStem.mkv');
+
+  if (videoInfo.episode != null && subtitleInfo.episode != null) {
+    final videoSeason = videoInfo.season ?? 1;
+    final subtitleSeason = subtitleInfo.season ?? 1;
+    if (videoSeason != subtitleSeason ||
+        videoInfo.episode != subtitleInfo.episode) {
+      return null;
+    }
+  }
+
+  var score = 0;
+  if (normalizedSubtitleStem == normalizedVideoStem) {
+    score = 1000;
+  } else if (normalizedSubtitleStem.startsWith(normalizedVideoStem)) {
+    score = 1000;
+  }
+
+  final videoTitle = _normalizedMediaText(videoInfo.title);
+  final subtitleTitle = _normalizedMediaText(subtitleInfo.title);
+  final sameEpisode =
+      videoInfo.episode != null &&
+      subtitleInfo.episode == videoInfo.episode &&
+      (subtitleInfo.season ?? 1) == (videoInfo.season ?? 1);
+  final relatedTitle =
+      videoTitle.isNotEmpty &&
+      subtitleTitle.isNotEmpty &&
+      (subtitleTitle.contains(videoTitle) ||
+          videoTitle.contains(subtitleTitle));
+  if (sameEpisode && subtitleTitle == videoTitle) {
+    score = math.max(score, 850);
+  } else if (sameEpisode && relatedTitle) {
+    score = math.max(score, 700);
+  } else if (sameEpisode && score == 0) {
+    return null;
+  } else if (relatedTitle) {
+    score = math.max(score, 600);
+  }
+  if (score == 0) return null;
+
+  if (RegExp(
+    r'(^|[. _-])(zh|zho|chi|chs|cht|sc|tc|cn)([. _-]|$)|简|繁|中文',
+    caseSensitive: false,
+  ).hasMatch(subtitleStem)) {
+    score += 20;
+  }
+  if (extension == 'ass' || extension == 'ssa') score += 2;
+  return score;
+}
+
+/// Returns matching external subtitles in automatic-selection priority order.
+List<CloudFile> matchingSubtitlesForPlayback(
+  CloudFile video,
+  List<CloudFile> siblings,
+) {
+  final scored = <({CloudFile file, int score})>[];
+  for (final candidate in siblings) {
+    final score = _subtitleMatchScore(video, candidate);
+    if (score != null) scored.add((file: candidate, score: score));
+  }
+  scored.sort((a, b) {
+    final byScore = b.score.compareTo(a.score);
+    return byScore != 0 ? byScore : a.file.name.compareTo(b.file.name);
+  });
+  return scored.map((item) => item.file).toList(growable: false);
+}
+
 Future<void> showMediaPlayerDialog(
   BuildContext context,
   CloudFile file, {
@@ -102,6 +187,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   int _lastRecordedSeconds = 0;
   List<CloudFile> _episodes = const [];
   List<CloudFile> _subtitleCandidates = const [];
+  bool _initialSubtitleApplied = false;
 
   bool get _isMovie =>
       widget.mediaKind == TMDBMediaKind.movie ||
@@ -184,15 +270,9 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
         }
         playFile = mainFile;
       }
-      final url = await ref
-          .read(fileProvider.notifier)
-          .playbackUrl(playFile);
+      final url = await ref.read(fileProvider.notifier).playbackUrl(playFile);
       await _player.open(Media(url.toString()), play: true);
       _restorePlaybackPosition();
-      final initialSubtitle = widget.initialSubtitle;
-      if (initialSubtitle != null) {
-        await _setDirectorySubtitle(initialSubtitle);
-      }
       _videoDimensionFallbackTimer?.cancel();
       _videoDimensionFallbackTimer = Timer(const Duration(seconds: 4), () {
         if (mounted && _loading && _error == null) {
@@ -210,11 +290,20 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
       final folderFiles = await ref
           .read(fileProvider.notifier)
           .siblingFiles(_currentFile);
+      final subtitles = matchingSubtitlesForPlayback(_currentFile, folderFiles);
       if (mounted) {
         setState(() {
           _episodes = _matchingEpisodes(_currentFile, episodeSources);
-          _subtitleCandidates = _matchingSubtitles(_currentFile, folderFiles);
+          _subtitleCandidates = subtitles;
         });
+      }
+      final initialSubtitle = !_initialSubtitleApplied
+          ? widget.initialSubtitle
+          : null;
+      _initialSubtitleApplied = true;
+      final preferredSubtitle = initialSubtitle ?? subtitles.firstOrNull;
+      if (preferredSubtitle != null) {
+        await _setDirectorySubtitle(preferredSubtitle);
       }
     } catch (error) {
       _handlePlaybackFailure(error, '内置播放器打开失败');
@@ -309,19 +398,6 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   String _normalizedTitle(String title) =>
       title.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\u4e00-\u9fff]'), '');
 
-  List<CloudFile> _matchingSubtitles(CloudFile file, List<CloudFile> siblings) {
-    const extensions = {'srt', 'ass', 'ssa', 'sub', 'vtt', 'sup'};
-    final title = _normalizedTitle(ParsedMediaName.parse(file.name).title);
-    return siblings.where((candidate) {
-      final extension = candidate.name.split('.').last.toLowerCase();
-      if (!extensions.contains(extension)) return false;
-      final candidateTitle = _normalizedTitle(
-        ParsedMediaName.parse(candidate.name).title,
-      );
-      return candidateTitle.contains(title) || title.contains(candidateTitle);
-    }).toList();
-  }
-
   Future<void> _setDirectorySubtitle(CloudFile selected) async {
     try {
       final url = await ref.read(fileProvider.notifier).playbackUrl(selected);
@@ -329,7 +405,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
         SubtitleTrack.uri(url.toString(), title: selected.name),
       );
     } catch (error) {
-      if (mounted) setState(() => _error = '加载字幕失败：$error');
+      AppLogger.warning('Player', '加载字幕失败（${selected.name}）：$error');
     }
   }
 
@@ -339,7 +415,10 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
         .siblingFiles(_currentFile);
     if (!mounted) return;
     setState(() {
-      _subtitleCandidates = _matchingSubtitles(_currentFile, siblings);
+      _subtitleCandidates = matchingSubtitlesForPlayback(
+        _currentFile,
+        siblings,
+      );
     });
   }
 
@@ -512,8 +591,9 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
                             showEpisodes: _showEpisodes,
                             onToggleEpisodes: _isMovie
                                 ? null
-                                : () =>
-                                      setState(() => _showEpisodes = !_showEpisodes),
+                                : () => setState(
+                                    () => _showEpisodes = !_showEpisodes,
+                                  ),
                           ),
                         ),
                 ),
@@ -987,10 +1067,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                               fontSize: 15,
                               fontWeight: FontWeight.w600,
                               shadows: [
-                                Shadow(
-                                  blurRadius: 8,
-                                  color: Colors.black54,
-                                ),
+                                Shadow(blurRadius: 8, color: Colors.black54),
                               ],
                             ),
                           ),
@@ -1011,10 +1088,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                               gradient: LinearGradient(
                                 begin: Alignment.topCenter,
                                 end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  Color(0xE6000000),
-                                ],
+                                colors: [Colors.transparent, Color(0xE6000000)],
                               ),
                             ),
                             child: Column(
@@ -1023,10 +1097,9 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                                 SliderTheme(
                                   data: SliderTheme.of(context).copyWith(
                                     trackHeight: 3,
-                                    thumbShape:
-                                        const RoundSliderThumbShape(
-                                          enabledThumbRadius: 6,
-                                        ),
+                                    thumbShape: const RoundSliderThumbShape(
+                                      enabledThumbRadius: 6,
+                                    ),
                                     activeTrackColor: cs.primary,
                                     inactiveTrackColor: Colors.white.withValues(
                                       alpha: 0.28,
@@ -1123,8 +1196,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                                                 .clamp(0.0, 100.0),
                                             min: 0,
                                             max: 100,
-                                            onChanged:
-                                                widget.player.setVolume,
+                                            onChanged: widget.player.setVolume,
                                           ),
                                         ),
                                       ),
@@ -1233,9 +1305,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                               'S${(parsed.season ?? 1).toString().padLeft(2, '0')}E${(parsed.episode ?? 0).toString().padLeft(2, '0')}',
                               style: TextStyle(
                                 fontSize: 11,
-                                color: selected
-                                    ? cs.primary
-                                    : Colors.white54,
+                                color: selected ? cs.primary : Colors.white54,
                               ),
                             ),
                           ),
