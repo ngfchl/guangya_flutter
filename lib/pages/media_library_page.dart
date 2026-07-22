@@ -2222,7 +2222,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 PointerDeviceKind.trackpad,
               },
             ),
-            child: EasyRefresh(
+            child: EasyRefresh.builder(
               header: const ClassicHeader(),
               footer: const ClassicFooter(),
               onRefresh: () async {
@@ -2237,11 +2237,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               onLoad: state.hasMoreContent && !state.isLoadingMore
                   ? _mediaNotifier.loadNextContentPage
                   : null,
-              child: SingleChildScrollView(
+              childBuilder: (context, physics) => SingleChildScrollView(
                 controller: _contentScrollController,
-                physics: const AlwaysScrollableScrollPhysics(
-                  parent: BouncingScrollPhysics(),
-                ),
+                physics: physics,
                 padding: const EdgeInsets.only(bottom: 16),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
@@ -2420,7 +2418,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           PointerDeviceKind.trackpad,
         },
       ),
-      child: EasyRefresh(
+      child: EasyRefresh.builder(
         header: const ClassicHeader(),
         onRefresh: () => _mediaNotifier.loadContent(
           home: true,
@@ -2428,9 +2426,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           reset: true,
           force: true,
         ),
-        child: ListView(
+        childBuilder: (context, physics) => ListView(
           primary: false,
-          physics: const AlwaysScrollableScrollPhysics(),
+          physics: physics,
           padding: const EdgeInsets.only(bottom: 24),
           children: sections,
         ),
