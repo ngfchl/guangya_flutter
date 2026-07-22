@@ -93,7 +93,7 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>用于保存截图到相册</string>
 	<key>NSCameraUsageDescription</key>
-	<string>我们需要使用相机来拍摄照片。</string>
+	<string>用于拍摄照片和扫描光鸭分享二维码。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>小黄鸭需要访问本地网络来发现和连接设备。</string>
 	<key>NSBonjourServices</key>

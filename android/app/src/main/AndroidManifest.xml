@@ -41,6 +41,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- 扫描光鸭分享二维码 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <!-- 通知 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 

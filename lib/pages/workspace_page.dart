@@ -29,6 +29,7 @@ import '../widgets/file_detail_dialog.dart';
 import '../widgets/media_player_dialog.dart';
 import '../widgets/file_icon.dart';
 import '../widgets/share_link_dialog.dart';
+import '../widgets/share_qr_scanner_dialog.dart';
 import '../widgets/share_restore_dialog.dart';
 import '../widgets/side_panel.dart';
 import '../widgets/sort_menu.dart';
@@ -648,6 +649,18 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage>
     }
   }
 
+  Future<void> _scanShareQRCode() async {
+    if (!Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS) {
+      ShadToaster.maybeOf(context)?.show(
+        const ShadToast(title: Text('扫一扫'), description: Text('当前平台暂不支持相机扫码')),
+      );
+      return;
+    }
+    final share = await showShareQRScannerDialog(context);
+    if (!mounted || share == null) return;
+    await showShareRestoreDialog(context, share);
+  }
+
   void _openTool(WorkspaceTool tool) {
     if (_mode == WorkspaceMode.media) {
       ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
@@ -732,6 +745,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage>
                 searchOpen: _searchOpen,
                 onSearch: _submitSearch,
                 onToggleSearch: _toggleSearch,
+                onScanShare: _scanShareQRCode,
                 onOpenMenu: () => _showMobileMenu(context),
                 mediaState: media,
                 mediaFilter: _mediaBrowseFilter,
@@ -1167,6 +1181,7 @@ class _TopBar extends StatelessWidget {
   final bool searchOpen;
   final ValueChanged<String> onSearch;
   final VoidCallback onToggleSearch;
+  final VoidCallback onScanShare;
   final VoidCallback onOpenMenu;
   final MediaLibraryState mediaState;
   final MediaLibraryBrowseFilter mediaFilter;
@@ -1188,6 +1203,7 @@ class _TopBar extends StatelessWidget {
     required this.searchOpen,
     required this.onSearch,
     required this.onToggleSearch,
+    required this.onScanShare,
     required this.onOpenMenu,
     required this.mediaState,
     required this.mediaFilter,
@@ -1268,6 +1284,19 @@ class _TopBar extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
+                  if (mode == WorkspaceMode.cloud) ...[
+                    OS26Glass(
+                      radius: 12,
+                      opacity: 0.52,
+                      padding: const EdgeInsets.all(3),
+                      child: _TopBarIconButton(
+                        tooltip: '扫描分享二维码',
+                        icon: Icons.qr_code_scanner_rounded,
+                        onTap: onScanShare,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
                   OS26Glass(
                     radius: 12,
                     opacity: 0.52,
@@ -1289,6 +1318,17 @@ class _TopBar extends StatelessWidget {
           const SizedBox(width: 78),
           const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
           if (mode == WorkspaceMode.cloud) ...[
+            OS26Glass(
+              radius: 21,
+              opacity: 0.52,
+              padding: const EdgeInsets.all(2),
+              child: _TopBarIconButton(
+                tooltip: '扫描分享二维码',
+                icon: Icons.qr_code_scanner_rounded,
+                onTap: onScanShare,
+              ),
+            ),
+            const SizedBox(width: 8),
             _UploadListTopButton(progress: uploadProgress),
             const SizedBox(width: 8),
           ],
