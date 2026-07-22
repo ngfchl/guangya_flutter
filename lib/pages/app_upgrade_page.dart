@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -13,6 +14,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/logging/app_logger.dart';
@@ -454,8 +456,8 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
     _activeDownloadPath = null;
     _refreshUi();
     try {
-      final dir = await getTemporaryDirectory();
-      final savePath = p.join(dir.path, asset.name);
+      final savePath = await _prepareInstallerPath(asset.name);
+      if (savePath == null) return;
       _activeDownloadPath = savePath;
       final dio = _createDio();
       final downloadUrl = await _acceleratedDownloadUrl(asset.url);
@@ -470,12 +472,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
           }
         },
       );
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('下载完成：${asset.name}')));
-      }
-      await _openInstaller(savePath);
+      await _handleDownloadedInstaller(savePath, asset.name);
     } on DioException catch (e) {
       if (CancelToken.isCancel(e)) {
         await _deleteFile(_activeDownloadPath);
@@ -510,6 +507,58 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
 
   void _cancelDownload() {
     _cancelToken?.cancel('user cancelled');
+  }
+
+  Future<String?> _prepareInstallerPath(String fileName) async {
+    if (Platform.isLinux) {
+      return FilePicker.saveFile(
+        dialogTitle: '保存安装包',
+        fileName: fileName,
+        type: FileType.any,
+        bytes: Uint8List(0),
+      );
+    }
+    final temporaryDirectory = await getTemporaryDirectory();
+    final packageDirectory = Directory(
+      p.join(temporaryDirectory.path, 'guangya_app_upgrade'),
+    );
+    await packageDirectory.create(recursive: true);
+    return p.join(packageDirectory.path, fileName);
+  }
+
+  Future<void> _handleDownloadedInstaller(String path, String fileName) async {
+    if (Platform.isMacOS || Platform.isWindows) {
+      _showUpgradeMessage('安装包已下载，正在启动安装器');
+      await _openInstaller(path);
+    } else if (Platform.isAndroid) {
+      _showUpgradeMessage('安装包已下载，正在打开安装器');
+      await _installAndroidApk(path);
+    } else if (Platform.isIOS) {
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(path)], text: 'APP 安装包：$fileName'),
+      );
+    } else {
+      _showUpgradeMessage('安装包已保存到：$path');
+    }
+  }
+
+  Future<void> _installAndroidApk(String path) async {
+    final result = await InstallPlugin.installApk(path);
+    if (result is Map && result['isSuccess'] == true) {
+      _showUpgradeMessage('安装完成');
+      return;
+    }
+    final message = result is Map ? result['errorMessage']?.toString() : null;
+    _showUpgradeMessage(
+      message?.trim().isNotEmpty == true ? message!.trim() : '安装失败',
+    );
+  }
+
+  void _showUpgradeMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<String> _acceleratedDownloadUrl(String url) async {
@@ -588,31 +637,29 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
   Future<void> _openInstaller(String path) async {
     try {
       if (Platform.isMacOS) {
-        await Process.run('open', [path]);
+        final opened = await launchUrl(
+          Uri.file(path),
+          mode: LaunchMode.externalApplication,
+        );
+        if (!opened) {
+          final result = await Process.run('/usr/bin/open', [path]);
+          if (result.exitCode != 0) {
+            throw ProcessException(
+              '/usr/bin/open',
+              [path],
+              result.stderr.toString().trim(),
+              result.exitCode,
+            );
+          }
+        }
       } else if (Platform.isWindows) {
         await Process.start(path, const []);
-      } else if (Platform.isAndroid) {
-        final result = await InstallPlugin.installApk(path);
-        if (result is Map && result['isSuccess'] == true) return;
-        throw Exception(
-          result is Map
-              ? (result['errorMessage']?.toString() ?? '安装失败')
-              : '安装失败',
-        );
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('安装包已保存到：$path')));
-        }
+        _showUpgradeMessage('安装包已保存到：$path');
       }
     } catch (e) {
       AppLogger.warning('打开安装包失败', '$e');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('已保存到：$path')));
-      }
+      _showUpgradeMessage('无法自动打开，安装包已保存到：$path');
     }
   }
 
