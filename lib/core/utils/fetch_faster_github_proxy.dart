@@ -71,10 +71,7 @@ Future<GithubProxyTestResult> fetchFasterGithubProxy({
   return GithubProxyTestResult.success(fastest, available);
 }
 
-Future<GithubProxyResponse> _testProxy(
-  Dio dio,
-  String proxy,
-) async {
+Future<GithubProxyResponse> _testProxy(Dio dio, String proxy) async {
   final stopwatch = Stopwatch()..start();
   try {
     final url = buildGithubProxyUrl(proxy, _githubProbePath);
