@@ -7,7 +7,29 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/cloud_file.dart';
 import 'app_dialog.dart';
+import 'audio_player_dialog.dart';
 import 'file_icon.dart';
+import 'media_player_dialog.dart';
+
+Future<void> showCloudFilePreview({
+  required BuildContext context,
+  required CloudFile file,
+  required Future<Uri> Function() resolveUrl,
+  VoidCallback? onDownload,
+}) {
+  if (file.isAudio) {
+    return showAudioPlayerDialog(context, file, onDownload: onDownload);
+  }
+  if (file.isPlayableVideo) {
+    return showMediaPlayerDialog(context, file);
+  }
+  return showFilePreviewDialog(
+    context: context,
+    file: file,
+    resolveUrl: resolveUrl,
+    onDownload: onDownload,
+  );
+}
 
 Future<void> showFilePreviewDialog({
   required BuildContext context,
@@ -26,7 +48,8 @@ Future<void> showFilePreviewDialog({
 }
 
 bool canPreviewCloudFile(CloudFile file) {
-  if (file.isDirectory) return false;
+  if (file.isDirectory || file.isIso) return false;
+  if (file.isAudio || file.isPlayableVideo) return true;
   final type = detectFileType(file.name);
   if (type != null && type != FileType.video) return true;
   return file.isImage || file.isDocument;
