@@ -3001,7 +3001,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       return;
     }
     CloudFile? selected;
-    while (mounted && selected == null) {
+    while (selected == null) {
+      if (!mounted) return;
       final action = await showShadDialog<_CloudBackupAction>(
         context: context,
         builder: (dialogContext) => ShadDialog(
@@ -3048,7 +3049,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       }
       if (backups.isEmpty && selected == null) return;
     }
-    if (selected == null || !mounted) return;
+    if (!mounted) return;
     final confirmed = await _confirmCloudBackupRestore(context, selected);
     if (!confirmed || !mounted) return;
     setState(() => _backupBusy = true);
