@@ -30,6 +30,7 @@ class DioClient {
     accountDio = _createDio(
       baseUrl: AppConfig.accountBase,
       interceptors: [AppLogInterceptor(), ResponseInterceptor()],
+      validateAllStatus: true,
     );
   }
 
@@ -59,6 +60,7 @@ class DioClient {
   static Dio _createDio({
     required String baseUrl,
     required List<Interceptor> interceptors,
+    bool validateAllStatus = false,
   }) {
     final dio = Dio(
       BaseOptions(
@@ -74,6 +76,9 @@ class DioClient {
           'User-Agent':
               'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
         },
+        validateStatus: validateAllStatus
+            ? (_) => true // account API: 接受所有 HTTP 状态码，与原生客户端一致
+            : null, // 业务 API: 保持 Dio 默认行为（仅接受 2xx）
       ),
     );
 
