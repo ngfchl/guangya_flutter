@@ -1185,7 +1185,13 @@ class FileNotifier extends StateNotifier<FileState> {
       await Clipboard.setData(
         ClipboardData(
           text: jsonEncode({
-            'files': entries.map((entry) => entry.toJson()).toList(),
+            'files': entries
+                .map((entry) => {
+                      'path': entry.path,
+                      'size': entry.size,
+                      'gcid': entry.gcid,
+                    })
+                .toList(),
           }),
         ),
       );
