@@ -57,7 +57,7 @@ bool get _isMobilePlatform => switch (defaultTargetPlatform) {
 bool get _isDesktopWindow =>
     Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
-double get _sidebarWindowControlInset => Platform.isMacOS ? 46 : 24;
+double get _desktopSidebarTopGap => Platform.isMacOS ? 20 : 32;
 
 class _DraggedCloudFiles {
   final List<CloudFile> files;
@@ -803,7 +803,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                 );
               }
               return Padding(
-                padding: const EdgeInsets.all(18),
+                padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
                 child: Row(
                   children: [
                     _mode == WorkspaceMode.cloud
@@ -839,7 +839,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                         children: [
                           if (_mode == WorkspaceMode.cloud) ...[
                             topBar,
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 6),
                           ],
                           Expanded(child: content),
                         ],
@@ -1307,7 +1307,7 @@ class _TopBar extends StatelessWidget {
       );
     }
     return SizedBox(
-      height: 42,
+      height: 38,
       child: Row(
         children: [
           const SizedBox(width: 78),
@@ -1330,11 +1330,11 @@ class _TopBar extends StatelessWidget {
           ],
           AnimatedContainer(
             duration: const Duration(milliseconds: 160),
-            width: searchOpen ? 280 : 42,
-            height: 42,
+            width: searchOpen ? 280 : 38,
+            height: 38,
             child: searchOpen
                 ? OS26Glass(
-                    radius: 21,
+                    radius: 19,
                     opacity: 0.52,
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Row(
@@ -1417,7 +1417,7 @@ class _TopBar extends StatelessWidget {
             homeSelected: mediaHomeSelected,
           );
     final searchField = Container(
-      height: compact ? 42 : 40,
+      height: compact ? 42 : 38,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         color: cs.background.withValues(alpha: 0.72),
@@ -1498,9 +1498,9 @@ class _TopBar extends StatelessWidget {
         final narrow = constraints.maxWidth < 640;
         final compactActions = constraints.maxWidth < 1360;
         return SizedBox(
-          height: 52,
+          height: 46,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 16, 14, 0),
+            padding: const EdgeInsets.fromLTRB(14, 4, 14, 0),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -1570,11 +1570,11 @@ class _MediaDetailTopBar extends StatelessWidget {
     final cs = ShadTheme.of(context).colorScheme;
     final type = detail.mediaKind == TMDBMediaKind.tv ? '剧集' : '电影';
     return SizedBox(
-      height: compact ? 48 : 52,
+      height: compact ? 48 : 46,
       child: Padding(
         padding: EdgeInsets.fromLTRB(
           compact ? 10 : 14,
-          compact ? 5 : 16,
+          compact ? 5 : 4,
           compact ? 10 : 14,
           compact ? 3 : 0,
         ),
@@ -2474,73 +2474,85 @@ class _CloudSidebar extends StatelessWidget {
         .toList();
     return SizedBox(
       width: width,
-      child: OS26Glass(
-        radius: showBrand ? 24 : 0,
-        opacity: showBrand ? 0.56 : 0,
-        border: showBrand ? null : const Border(),
-        applyBlur: showBrand,
-        padding: EdgeInsets.fromLTRB(14, showBrand ? 14 : 12, 14, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (showBrand) ...[
-              if (!Platform.isMacOS)
-                const Padding(
-                  padding: EdgeInsets.only(left: 2, bottom: 8),
-                  child: WindowControls(),
-                ),
-              if (_isDesktopWindow)
-                SizedBox(height: _sidebarWindowControlInset),
-              _SidebarBrand(
-                icon: Icons.cloud_sync_rounded,
-                title: '光鸭云盘',
-                subtitle: 'Cloud Workspace',
-                imageAsset: 'assets/branding/guangya_icon.png',
-                onSwitchMode: () => onModeChanged(WorkspaceMode.media),
-                onSettings: onSettings,
-              ),
-              const SizedBox(height: 14),
-            ],
-            Expanded(
-              child: ListView(
+      child: Column(
+        children: [
+          if (showBrand && _isDesktopWindow)
+            SizedBox(
+              height: _desktopSidebarTopGap,
+              child: !Platform.isMacOS
+                  ? const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: EdgeInsets.only(left: 2),
+                        child: WindowControls(),
+                      ),
+                    )
+                  : null,
+            ),
+          Expanded(
+            child: OS26Glass(
+              radius: showBrand ? 24 : 0,
+              opacity: showBrand ? 0.56 : 0,
+              border: showBrand ? null : const Border(),
+              applyBlur: showBrand,
+              padding: EdgeInsets.fromLTRB(14, showBrand ? 14 : 12, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final section in sections)
-                    _SidebarTile(
-                      icon: _sectionIcon(section),
-                      label: section.label,
-                      selected: state.section == section,
-                      onTap: () => onSection(section),
+                  if (showBrand) ...[
+                    _SidebarBrand(
+                      icon: Icons.cloud_sync_rounded,
+                      title: '光鸭云盘',
+                      subtitle: 'Cloud Workspace',
+                      imageAsset: 'assets/branding/guangya_icon.png',
+                      onSwitchMode: () => onModeChanged(WorkspaceMode.media),
+                      onSettings: onSettings,
                     ),
-                  const Divider(height: 24),
-                  _SidebarTile(
-                    icon: Icons.manage_search_rounded,
-                    label: '文件扫描与清理',
-                    selected: activeTool == WorkspaceTool.scan,
-                    onTap: () => onTool(WorkspaceTool.scan),
+                    const SizedBox(height: 14),
+                  ],
+                  Expanded(
+                    child: ListView(
+                      children: [
+                        for (final section in sections)
+                          _SidebarTile(
+                            icon: _sectionIcon(section),
+                            label: section.label,
+                            selected: state.section == section,
+                            onTap: () => onSection(section),
+                          ),
+                        const Divider(height: 24),
+                        _SidebarTile(
+                          icon: Icons.manage_search_rounded,
+                          label: '文件扫描与清理',
+                          selected: activeTool == WorkspaceTool.scan,
+                          onTap: () => onTool(WorkspaceTool.scan),
+                        ),
+                        _SidebarTile(
+                          icon: Icons.text_fields_rounded,
+                          label: '批量重命名',
+                          selected: activeTool == WorkspaceTool.rename,
+                          onTap: () => onTool(WorkspaceTool.rename),
+                        ),
+                        _SidebarTile(
+                          icon: Icons.bolt_rounded,
+                          label: '秒传工具',
+                          selected: activeTool == WorkspaceTool.fastTransfer,
+                          onTap: () => onTool(WorkspaceTool.fastTransfer),
+                        ),
+                      ],
+                    ),
                   ),
                   _SidebarTile(
-                    icon: Icons.text_fields_rounded,
-                    label: '批量重命名',
-                    selected: activeTool == WorkspaceTool.rename,
-                    onTap: () => onTool(WorkspaceTool.rename),
-                  ),
-                  _SidebarTile(
-                    icon: Icons.bolt_rounded,
-                    label: '秒传工具',
-                    selected: activeTool == WorkspaceTool.fastTransfer,
-                    onTap: () => onTool(WorkspaceTool.fastTransfer),
+                    icon: Icons.logout_rounded,
+                    label: '退出登录',
+                    selected: false,
+                    onTap: onSignOut,
                   ),
                 ],
               ),
             ),
-            _SidebarTile(
-              icon: Icons.logout_rounded,
-              label: '退出登录',
-              selected: false,
-              onTap: onSignOut,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -2609,120 +2621,136 @@ class _MediaSidebar extends ConsumerWidget {
     final state = ref.watch(mediaLibraryProvider);
     return SizedBox(
       width: width,
-      child: OS26Glass(
-        radius: showBrand ? 24 : 0,
-        opacity: showBrand ? 0.56 : 0,
-        border: showBrand ? null : const Border(),
-        applyBlur: showBrand,
-        padding: EdgeInsets.fromLTRB(12, showBrand ? 14 : 10, 12, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (showBrand) ...[
-              if (!Platform.isMacOS)
-                const Padding(
-                  padding: EdgeInsets.only(left: 2, bottom: 8),
-                  child: WindowControls(),
-                ),
-              if (_isDesktopWindow)
-                SizedBox(height: _sidebarWindowControlInset),
-              _SidebarBrand(
-                icon: Icons.play_circle_fill_rounded,
-                title: '光鸭影视',
-                subtitle: 'Media Center',
-                onSwitchMode: () => onModeChanged(WorkspaceMode.cloud),
-                onSettings: onSettings,
-              ),
-              const SizedBox(height: 16),
-            ],
-            const _SidebarSectionLabel('浏览'),
-            _SidebarTile(
-              icon: Icons.home_rounded,
-              label: '首页',
-              selected: homeSelected,
-              onTap: onHome,
+      child: Column(
+        children: [
+          if (showBrand && _isDesktopWindow)
+            SizedBox(
+              height: _desktopSidebarTopGap,
+              child: !Platform.isMacOS
+                  ? const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: EdgeInsets.only(left: 2),
+                        child: WindowControls(),
+                      ),
+                    )
+                  : null,
             ),
-            _SidebarTile(
-              icon: Icons.movie_creation_rounded,
-              label: '电影',
-              count: state.globalStatistics.movies,
-              selected: selectedFilter == MediaLibraryBrowseFilter.movies,
-              onTap: () => onFilter(MediaLibraryBrowseFilter.movies),
-            ),
-            _SidebarTile(
-              icon: Icons.live_tv_rounded,
-              label: '电视剧',
-              count: state.globalStatistics.series,
-              selected: selectedFilter == MediaLibraryBrowseFilter.series,
-              onTap: () => onFilter(MediaLibraryBrowseFilter.series),
-            ),
-            _SidebarTile(
-              icon: Icons.help_outline_rounded,
-              label: '未识别',
-              count: state.globalStatistics.unmatched,
-              selected: selectedFilter == MediaLibraryBrowseFilter.unmatched,
-              onTap: () => onFilter(MediaLibraryBrowseFilter.unmatched),
-            ),
-            const SizedBox(height: 8),
-            const _SidebarSectionLabel('媒体库'),
-            Expanded(
-              child: ListView(
+          Expanded(
+            child: OS26Glass(
+              radius: showBrand ? 24 : 0,
+              opacity: showBrand ? 0.56 : 0,
+              border: showBrand ? null : const Border(),
+              applyBlur: showBrand,
+              padding: EdgeInsets.fromLTRB(12, showBrand ? 14 : 10, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final library in state.libraries)
-                    Builder(
-                      builder: (context) {
-                        final statistics =
-                            state.libraryStatistics[library.id] ??
-                            const MediaLibraryStatistics();
-                        return _SidebarTile(
-                          icon: library.kind == MediaLibraryKind.series
-                              ? Icons.live_tv_rounded
-                              : Icons.smart_display_rounded,
-                          label: library.name,
-                          subtitle: _mediaLibraryStatisticsLabel(statistics),
-                          selected:
-                              !homeSelected &&
-                              selectedFilter == MediaLibraryBrowseFilter.all &&
-                              state.selectedLibrary?.id == library.id,
-                          onTap: () => onSelectLibrary(library.id),
-                        );
-                      },
+                  if (showBrand) ...[
+                    _SidebarBrand(
+                      icon: Icons.play_circle_fill_rounded,
+                      title: '光鸭影视',
+                      subtitle: 'Media Center',
+                      onSwitchMode: () => onModeChanged(WorkspaceMode.cloud),
+                      onSettings: onSettings,
                     ),
+                    const SizedBox(height: 16),
+                  ],
+                  const _SidebarSectionLabel('浏览'),
+                  _SidebarTile(
+                    icon: Icons.home_rounded,
+                    label: '首页',
+                    selected: homeSelected,
+                    onTap: onHome,
+                  ),
+                  _SidebarTile(
+                    icon: Icons.movie_creation_rounded,
+                    label: '电影',
+                    count: state.globalStatistics.movies,
+                    selected: selectedFilter == MediaLibraryBrowseFilter.movies,
+                    onTap: () => onFilter(MediaLibraryBrowseFilter.movies),
+                  ),
+                  _SidebarTile(
+                    icon: Icons.live_tv_rounded,
+                    label: '电视剧',
+                    count: state.globalStatistics.series,
+                    selected: selectedFilter == MediaLibraryBrowseFilter.series,
+                    onTap: () => onFilter(MediaLibraryBrowseFilter.series),
+                  ),
+                  _SidebarTile(
+                    icon: Icons.help_outline_rounded,
+                    label: '未识别',
+                    count: state.globalStatistics.unmatched,
+                    selected:
+                        selectedFilter == MediaLibraryBrowseFilter.unmatched,
+                    onTap: () => onFilter(MediaLibraryBrowseFilter.unmatched),
+                  ),
+                  const SizedBox(height: 8),
+                  const _SidebarSectionLabel('媒体库'),
+                  Expanded(
+                    child: ListView(
+                      children: [
+                        for (final library in state.libraries)
+                          Builder(
+                            builder: (context) {
+                              final statistics =
+                                  state.libraryStatistics[library.id] ??
+                                  const MediaLibraryStatistics();
+                              return _SidebarTile(
+                                icon: library.kind == MediaLibraryKind.series
+                                    ? Icons.live_tv_rounded
+                                    : Icons.smart_display_rounded,
+                                label: library.name,
+                                subtitle: _mediaLibraryStatisticsLabel(
+                                  statistics,
+                                ),
+                                selected:
+                                    !homeSelected &&
+                                    selectedFilter ==
+                                        MediaLibraryBrowseFilter.all &&
+                                    state.selectedLibrary?.id == library.id,
+                                onTap: () => onSelectLibrary(library.id),
+                              );
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8, bottom: 10),
+                    child: ShadSeparator.horizontal(),
+                  ),
+                  const _SidebarSectionLabel('管理'),
+                  _SidebarTile(
+                    icon: Icons.assignment_rounded,
+                    label: '刮削管理',
+                    count: state.activeScanCount,
+                    selected: false,
+                    onTap: onScanTasks,
+                  ),
+                  _SidebarTile(
+                    icon: Icons.drive_file_move_rounded,
+                    label: '文件整理',
+                    selected: activeTool == WorkspaceTool.organize,
+                    onTap: () => onTool(WorkspaceTool.organize),
+                  ),
+                  _SidebarTile(
+                    icon: Icons.category_rounded,
+                    label: '分类管理',
+                    selected: activeTool == WorkspaceTool.categories,
+                    onTap: () => onTool(WorkspaceTool.categories),
+                  ),
+                  _SidebarTile(
+                    icon: Icons.video_library_rounded,
+                    label: '媒体库管理',
+                    selected: false,
+                    onTap: onManage,
+                  ),
                 ],
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.only(top: 8, bottom: 10),
-              child: ShadSeparator.horizontal(),
-            ),
-            const _SidebarSectionLabel('管理'),
-            _SidebarTile(
-              icon: Icons.assignment_rounded,
-              label: '刮削管理',
-              count: state.activeScanCount,
-              selected: false,
-              onTap: onScanTasks,
-            ),
-            _SidebarTile(
-              icon: Icons.drive_file_move_rounded,
-              label: '文件整理',
-              selected: activeTool == WorkspaceTool.organize,
-              onTap: () => onTool(WorkspaceTool.organize),
-            ),
-            _SidebarTile(
-              icon: Icons.category_rounded,
-              label: '分类管理',
-              selected: activeTool == WorkspaceTool.categories,
-              onTap: () => onTool(WorkspaceTool.categories),
-            ),
-            _SidebarTile(
-              icon: Icons.video_library_rounded,
-              label: '媒体库管理',
-              selected: false,
-              onTap: onManage,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
