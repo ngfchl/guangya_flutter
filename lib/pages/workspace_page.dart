@@ -595,6 +595,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   bool _mediaHomeSelected = true;
   WorkspaceTool? _cloudActiveTool;
   WorkspaceTool? _mediaActiveTool;
+  bool _confirmingExit = false;
 
   @override
   void initState() {
@@ -726,7 +727,16 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       });
     });
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final shouldPop = await _onWillPop();
+        if (shouldPop && context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
       backgroundColor: Colors.transparent,
       body: OS26Surface(
         child: SafeArea(
@@ -852,6 +862,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -872,6 +883,62 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
           .api;
       ref.read(mediaLibraryProvider.notifier).load();
     }
+  }
+
+  /// 判断当前是否处于"首页"状态（无工具、无搜索、无媒体详情）
+  bool get _isAtHome =>
+      _cloudActiveTool == null &&
+      _mediaActiveTool == null &&
+      _fileSearchQuery == null &&
+      _mediaSearchQuery == null &&
+      ref.read(activeMediaDetailHeaderProvider) == null;
+
+  /// 返回键拦截：不在首页则先回首页，已在首页则弹窗确认退出
+  Future<bool> _onWillPop() async {
+    if (!_isAtHome) {
+      _goHome();
+      return false;
+    }
+    // 已在首页，二次确认退出
+    if (_confirmingExit) return true;
+    _confirmingExit = true;
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (_) => ShadDialog(
+        title: const Text('退出应用'),
+        description: const Text('确定要退出小黄鸭吗？'),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          ShadButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('退出'),
+          ),
+        ],
+      ),
+    );
+    _confirmingExit = false;
+    return confirmed == true;
+  }
+
+  /// 回到首页状态：关闭工具、搜索、媒体详情
+  void _goHome() {
+    ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
+    setState(() {
+      _cloudActiveTool = null;
+      _mediaActiveTool = null;
+      _fileSearchQuery = null;
+      _fileSearchReturnQuery = null;
+      _fileSearchResultsCache = null;
+      _mediaSearchQuery = null;
+      _searchOpen = false;
+      _searchController.clear();
+      _mediaHomeSelected = true;
+      _mediaBrowseFilter = MediaLibraryBrowseFilter.all;
+      _mediaLibrarySection = MediaLibraryBrowseFilter.all;
+    });
   }
 
   void _changeMediaBrowseFilter(MediaLibraryBrowseFilter filter) {
