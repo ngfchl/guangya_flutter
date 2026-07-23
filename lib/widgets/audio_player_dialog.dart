@@ -1,19 +1,18 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:just_audio/just_audio.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
 import '../core/logging/app_logger.dart';
 import '../models/cloud_file.dart';
 import '../providers/file_provider.dart';
 import 'app_dialog.dart';
-import 'confirm_dialog.dart';
+import 'app_loading_indicator.dart';
+import 'file_icon.dart';
 
-/// Format a [Duration] to `mm:ss` or `h:mm:ss`.
 String _formatDuration(Duration d) {
   final h = d.inHours;
   final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -21,11 +20,11 @@ String _formatDuration(Duration d) {
   return h > 0 ? '$h:$m:$s' : '$m:$s';
 }
 
-/// Show a full-featured audio player dialog for an audio [file].
 Future<void> showAudioPlayerDialog(
   BuildContext context,
   CloudFile file, {
   List<CloudFile> episodeCandidates = const [],
+  VoidCallback? onDownload,
 }) async {
   try {
     await showShadDialog<void>(
@@ -33,6 +32,7 @@ Future<void> showAudioPlayerDialog(
       builder: (_) => AudioPlayerDialog(
         file: file,
         episodeCandidates: episodeCandidates,
+        onDownload: onDownload,
       ),
     );
   } catch (error, stackTrace) {
@@ -44,11 +44,13 @@ Future<void> showAudioPlayerDialog(
 class AudioPlayerDialog extends ConsumerStatefulWidget {
   final CloudFile file;
   final List<CloudFile> episodeCandidates;
+  final VoidCallback? onDownload;
 
   const AudioPlayerDialog({
     super.key,
     required this.file,
     this.episodeCandidates = const [],
+    this.onDownload,
   });
 
   @override
@@ -56,20 +58,21 @@ class AudioPlayerDialog extends ConsumerStatefulWidget {
 }
 
 class _AudioPlayerDialogState extends ConsumerState<AudioPlayerDialog> {
-  late final AudioPlayer _player;
+  late final Player _player;
   late CloudFile _currentFile;
   bool _loading = true;
   String? _error;
   bool _showPlaylist = false;
   List<CloudFile> _playlist = const [];
   int _currentIndex = 0;
-  bool _exitConfirmationVisible = false;
-  bool _allowExit = false;
+  double? _dragPosition;
+  double _volume = 1;
+  double _rate = 1;
 
   @override
   void initState() {
     super.initState();
-    _player = AudioPlayer();
+    _player = Player();
     _currentFile = widget.file;
     _buildPlaylist();
     Future.microtask(_open);
@@ -103,7 +106,9 @@ class _AudioPlayerDialogState extends ConsumerState<AudioPlayerDialog> {
       final url = await ref
           .read(fileProvider.notifier)
           .playbackUrl(_currentFile);
-      await _player.setUrl(url.toString());
+      await _player.open(Media(url.toString()), play: true);
+      await _player.setVolume(_volume * 100);
+      await _player.setRate(_rate);
       if (mounted) setState(() => _loading = false);
     } catch (error) {
       AppLogger.warning('AudioPlayer', '打开音频失败：$error');
@@ -132,31 +137,20 @@ class _AudioPlayerDialogState extends ConsumerState<AudioPlayerDialog> {
     }
   }
 
-  Future<void> _requestExit() async {
-    if (_allowExit || _exitConfirmationVisible || !mounted) return;
-    _exitConfirmationVisible = true;
-    final wasPlaying = _player.playing;
-    if (wasPlaying) await _player.pause();
-    if (!mounted) return;
-    final confirmed = await showConfirmDialog(
-      context,
-      title: '退出音频播放？',
-      content: '',
-      confirmText: '退出',
-      cancelText: '继续播放',
-    );
-    _exitConfirmationVisible = false;
-    if (!mounted) return;
-    if (confirmed) {
-      _allowExit = true;
-      Navigator.of(context, rootNavigator: true).pop();
-    } else if (wasPlaying) {
-      await _player.play();
-    }
+  Future<void> _seekBy(int seconds) async {
+    final duration = _player.state.duration;
+    final candidate = _player.state.position + Duration(seconds: seconds);
+    final target = candidate < Duration.zero
+        ? Duration.zero
+        : duration > Duration.zero && candidate > duration
+        ? duration
+        : candidate;
+    await _player.seek(target);
   }
 
   @override
   void dispose() {
+    _player.stop();
     _player.dispose();
     super.dispose();
   }
@@ -165,177 +159,312 @@ class _AudioPlayerDialogState extends ConsumerState<AudioPlayerDialog> {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final screen = MediaQuery.sizeOf(context);
-    final compact = screen.width < 600;
-    final content = Platform.isMacOS || Platform.isWindows || Platform.isLinux
-        ? _buildDesktop(cs, screen, compact)
-        : _buildMobile(cs, screen, compact);
-    return PopScope<void>(
-      canPop: _allowExit,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) unawaited(_requestExit());
-      },
-      child: content,
-    );
-  }
-
-  Widget _buildDesktop(ShadColorScheme cs, Size screen, bool compact) {
-    final dialogWidth = math.min(520.0, screen.width - 80);
+    final dialogWidth = math.min(440.0, screen.width - 24);
     return ShadDialog(
-      constraints: BoxConstraints(maxWidth: dialogWidth),
+      closeIcon: const SizedBox.shrink(),
+      constraints: BoxConstraints(
+        maxWidth: dialogWidth,
+        maxHeight: screen.height - 48,
+      ),
       padding: EdgeInsets.zero,
       scrollable: false,
-      title: const Text('音频播放器'),
-      description: Text(
-        _currentFile.name,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildHeader(cs),
+          _buildTrackInfo(cs),
+          _buildControlRow(cs),
+          _buildProgressBar(),
+          if (_playlist.length > 1) _buildPlaylistSection(cs),
+        ],
       ),
-      actions: [
-        ShadButton.outline(onPressed: _requestExit, child: const Text('关闭')),
-      ],
-      child: _buildBody(cs, compact),
     );
   }
 
-  Widget _buildMobile(ShadColorScheme cs, Size screen, bool compact) {
-    final dialogWidth = math.min(520.0, screen.width - 32);
-    return ShadDialog(
-      constraints: BoxConstraints(maxWidth: dialogWidth),
-      padding: EdgeInsets.zero,
-      scrollable: false,
-      title: Text(
-        _currentFile.name,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+  Widget _buildHeader(ShadColorScheme cs) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+      child: Row(
+        children: [
+          FileIcon(file: _currentFile, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _currentFile.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: cs.foreground,
+              ),
+            ),
+          ),
+          if (widget.onDownload != null)
+            ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: widget.onDownload,
+              child: const Icon(LucideIcons.download, size: 15),
+            ),
+          ShadButton.ghost(
+            size: ShadButtonSize.sm,
+            onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+            child: const Icon(LucideIcons.x, size: 15),
+          ),
+        ],
       ),
-      description: const Text('音频播放器'),
-      actions: [
-        ShadButton.outline(onPressed: _requestExit, child: const Text('关闭')),
-      ],
-      child: _buildBody(cs, compact),
     );
   }
 
-  Widget _buildBody(ShadColorScheme cs, bool compact) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // ── Album art / waveform placeholder ──
-        _buildAlbumArt(cs),
-
-        // ── Progress bar ──
-        _buildProgressBar(),
-
-        // ── Controls ──
-        _buildControls(cs, compact),
-
-        // ── Playlist (if multiple tracks) ──
-        if (_playlist.length > 1) _buildPlaylistSection(cs),
-      ],
-    );
-  }
-
-  Widget _buildAlbumArt(ShadColorScheme cs) {
-    return Container(
-      height: 200,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            cs.primary.withValues(alpha: 0.15),
-            cs.background,
-          ],
+  Widget _buildTrackInfo(ShadColorScheme cs) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(42, 0, 16, 8),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          '${_currentFile.typeName} · ${_currentFile.formattedSize}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 11, color: cs.mutedForeground),
         ),
       ),
-      child: Center(
-        child: _loading
-            ? const CircularProgressIndicator.adaptive()
-            : _error != null
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        LucideIcons.alertCircle,
-                        size: 48,
-                        color: cs.destructive,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _error!,
-                        style: TextStyle(color: cs.destructive),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  )
-                : Icon(
-                    LucideIcons.music,
-                    size: 72,
-                    color: cs.primary.withValues(alpha: 0.6),
+    );
+  }
+
+  Widget _buildControlRow(ShadColorScheme cs) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            _volume == 0 ? LucideIcons.volumeX : LucideIcons.volume2,
+            size: 14,
+            color: cs.mutedForeground,
+          ),
+          SizedBox(
+            width: 78,
+            child: Material(
+              color: Colors.transparent,
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 2,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 4,
                   ),
+                  activeTrackColor: cs.primary,
+                  inactiveTrackColor: cs.primary.withValues(alpha: 0.15),
+                  thumbColor: cs.primary,
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 10,
+                  ),
+                  overlayColor: cs.primary.withValues(alpha: 0.08),
+                ),
+                child: Slider(
+                  value: _volume,
+                  min: 0,
+                  max: 1,
+                  onChanged: (value) {
+                    setState(() => _volume = value);
+                    unawaited(_player.setVolume(value * 100));
+                  },
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          _controlButton(
+            icon: _playlist.length > 1
+                ? LucideIcons.skipBack
+                : LucideIcons.rotateCcw,
+            tooltip: _playlist.length > 1 ? '上一首' : '后退 10 秒',
+            onPressed: () =>
+                _playlist.length > 1 ? _playPrevious() : _seekBy(-10),
+          ),
+          const SizedBox(width: 8),
+          StreamBuilder<bool>(
+            stream: _player.stream.playing,
+            initialData: _player.state.playing,
+            builder: (context, snapshot) {
+              final playing = snapshot.data ?? false;
+              return StreamBuilder<bool>(
+                stream: _player.stream.buffering,
+                initialData: _player.state.buffering,
+                builder: (context, bufferingSnapshot) {
+                  final buffering = bufferingSnapshot.data ?? false;
+                  return ShadTooltip(
+                    builder: (_) => Text(playing ? '暂停' : '播放'),
+                    child: ShadButton(
+                      size: ShadButtonSize.sm,
+                      width: 40,
+                      height: 40,
+                      padding: EdgeInsets.zero,
+                      onPressed: _loading || _error != null
+                          ? null
+                          : () {
+                              if (playing) {
+                                _player.pause();
+                              } else {
+                                _player.play();
+                              }
+                            },
+                      child: buffering
+                          ? const AppLoadingIndicator(
+                              size: AppLoadingSize.inline,
+                              color: Colors.white,
+                            )
+                          : Icon(
+                              playing ? LucideIcons.pause : LucideIcons.play,
+                              size: 16,
+                              color: cs.primaryForeground,
+                            ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+          const SizedBox(width: 8),
+          _controlButton(
+            icon: _playlist.length > 1
+                ? LucideIcons.skipForward
+                : LucideIcons.rotateCw,
+            tooltip: _playlist.length > 1 ? '下一首' : '前进 10 秒',
+            onPressed: () =>
+                _playlist.length > 1 ? _playNext() : _seekBy(10),
+          ),
+          const SizedBox(width: 12),
+          ShadSelect<double>(
+            minWidth: 48,
+            initialValue: _rate,
+            decoration: ShadDecoration(
+              border: ShadBorder.none,
+            ),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _rate = value);
+              unawaited(_player.setRate(value));
+            },
+            selectedOptionBuilder: (_, value) => Text(
+              '${value}x',
+              style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+            ),
+            options: const [
+              ShadOption(value: 0.5, child: Text('0.5x')),
+              ShadOption(value: 0.75, child: Text('0.75x')),
+              ShadOption(value: 1.0, child: Text('1.0x')),
+              ShadOption(value: 1.25, child: Text('1.25x')),
+              ShadOption(value: 1.5, child: Text('1.5x')),
+              ShadOption(value: 2.0, child: Text('2.0x')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _controlButton({
+    required IconData icon,
+    required String tooltip,
+    required Future<void> Function() onPressed,
+  }) {
+    return ShadTooltip(
+      builder: (_) => Text(tooltip),
+      child: ShadButton.outline(
+        width: 32,
+        height: 32,
+        padding: EdgeInsets.zero,
+        onPressed: onPressed,
+        child: Icon(icon, size: 14),
       ),
     );
   }
 
   Widget _buildProgressBar() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-      child: StreamBuilder<Duration?>(
-        stream: _player.durationStream,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: StreamBuilder<Duration>(
+        stream: _player.stream.duration,
+        initialData: _player.state.duration,
         builder: (context, durationSnapshot) {
           final duration = durationSnapshot.data ?? Duration.zero;
           return StreamBuilder<Duration>(
-            stream: _player.positionStream,
+            stream: _player.stream.position,
+            initialData: _player.state.position,
             builder: (context, positionSnapshot) {
               final position = positionSnapshot.data ?? Duration.zero;
               final maxMs = duration.inMilliseconds.toDouble();
+              final value =
+                  (_dragPosition ?? position.inMilliseconds.toDouble())
+                      .clamp(0.0, maxMs > 0 ? maxMs : 1.0);
+              final cs = ShadTheme.of(context).colorScheme;
               return Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 4,
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 6,
+                  Material(
+                    color: Colors.transparent,
+                    child: SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 1,
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 3,
+                        ),
+                        activeTrackColor: cs.primary,
+                        inactiveTrackColor: cs.primary.withValues(alpha: 0.15),
+                        thumbColor: cs.primary,
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 12,
+                        ),
+                        overlayColor: cs.primary.withValues(alpha: 0.08),
                       ),
-                      overlayShape: const RoundSliderOverlayShape(
-                        overlayRadius: 14,
+                      child: Slider(
+                        value: value,
+                        min: 0,
+                        max: maxMs > 0 ? maxMs : 1,
+                        onChangeStart: maxMs > 0
+                            ? (next) => setState(() => _dragPosition = next)
+                            : null,
+                        onChanged: maxMs > 0
+                            ? (next) => setState(() => _dragPosition = next)
+                            : null,
+                        onChangeEnd: maxMs > 0
+                            ? (next) async {
+                                await _player.seek(
+                                  Duration(milliseconds: next.round()),
+                                );
+                                if (mounted) {
+                                  setState(() => _dragPosition = null);
+                                }
+                              }
+                            : null,
                       ),
-                    ),
-                    child: Slider(
-                      min: 0,
-                      max: maxMs > 0 ? maxMs : 1,
-                      value: position.inMilliseconds
-                          .toDouble()
-                          .clamp(0, maxMs > 0 ? maxMs : 1),
-                      onChanged: maxMs > 0
-                          ? (v) => _player.seek(
-                              Duration(milliseconds: v.toInt()),
-                            )
-                          : null,
                     ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          _formatDuration(position),
+                          _formatDuration(
+                            Duration(milliseconds: value.round()),
+                          ),
                           style: TextStyle(
-                            fontSize: 12,
-                            color: ShadTheme.of(context)
-                                .colorScheme
-                                .mutedForeground,
+                            fontSize: 11,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures(),
+                            ],
+                            color: cs.mutedForeground,
                           ),
                         ),
                         Text(
                           _formatDuration(duration),
                           style: TextStyle(
-                            fontSize: 12,
-                            color: ShadTheme.of(context)
-                                .colorScheme
-                                .mutedForeground,
+                            fontSize: 11,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures(),
+                            ],
+                            color: cs.mutedForeground,
                           ),
                         ),
                       ],
@@ -350,157 +479,97 @@ class _AudioPlayerDialogState extends ConsumerState<AudioPlayerDialog> {
     );
   }
 
-  Widget _buildControls(ShadColorScheme cs, bool compact) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // Previous
-          IconButton(
-            onPressed: _playlist.length > 1 ? _playPrevious : null,
-            icon: const Icon(Icons.skip_previous_rounded),
-            iconSize: 32,
-            color: cs.foreground,
-          ),
-          const SizedBox(width: 12),
-          // Play/Pause
-          StreamBuilder<PlayerState>(
-            stream: _player.playerStateStream,
-            builder: (context, snapshot) {
-              final playing = snapshot.data?.playing ?? false;
-              final processingState =
-                  snapshot.data?.processingState ?? ProcessingState.idle;
-              final isBuffering = processingState == ProcessingState.buffering ||
-                  processingState == ProcessingState.loading;
-              return SizedBox(
-                width: 64,
-                height: 64,
-                child: FilledButton(
-                  onPressed: _loading || _error != null
-                      ? null
-                      : () {
-                          if (playing) {
-                            _player.pause();
-                          } else {
-                            _player.play();
-                          }
-                        },
-                  style: FilledButton.styleFrom(
-                    shape: const CircleBorder(),
-                    padding: EdgeInsets.zero,
-                  ),
-                  child: isBuffering
-                      ? const SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: CircularProgressIndicator.adaptive(
-                            strokeWidth: 3,
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        )
-                      : Icon(
-                          playing
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                          size: 36,
-                          color: Colors.white,
-                        ),
-                ),
-              );
-            },
-          ),
-          const SizedBox(width: 12),
-          // Next
-          IconButton(
-            onPressed: _playlist.length > 1 ? _playNext : null,
-            icon: const Icon(Icons.skip_next_rounded),
-            iconSize: 32,
-            color: cs.foreground,
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildPlaylistSection(ShadColorScheme cs) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Divider(height: 1),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        ShadButton.ghost(
+          width: double.infinity,
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          onPressed: () => setState(() => _showPlaylist = !_showPlaylist),
           child: Row(
             children: [
-              Icon(LucideIcons.listMusic, size: 16, color: cs.mutedForeground),
+              Icon(LucideIcons.listMusic, size: 14, color: cs.mutedForeground),
               const SizedBox(width: 8),
               Text(
                 '播放列表 (${_playlist.length})',
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: cs.mutedForeground,
                 ),
               ),
               const Spacer(),
-              ShadButton.ghost(
-                size: ShadButtonSize.sm,
-                onPressed: () =>
-                    setState(() => _showPlaylist = !_showPlaylist),
-                child: Icon(
-                  _showPlaylist
-                      ? LucideIcons.chevronUp
-                      : LucideIcons.chevronDown,
-                  size: 16,
-                ),
+              Icon(
+                _showPlaylist
+                    ? LucideIcons.chevronUp
+                    : LucideIcons.chevronDown,
+                size: 14,
+                color: cs.mutedForeground,
               ),
             ],
           ),
         ),
         if (_showPlaylist)
           ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 200),
+            constraints: const BoxConstraints(maxHeight: 180),
             child: ListView.builder(
               shrinkWrap: true,
               itemCount: _playlist.length,
               itemBuilder: (context, index) {
                 final item = _playlist[index];
                 final isCurrent = index == _currentIndex;
-                return ListTile(
-                  dense: true,
-                  selected: isCurrent,
-                  selectedTileColor: cs.primary.withValues(alpha: 0.1),
-                  leading: isCurrent
-                      ? Icon(
-                          Icons.music_note_rounded,
-                          size: 20,
-                          color: cs.primary,
-                        )
-                      : Text(
-                          '${index + 1}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: cs.mutedForeground,
+                return Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => _open(item).then((_) => _player.play()),
+                    child: Container(
+                      height: 34,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      color: isCurrent
+                          ? cs.primary.withValues(alpha: 0.08)
+                          : null,
+                      child: Row(
+                        children: [
+                          if (isCurrent)
+                            Icon(
+                              LucideIcons.music2,
+                              size: 13,
+                              color: cs.primary,
+                            )
+                          else
+                            Text(
+                              '${index + 1}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: cs.mutedForeground,
+                              ),
+                            ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              item.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: isCurrent
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                                color: isCurrent ? cs.primary : cs.foreground,
+                              ),
+                            ),
                           ),
-                        ),
-                  title: Text(
-                    item.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight:
-                          isCurrent ? FontWeight.w600 : FontWeight.normal,
-                      color: isCurrent ? cs.primary : cs.foreground,
+                        ],
+                      ),
                     ),
                   ),
-                  onTap: () => _open(item).then((_) => _player.play()),
                 );
               },
             ),
           ),
-        const SizedBox(height: 4),
       ],
     );
   }
