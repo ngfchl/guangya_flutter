@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   FLUTTER_VERSION: '3.41.9'
@@ -26,8 +26,90 @@ env:
   RELEASE_DRAFT: ${{ startsWith(github.ref, 'refs/tags/') == false }}
 
 jobs:
+
+  changelog:
+    name: Generate changelog
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      body: ${{ steps.generate.outputs.body }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Generate release changelog
+        id: generate
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::Changelog context"
+          echo "event: ${GITHUB_EVENT_NAME}"
+          echo "ref: ${GITHUB_REF}"
+          echo "ref_name: ${GITHUB_REF_NAME}"
+          echo "sha: ${GITHUB_SHA}"
+          echo "::endgroup::"
+
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+            PREV_TAG=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || echo "")
+            if [ -z "$PREV_TAG" ]; then
+              RANGE="$CURRENT_TAG"
+            else
+              RANGE="$PREV_TAG..$CURRENT_TAG"
+            fi
+          else
+            CURRENT_TAG=""
+            PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -z "$PREV_TAG" ]; then
+              RANGE="HEAD"
+            else
+              RANGE="$PREV_TAG..HEAD"
+            fi
+          fi
+
+          echo "::group::Changelog range"
+          echo "current tag: ${CURRENT_TAG:-none}"
+          echo "previous tag: ${PREV_TAG:-none}"
+          echo "range: $RANGE"
+          echo "::endgroup::"
+
+          RAW_LOG=$(git log $RANGE --pretty=format:"%H|%s" --no-merges | grep -v -E '^.*\|(chore|chore:)' || true)
+
+          FEAT="" FIX="" DOCS="" REFACTOR="" PERF="" TEST="" UPDATE="" OTHER=""
+
+          while IFS='|' read -r HASH MSG; do
+            [ -z "$HASH" ] && continue
+            DISPLAY_MSG="${MSG//\"/}"
+            SHORT_HASH=$(echo "$HASH" | cut -c1-7)
+
+            if [[ "$MSG" =~ ^feat ]]; then FEAT+="\n- ${DISPLAY_MSG} (${SHORT_HASH})"
+            elif [[ "$MSG" =~ ^fix ]]; then FIX+="\n- ${DISPLAY_MSG} (${SHORT_HASH})"
+            elif [[ "$MSG" =~ ^docs ]]; then DOCS+="\n- ${DISPLAY_MSG} (${SHORT_HASH})"
+            elif [[ "$MSG" =~ ^refactor ]]; then REFACTOR+="\n- ${DISPLAY_MSG} (${SHORT_HASH})"
+            elif [[ "$MSG" =~ ^perf ]]; then PERF+="\n- ${DISPLAY_MSG} (${SHORT_HASH})"
+            elif [[ "$MSG" =~ ^test ]]; then TEST+="\n- ${DISPLAY_MSG} (${SHORT_HASH})"
+            elif [[ "$MSG" =~ ^update ]]; then UPDATE+="\n- ${DISPLAY_MSG} (${SHORT_HASH})"
+            else OTHER+="\n- ${DISPLAY_MSG} (${SHORT_HASH})"
+            fi
+          done <<< "$RAW_LOG"
+
+          FINAL_LOG=""
+          [ -n "$FEAT" ] && FINAL_LOG+="\n### ✨ 新增功能\n${FEAT}\n"
+          [ -n "$FIX" ] && FINAL_LOG+="\n### 🐛 修复问题\n${FIX}\n"
+          [ -n "$DOCS" ] && FINAL_LOG+="\n### 📖 文档更新\n${DOCS}\n"
+          [ -n "$REFACTOR" ] && FINAL_LOG+="\n### 🔨 重构\n${REFACTOR}\n"
+          [ -n "$PERF" ] && FINAL_LOG+="\n### ⚡ 性能优化\n${PERF}\n"
+          [ -n "$TEST" ] && FINAL_LOG+="\n### 🧪 测试相关\n${TEST}\n"
+          [ -n "$UPDATE" ] && FINAL_LOG+="\n### 🔄 更新\n${UPDATE}\n"
+          [ -n "$OTHER" ] && FINAL_LOG+="\n### 📌 其他变更\n${OTHER}\n"
+
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo -e "$FINAL_LOG" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
   android:
     name: Android arm64 APK
+    needs: changelog
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
       (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'android'))
@@ -116,9 +198,13 @@ jobs:
           name: ${{ env.RELEASE_NAME }}
           draft: ${{ env.RELEASE_DRAFT }}
           prerelease: false
+          body: |
+            ## 📌 更新日志
+            ${{ needs.changelog.outputs.body }}
 
   ios:
     name: iOS unsigned IPA
+    needs: changelog
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
       (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'ios'))
@@ -179,9 +265,13 @@ jobs:
           name: ${{ env.RELEASE_NAME }}
           draft: ${{ env.RELEASE_DRAFT }}
           prerelease: false
+          body: |
+            ## 📌 更新日志
+            ${{ needs.changelog.outputs.body }}
 
   macos_intel:
     name: macOS Intel PKG
+    needs: changelog
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
       (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'macos_intel'))
@@ -235,10 +325,49 @@ jobs:
           fi
           codesign --verify --deep --strict --verbose=2 "$APP"
           mkdir -p dist/macos
+
+          # --- preinstall: 安装前关闭旧版本 ---
+          PKG_SCRIPTS=$(mktemp -d "$RUNNER_TEMP/guangya-scripts.XXXXXX")
+          cat > "$PKG_SCRIPTS/preinstall" <<'PREINSTALLEOF'
+          #!/bin/bash
+          set -e
+          APP_EXECUTABLE="/Applications/小黄鸭.app/Contents/MacOS/小黄鸭"
+          APP_PROCESS_NAME="小黄鸭"
+          PIDS=""
+          while IFS= read -r pid; do
+            [ -n "$pid" ] || continue
+            running_command="$(ps -ww -p "$pid" -o command= 2>/dev/null || true)"
+            case "$running_command" in
+              "$APP_EXECUTABLE"|"$APP_EXECUTABLE" *)
+                PIDS="$PIDS $pid"
+                ;;
+            esac
+          done < <(pgrep -x "$APP_PROCESS_NAME" 2>/dev/null || true)
+          [ -n "$PIDS" ] || exit 0
+          kill -TERM $PIDS 2>/dev/null || true
+          for _ in $(seq 1 15); do
+            still_running=""
+            for pid in $PIDS; do
+              if kill -0 "$pid" 2>/dev/null; then
+                still_running="$still_running $pid"
+              fi
+            done
+            [ -n "$still_running" ] || exit 0
+            sleep 1
+          done
+          kill -KILL $PIDS 2>/dev/null || true
+          exit 0
+          PREINSTALLEOF
+          chmod 755 "$PKG_SCRIPTS/preinstall"
+          echo "::group::macOS pkg preinstall"
+          sed -n '1,80p' "$PKG_SCRIPTS/preinstall"
+          echo "::endgroup::"
+
           ditto --norsrc --noextattr "$APP" "$STAGED_APP"
           codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
           pkgbuild \
             --component "$STAGED_APP" \
+            --scripts "$PKG_SCRIPTS" \
             --install-location /Applications \
             --identifier com.ptools.guangyaFlutter.pkg \
             --version "${{ steps.version.outputs.name }}" \
@@ -259,9 +388,13 @@ jobs:
           name: ${{ env.RELEASE_NAME }}
           draft: ${{ env.RELEASE_DRAFT }}
           prerelease: false
+          body: |
+            ## 📌 更新日志
+            ${{ needs.changelog.outputs.body }}
 
   macos_arm:
     name: macOS Apple Silicon PKG
+    needs: changelog
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
       (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'macos_arm'))
@@ -315,10 +448,49 @@ jobs:
           fi
           codesign --verify --deep --strict --verbose=2 "$APP"
           mkdir -p dist/macos
+
+          # --- preinstall: 安装前关闭旧版本 ---
+          PKG_SCRIPTS=$(mktemp -d "$RUNNER_TEMP/guangya-scripts.XXXXXX")
+          cat > "$PKG_SCRIPTS/preinstall" <<'PREINSTALLEOF'
+          #!/bin/bash
+          set -e
+          APP_EXECUTABLE="/Applications/小黄鸭.app/Contents/MacOS/小黄鸭"
+          APP_PROCESS_NAME="小黄鸭"
+          PIDS=""
+          while IFS= read -r pid; do
+            [ -n "$pid" ] || continue
+            running_command="$(ps -ww -p "$pid" -o command= 2>/dev/null || true)"
+            case "$running_command" in
+              "$APP_EXECUTABLE"|"$APP_EXECUTABLE" *)
+                PIDS="$PIDS $pid"
+                ;;
+            esac
+          done < <(pgrep -x "$APP_PROCESS_NAME" 2>/dev/null || true)
+          [ -n "$PIDS" ] || exit 0
+          kill -TERM $PIDS 2>/dev/null || true
+          for _ in $(seq 1 15); do
+            still_running=""
+            for pid in $PIDS; do
+              if kill -0 "$pid" 2>/dev/null; then
+                still_running="$still_running $pid"
+              fi
+            done
+            [ -n "$still_running" ] || exit 0
+            sleep 1
+          done
+          kill -KILL $PIDS 2>/dev/null || true
+          exit 0
+          PREINSTALLEOF
+          chmod 755 "$PKG_SCRIPTS/preinstall"
+          echo "::group::macOS pkg preinstall"
+          sed -n '1,80p' "$PKG_SCRIPTS/preinstall"
+          echo "::endgroup::"
+
           ditto --norsrc --noextattr "$APP" "$STAGED_APP"
           codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
           pkgbuild \
             --component "$STAGED_APP" \
+            --scripts "$PKG_SCRIPTS" \
             --install-location /Applications \
             --identifier com.ptools.guangyaFlutter.pkg \
             --version "${{ steps.version.outputs.name }}" \
@@ -339,9 +511,13 @@ jobs:
           name: ${{ env.RELEASE_NAME }}
           draft: ${{ env.RELEASE_DRAFT }}
           prerelease: false
+          body: |
+            ## 📌 更新日志
+            ${{ needs.changelog.outputs.body }}
 
   windows:
     name: Windows x64 installers
+    needs: changelog
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
       (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'windows'))
@@ -459,3 +635,6 @@ jobs:
           name: ${{ env.RELEASE_NAME }}
           draft: ${{ env.RELEASE_DRAFT }}
           prerelease: false
+          body: |
+            ## 📌 更新日志
+            ${{ needs.changelog.outputs.body }}
