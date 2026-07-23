@@ -21,6 +21,7 @@ import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/app_dialog.dart';
+import '../widgets/audio_player_dialog.dart';
 import '../widgets/breadcrumb_bar.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/confirm_dialog.dart';
@@ -258,7 +259,7 @@ void _previewCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
   if (!canPreviewCloudFile(file)) return;
   final notifier = ref.read(fileProvider.notifier);
   unawaited(
-    showFilePreviewDialog(
+    showCloudFilePreview(
       context: context,
       file: file,
       resolveUrl: () => notifier.previewURL(file),
