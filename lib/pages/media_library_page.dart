@@ -3606,11 +3606,20 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           decoration: ShadDecoration.none,
           shadows: const [],
           anchor: ShadGlobalAnchor(
-            Offset((size.width * 0.5).clamp(280.0, size.width - 280.0), 96),
+            Offset(
+              size.width <= 560
+                  ? (size.width / 2).clamp(0.0, size.width)
+                  : (size.width * 0.5).clamp(280.0, size.width - 280.0),
+              96,
+            ),
           ),
           popover: (_) => SizedBox(
-            width: (size.width - 32).clamp(360.0, 820.0).toDouble(),
-            height: (size.height - 140).clamp(420.0, 680.0).toDouble(),
+            width: size.width <= 392
+                ? (size.width - 16)
+                : (size.width - 32).clamp(360.0, 820.0).toDouble(),
+            height: size.height <= 560
+                ? (size.height - 80)
+                : (size.height - 140).clamp(420.0, 680.0).toDouble(),
             child: _ManualTMDBMatchDialog(
               initialQuery: initialQuery,
               initialResults: initialResults,
