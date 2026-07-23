@@ -25,8 +25,12 @@ class FileIcon extends StatelessWidget {
       );
     }
 
-    final iconData = _getIconForFileType(file.fileType);
-    final color = _getColorForFileType(file.fileType);
+    final iconData = file.isAudio
+        ? LucideIcons.music
+        : _getIconForFileType(file.fileType);
+    final color = file.isAudio
+        ? const Color(0xFFF59E0B)
+        : _getColorForFileType(file.fileType);
 
     return Icon(iconData, size: size, color: color);
   }
