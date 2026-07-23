@@ -215,28 +215,64 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<void> sendVerificationCode() async {
     state = state.copyWith(clearError: true);
     final cleanPhone = state.phoneNumber.replaceAll(RegExp(r'[^\d]'), '');
+    AppLogger.info('SMS', '发送验证码 — 原始手机号: ${state.phoneNumber}, 清洗后: $cleanPhone');
     if (cleanPhone.length < 8) {
       state = state.copyWith(errorMessage: '请输入有效的手机号');
       return;
     }
 
     try {
+      // Step 1: 初始化验证码（获取 captcha_token）
+      AppLogger.info('SMS', '[Step 1] loginSMSInit 请求中…');
       final initResult = await _api.loginSMSInit(cleanPhone);
+      AppLogger.info('SMS', '[Step 1] loginSMSInit 响应: $initResult');
       final captcha = AuthState._findStringDeep(initResult, [
         'captcha_token',
         'captchaToken',
       ]);
       if (captcha == null) {
-        if (AuthState._findStringDeep(initResult, ['url', 'verify_url']) !=
-            null) {
+        final verifyUrl = AuthState._findStringDeep(initResult, [
+          'url',
+          'verify_url',
+        ]);
+        if (verifyUrl != null) {
+          AppLogger.warning('SMS', '[Step 1] 需要完成验证码验证: $verifyUrl');
           throw Exception('需要完成验证码验证后再发送短信');
         }
+        AppLogger.error('SMS', '[Step 1] 响应中未找到 captcha_token', error: initResult);
         throw Exception('获取验证码令牌失败');
       }
+      AppLogger.info('SMS', '[Step 1] captcha_token: ${captcha.substring(0, captcha.length > 20 ? 20 : captcha.length)}…');
       state = state.copyWith(captchaToken: captcha);
-      await _api.loginSMSSend(cleanPhone, captchaToken: captcha);
+
+      // Step 2: 发送短信验证码
+      AppLogger.info('SMS', '[Step 2] loginSMSSend 请求中… phone=$cleanPhone');
+      final sendResult = await _api.loginSMSSend(
+        cleanPhone,
+        captchaToken: captcha,
+      );
+      AppLogger.info('SMS', '[Step 2] loginSMSSend 响应: $sendResult');
+
+      // Step 3: 提取 verification_id
+      final vID = AuthState._findStringDeep(sendResult, [
+        'verification_id',
+        'verificationId',
+        'id',
+      ]);
+      if (vID != null && vID.isNotEmpty) {
+        AppLogger.info('SMS', '[Step 3] verification_id: $vID');
+        state = state.copyWith(verificationID: vID);
+      } else {
+        AppLogger.error('SMS', '[Step 3] 响应中未找到 verification_id', error: sendResult);
+        throw Exception('获取 verification_id 失败，请重试');
+      }
       _startCountdown();
+      AppLogger.info('SMS', '验证码发送成功，开始倒计时');
+    } on ApiException catch (e) {
+      AppLogger.error('SMS', '发送验证码失败 (API)', error: '${e.status} ${e.message}');
+      state = state.copyWith(errorMessage: e.message);
     } catch (e) {
+      AppLogger.error('SMS', '发送验证码失败', error: e);
       state = state.copyWith(errorMessage: e.toString());
     }
   }
@@ -257,28 +293,56 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> verifySMSCode() async {
     state = state.copyWith(clearError: true);
+    AppLogger.info('SMS', '验证登录 — verificationID: ${state.verificationID.isEmpty ? "(空)" : state.verificationID}, code: ${state.verificationCode}, captchaToken: ${state.captchaToken.isEmpty ? "(空)" : "${state.captchaToken.substring(0, state.captchaToken.length > 15 ? 15 : state.captchaToken.length)}…"}');
+    if (state.verificationID.isEmpty) {
+      state = state.copyWith(errorMessage: '请先发送验证码');
+      return;
+    }
+    if (state.verificationCode.trim().isEmpty) {
+      state = state.copyWith(errorMessage: '请输入验证码');
+      return;
+    }
     try {
+      // Step 4: 验证短信验证码
+      AppLogger.info('SMS', '[Step 4] loginSMSVerify 请求中… verificationID=${state.verificationID}, code=${state.verificationCode}');
       final verifyResult = await _api.loginSMSVerify(
         state.verificationID,
         state.verificationCode,
       );
+      AppLogger.info('SMS', '[Step 4] loginSMSVerify 响应: $verifyResult');
       final vToken = AuthState._findStringDeep(verifyResult, [
         'verification_token',
         'verificationToken',
       ]);
-      final code = AuthState._findStringDeep(verifyResult, ['code']);
-      if (vToken == null || code == null) throw Exception('验证码验证失败');
+      if (vToken == null) {
+        AppLogger.error('SMS', '[Step 4] 响应中未找到 verification_token', error: verifyResult);
+        throw Exception('验证码验证失败：服务端未返回 verification_token');
+      }
+      AppLogger.info('SMS', '[Step 4] verification_token: ${vToken.substring(0, vToken.length > 20 ? 20 : vToken.length)}…');
 
-      await _api.loginSMSSignIn(
-        code: code,
+      // Step 5: 使用验证令牌登录
+      final username = state.phoneNumber.trim();
+      final signinCode = state.verificationCode.trim();
+      AppLogger.info('SMS', '[Step 5] loginSMSSignIn 请求中… code=$signinCode, username=$username');
+      final signinResult = await _api.loginSMSSignIn(
+        code: signinCode,
         verificationToken: vToken,
-        username: state.phoneNumber.replaceAll(RegExp(r'[^\d]'), ''),
+        username: username,
         captchaToken: state.captchaToken,
       );
+      AppLogger.info('SMS', '[Step 5] loginSMSSignIn 响应: hasAccessToken=${signinResult.containsKey("access_token") || signinResult.containsKey("accessToken")}');
+
+      // Step 6: 登录成功
       state = state.copyWith(isSignedIn: true);
       await _saveTokens();
+      AppLogger.info('SMS', '[Step 6] 登录成功，正在加载账户信息…');
       await loadAccount();
+      AppLogger.info('SMS', '[Step 6] 登录流程完成');
+    } on ApiException catch (e) {
+      AppLogger.error('SMS', '验证登录失败 (API ${e.status})', error: e.message);
+      state = state.copyWith(errorMessage: e.message);
     } catch (e) {
+      AppLogger.error('SMS', '验证登录失败', error: e);
       state = state.copyWith(errorMessage: e.toString());
     }
   }
