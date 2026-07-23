@@ -30,6 +30,8 @@ class StorageKeys {
   static const String defaultFilePageSize = 'guangya.defaultFilePageSize';
   static const String mediaLibraryPageSize = 'guangya.mediaLibraryPageSize';
   static const String mediaHomePreviewCount = 'guangya.mediaHomePreviewCount';
+  static const String globalMediaScanMinimumSizeMB =
+      'guangya.globalMediaScanMinimumSizeMB';
   static const String fastTransferSession = 'guangya.fastTransferSession';
   static const String mediaScanHistory = 'guangya.mediaScanHistory';
   static const String mediaScanTaskHistory = 'guangya.mediaScanTaskHistory';

@@ -27,6 +27,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   final _httpProxyHostController = TextEditingController();
   final _httpProxyPortController = TextEditingController();
   final _scanConcurrencyController = TextEditingController();
+  final _globalScanMinimumSizeController = TextEditingController();
   final _transferConcurrencyController = TextEditingController();
   final _cacheTTLController = TextEditingController();
   final _cloudIndexConcurrencyController = TextEditingController();
@@ -47,6 +48,9 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     _httpProxyPortController.text = StorageManager.networkProxyPort;
     _scanConcurrencyController.text =
         StorageManager.get<String>(StorageKeys.mediaScanConcurrency) ?? '3';
+    _globalScanMinimumSizeController.text =
+        StorageManager.get<String>(StorageKeys.globalMediaScanMinimumSizeMB) ??
+        '500';
     _transferConcurrencyController.text =
         StorageManager.get<String>(StorageKeys.fastTransferConcurrency) ?? '3';
     _cacheTTLController.text =
@@ -71,6 +75,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     _httpProxyHostController.dispose();
     _httpProxyPortController.dispose();
     _scanConcurrencyController.dispose();
+    _globalScanMinimumSizeController.dispose();
     _transferConcurrencyController.dispose();
     _cacheTTLController.dispose();
     _cloudIndexConcurrencyController.dispose();
@@ -200,6 +205,14 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                       icon: Icons.memory_rounded,
                       label: '媒体扫描并发',
                       child: _numberInput(_scanConcurrencyController),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.video_file_rounded,
+                      label: '全局刮削阈值 MB',
+                      child: _numberInput(
+                        _globalScanMinimumSizeController,
+                        placeholder: '500',
+                      ),
                     ),
                     _SettingsRow(
                       icon: Icons.bolt_rounded,
@@ -379,6 +392,10 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       StorageManager.set(
         StorageKeys.mediaScanConcurrency,
         _scanConcurrencyController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.globalMediaScanMinimumSizeMB,
+        _globalScanMinimumSizeController.text.trim(),
       ),
       StorageManager.set(
         StorageKeys.fastTransferConcurrency,
