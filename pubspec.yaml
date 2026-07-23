@@ -48,8 +48,10 @@ dependencies:
   media_kit: ^1.2.4
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.6
+  just_audio: ^0.9.40
   pinyin: ^3.3.0
   flutter_markdown_plus: ^1.0.12
+  universal_file_viewer: ^0.1.4
 
 dev_dependencies:
   flutter_test:

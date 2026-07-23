@@ -17,6 +17,7 @@ import '../providers/file_provider.dart';
 import '../providers/watch_history_provider.dart';
 import 'app_dialog.dart';
 import 'app_loading_indicator.dart';
+import 'audio_player_dialog.dart';
 import 'confirm_dialog.dart';
 
 bool get _isDesktop =>
@@ -137,6 +138,13 @@ Future<void> showMediaPlayerDialog(
   if (_requiresExternalPlayer(file)) {
     AppLogger.info('Player', '当前格式使用外部播放器：${file.name}');
     await openExternalPlayer();
+    return;
+  }
+
+  // 音频文件使用 just_audio 播放器
+  if (file.isAudio) {
+    AppLogger.info('AudioPlayer', '打开音频播放器：${file.name}');
+    await showAudioPlayerDialog(context, file, episodeCandidates: episodeCandidates);
     return;
   }
 
