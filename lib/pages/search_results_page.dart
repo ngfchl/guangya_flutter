@@ -12,6 +12,7 @@ import '../providers/media_library_provider.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/file_list_tile.dart';
 import '../widgets/app_loading_indicator.dart';
+import '../widgets/file_preview_dialog.dart';
 import '../widgets/share_link_dialog.dart';
 import 'media_library_page.dart';
 
@@ -391,6 +392,17 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                           onSelect: () => _selectFile(files, file),
                           onOpen: () => unawaited(widget.onOpenLocation(file)),
                           openLabel: file.isDirectory ? '打开文件夹' : '打开所在文件夹',
+                          onPreview: canPreviewCloudFile(file)
+                              ? () => unawaited(
+                                  showFilePreviewDialog(
+                                    context: context,
+                                    file: file,
+                                    resolveUrl: () => notifier.previewURL(file),
+                                    onDownload: () =>
+                                        notifier.downloadFile(file),
+                                  ),
+                                )
+                              : null,
                           onRenameConfirm: (name) async {
                             final renamed = await notifier.renameFile(
                               file,

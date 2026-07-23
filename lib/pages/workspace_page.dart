@@ -28,6 +28,7 @@ import '../widgets/file_list_tile.dart';
 import '../widgets/file_detail_dialog.dart';
 import '../widgets/media_player_dialog.dart';
 import '../widgets/file_icon.dart';
+import '../widgets/file_preview_dialog.dart';
 import '../widgets/share_link_dialog.dart';
 import '../widgets/share_list_tile.dart';
 import '../widgets/share_qr_scanner_dialog.dart';
@@ -232,6 +233,10 @@ class _FolderMoveTargetState extends State<_FolderMoveTarget> {
 }
 
 void _openCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
+  if (canPreviewCloudFile(file)) {
+    _previewCloudFile(context, ref, file);
+    return;
+  }
   if (file.isPlayableVideo) {
     unawaited(showMediaPlayerDialog(context, file));
     return;
@@ -247,6 +252,19 @@ void _openCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
     return;
   }
   ref.read(fileProvider.notifier).downloadFile(file);
+}
+
+void _previewCloudFile(BuildContext context, WidgetRef ref, CloudFile file) {
+  if (!canPreviewCloudFile(file)) return;
+  final notifier = ref.read(fileProvider.notifier);
+  unawaited(
+    showFilePreviewDialog(
+      context: context,
+      file: file,
+      resolveUrl: () => notifier.previewURL(file),
+      onDownload: () => notifier.downloadFile(file),
+    ),
+  );
 }
 
 class _CloudFolderDestination {
@@ -3824,6 +3842,9 @@ class _PrimaryFilePane extends ConsumerWidget {
               onOpen: file.isDirectory
                   ? () => notifier.navigateToFolder(file)
                   : () => _openCloudFile(context, ref, file),
+              onPreview: canPreviewCloudFile(file)
+                  ? () => _previewCloudFile(context, ref, file)
+                  : null,
               onRenameConfirm: (name) async {
                 final renamed = await notifier.renameFile(file, name);
                 if (renamed) {
@@ -5825,6 +5846,9 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               isSelected: selected,
               onSelect: () => _selectWithModifiers(file),
               onOpen: () => _open(file),
+              onPreview: canPreviewCloudFile(file)
+                  ? () => _previewCloudFile(context, ref, file)
+                  : null,
               onCopy: () =>
                   ref.read(fileProvider.notifier).copyToClipboard([file]),
               onCut: () =>

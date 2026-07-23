@@ -1186,11 +1186,13 @@ class FileNotifier extends StateNotifier<FileState> {
         ClipboardData(
           text: jsonEncode({
             'files': entries
-                .map((entry) => {
-                      'path': entry.path,
-                      'size': entry.size,
-                      'gcid': entry.gcid,
-                    })
+                .map(
+                  (entry) => {
+                    'path': entry.path,
+                    'size': entry.size,
+                    'gcid': entry.gcid,
+                  },
+                )
                 .toList(),
           }),
         ),
@@ -1294,6 +1296,11 @@ class FileNotifier extends StateNotifier<FileState> {
       preparingMessage: '正在准备下载…',
       completedMessage: '下载链接已交给系统处理',
     );
+  }
+
+  Future<Uri> previewURL(CloudFile file) async {
+    if (_api == null) throw StateError('云盘接口尚未初始化');
+    return _resolveOpenUrl(file);
   }
 
   Future<void> playFile(CloudFile file) async {

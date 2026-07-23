@@ -12,6 +12,7 @@ class FileListTile extends StatefulWidget {
   final VoidCallback? onSelect;
   final VoidCallback? onOpen;
   final String openLabel;
+  final VoidCallback? onPreview;
   final VoidCallback? onRename;
   final Future<void> Function(String newName)? onRenameConfirm;
   final VoidCallback? onCopy;
@@ -32,6 +33,7 @@ class FileListTile extends StatefulWidget {
     this.onSelect,
     this.onOpen,
     this.openLabel = '打开',
+    this.onPreview,
     this.onRename,
     this.onRenameConfirm,
     this.onCopy,
@@ -166,6 +168,12 @@ class _FileListTileState extends State<FileListTile> {
               trailing: const Icon(LucideIcons.chevronRight),
               onPressed: widget.onOpen,
               child: Text(widget.openLabel),
+            ),
+          if (widget.onPreview != null)
+            ShadContextMenuItem.inset(
+              leading: const Icon(LucideIcons.eye, size: 16),
+              onPressed: widget.onPreview,
+              child: const Text('预览'),
             ),
           if (widget.onRename != null || widget.onRenameConfirm != null)
             ShadContextMenuItem.inset(
