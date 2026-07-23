@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:dio/dio.dart';
 
+import '../logging/app_logger.dart';
 import '../storage/storage_manager.dart';
 import 'dio_client.dart';
 import 'http_error.dart';
@@ -37,6 +38,22 @@ class Http {
         cancelToken: cancelToken,
         options: mergedOptions,
       );
+      // account API 用 validateStatus: (_) => true，需要手动检查 HTTP 状态码
+      final statusCode = res.statusCode ?? 0;
+      if (statusCode < 200 || statusCode >= 300) {
+        final respData = res.data;
+        String message = '请求失败 ($statusCode)';
+        if (respData is Map) {
+          final extracted = extractHttpMessage(respData);
+          if (extracted != null && extracted.isNotEmpty) message = extracted;
+        } else if (respData is String && respData.isNotEmpty) {
+          message = respData;
+        }
+        if (useAccountDio) {
+          AppLogger.warning('HTTP', 'Account API 非 2xx: $method $path → $statusCode | body: ${respData is Map ? respData : respData?.toString().substring(0, (respData?.toString().length ?? 0) > 500 ? 500 : (respData?.toString().length ?? 0))}');
+        }
+        throw ApiException(status: statusCode, message: message);
+      }
       return res.data as T;
     } on DioException catch (e) {
       // 将业务错误信息包装为 ApiException
@@ -145,6 +162,7 @@ class Http {
   static Map<String, String> _accountHeaders() {
     final deviceID = _getDeviceID();
     return {
+      'accept': '*/*',
       'x-client-id': 'aMe-8VSlkrbQXpUR',
       'x-client-version': '0.0.1',
       'x-device-id': deviceID,
