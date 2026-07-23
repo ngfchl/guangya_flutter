@@ -394,7 +394,7 @@ class _FileSearchResultsPageState extends ConsumerState<FileSearchResultsPage> {
                           openLabel: file.isDirectory ? '打开文件夹' : '打开所在文件夹',
                           onPreview: canPreviewCloudFile(file)
                               ? () => unawaited(
-                                  showFilePreviewDialog(
+                                  showCloudFilePreview(
                                     context: context,
                                     file: file,
                                     resolveUrl: () => notifier.previewURL(file),
