@@ -33,6 +33,7 @@ import '../widgets/share_list_tile.dart';
 import '../widgets/share_qr_scanner_dialog.dart';
 import '../widgets/share_restore_dialog.dart';
 import '../widgets/side_panel.dart';
+import '../widgets/window_controls.dart';
 import '../widgets/sort_menu.dart';
 import 'media_library_page.dart';
 import 'app_upgrade_page.dart';
@@ -52,6 +53,11 @@ bool get _isMobilePlatform => switch (defaultTargetPlatform) {
   TargetPlatform.android || TargetPlatform.iOS => true,
   _ => false,
 };
+
+bool get _isDesktopWindow =>
+    Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+
+double get _sidebarWindowControlInset => Platform.isMacOS ? 46 : 24;
 
 class _DraggedCloudFiles {
   final List<CloudFile> files;
@@ -2478,6 +2484,13 @@ class _CloudSidebar extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (showBrand) ...[
+              if (!Platform.isMacOS)
+                const Padding(
+                  padding: EdgeInsets.only(left: 2, bottom: 8),
+                  child: WindowControls(),
+                ),
+              if (_isDesktopWindow)
+                SizedBox(height: _sidebarWindowControlInset),
               _SidebarBrand(
                 icon: Icons.cloud_sync_rounded,
                 title: '光鸭云盘',
@@ -2606,6 +2619,13 @@ class _MediaSidebar extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (showBrand) ...[
+              if (!Platform.isMacOS)
+                const Padding(
+                  padding: EdgeInsets.only(left: 2, bottom: 8),
+                  child: WindowControls(),
+                ),
+              if (_isDesktopWindow)
+                SizedBox(height: _sidebarWindowControlInset),
               _SidebarBrand(
                 icon: Icons.play_circle_fill_rounded,
                 title: '光鸭影视',
