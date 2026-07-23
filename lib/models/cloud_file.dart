@@ -28,6 +28,24 @@ class CloudFile {
     'ogv',
   };
 
+  static const supportedAudioExtensions = {
+    'mp3',
+    'm4a',
+    'aac',
+    'flac',
+    'wav',
+    'ogg',
+    'oga',
+    'opus',
+    'wma',
+    'ape',
+    'alac',
+    'amr',
+    'aiff',
+    'aif',
+    'mka',
+  };
+
   final String id;
   final String name;
   final bool isDirectory;
@@ -85,7 +103,13 @@ class CloudFile {
   bool get isPlayableVideo => isVideo && !isIso;
 
   bool get isImage => fileType == 1;
-  bool get isAudio => fileType == 3;
+  bool get isAudio {
+    if (isDirectory) return false;
+    if (fileType == 3) return true;
+    final ext = name.split('.').last.toLowerCase();
+    return supportedAudioExtensions.contains(ext);
+  }
+
   bool get isDocument => fileType == 4;
   bool get isShareRecord => fileType == 8;
   String get shareKindName => shareIsDirectory == true ? '文件夹分享' : '文件分享';
@@ -93,6 +117,7 @@ class CloudFile {
   String get icon {
     if (isDirectory) return 'folder';
     if (isVideo) return 'movie';
+    if (isAudio) return 'music_note';
     switch (fileType) {
       case 1:
         return 'image';
@@ -115,15 +140,8 @@ class CloudFile {
   String get typeName {
     if (isDirectory) return '文件夹';
     if (isVideo) return '视频';
-    const names = {
-      1: '图片',
-      2: '视频',
-      3: '音频',
-      4: '文档',
-      5: '压缩包',
-      8: '分享',
-      9: 'BT种子',
-    };
+    if (isAudio) return '音频';
+    const names = {1: '图片', 2: '视频', 4: '文档', 5: '压缩包', 8: '分享', 9: 'BT种子'};
     return names[fileType] ?? '文件';
   }
 
