@@ -941,6 +941,7 @@ class MediaScanMenu extends StatefulWidget {
   final bool disabled;
   final VoidCallback onScanUnrecognized;
   final VoidCallback onForceAll;
+  final VoidCallback? onGlobalScan;
   final ShadPopoverController? controller;
 
   const MediaScanMenu({
@@ -950,6 +951,7 @@ class MediaScanMenu extends StatefulWidget {
     required this.disabled,
     required this.onScanUnrecognized,
     required this.onForceAll,
+    this.onGlobalScan,
     this.controller,
   });
 
@@ -969,6 +971,7 @@ class MediaScanMenuState extends State<MediaScanMenu> {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    final triggerDisabled = widget.disabled && widget.onGlobalScan == null;
     final trigger = widget.iconOnly
         ? ShadTooltip(
             builder: (_) => const Text('重新扫描'),
@@ -976,13 +979,13 @@ class MediaScanMenuState extends State<MediaScanMenu> {
               width: 38,
               height: 36,
               padding: EdgeInsets.zero,
-              onPressed: widget.disabled ? null : _controller.toggle,
+              onPressed: triggerDisabled ? null : _controller.toggle,
               child: const Icon(Icons.refresh_rounded, size: 18),
             ),
           )
         : ShadButton.ghost(
             size: ShadButtonSize.sm,
-            onPressed: widget.disabled ? null : _controller.toggle,
+            onPressed: triggerDisabled ? null : _controller.toggle,
             leading: const Icon(Icons.refresh_rounded, size: 16),
             trailing: const Icon(Icons.keyboard_arrow_down_rounded, size: 15),
             child: Text(widget.compact ? '扫描' : '重新扫描'),
@@ -1012,15 +1015,24 @@ class MediaScanMenuState extends State<MediaScanMenu> {
                 icon: Icons.filter_alt_outlined,
                 title: '仅扫描未识别',
                 description: '不刷新目录，只识别媒体库中尚未匹配的资源',
-                onPressed: widget.onScanUnrecognized,
+                onPressed: widget.disabled ? null : widget.onScanUnrecognized,
               ),
               const SizedBox(height: 3),
               _option(
                 icon: Icons.restart_alt_rounded,
                 title: '强制全部重新识别',
                 description: '刷新当前媒体库目录并重新识别全部资源',
-                onPressed: widget.onForceAll,
+                onPressed: widget.disabled ? null : widget.onForceAll,
               ),
+              if (widget.onGlobalScan != null) ...[
+                const SizedBox(height: 3),
+                _option(
+                  icon: Icons.travel_explore_rounded,
+                  title: '全局刮削',
+                  description: '无需媒体库，扫描全盘索引中的大视频文件',
+                  onPressed: widget.onGlobalScan,
+                ),
+              ],
             ],
           ),
         ),
@@ -1033,7 +1045,7 @@ class MediaScanMenuState extends State<MediaScanMenu> {
     required IconData icon,
     required String title,
     required String description,
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
   }) {
     final cs = ShadTheme.of(context).colorScheme;
     return ShadButton.ghost(
@@ -1041,11 +1053,17 @@ class MediaScanMenuState extends State<MediaScanMenu> {
       height: 58,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       mainAxisAlignment: MainAxisAlignment.start,
-      leading: Icon(icon, size: 18, color: cs.primary),
-      onPressed: () {
-        _controller.hide();
-        onPressed();
-      },
+      leading: Icon(
+        icon,
+        size: 18,
+        color: onPressed == null ? cs.mutedForeground : cs.primary,
+      ),
+      onPressed: onPressed == null
+          ? null
+          : () {
+              _controller.hide();
+              onPressed();
+            },
       child: SizedBox(
         width: 218,
         child: Column(
@@ -2015,6 +2033,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               onForceAll: () => ref
                   .read(mediaLibraryProvider.notifier)
                   .rescanSelectedLibrary(mode: MediaLibraryScanMode.forceAll),
+              onGlobalScan: () =>
+                  ref.read(mediaLibraryProvider.notifier).scanGlobalLibrary(),
             ),
     ];
     final content = compact

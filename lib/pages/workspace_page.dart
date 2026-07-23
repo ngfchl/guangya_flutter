@@ -737,132 +737,133 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
         }
       },
       child: Scaffold(
-      backgroundColor: Colors.transparent,
-      body: OS26Surface(
-        child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxWidth < 720;
-              final topBar = _TopBar(
-                mode: _mode,
-                compact: compact,
-                searchController: _searchController,
-                searchFocusNode: _searchFocusNode,
-                searchOpen: _searchOpen,
-                onSearch: _submitSearch,
-                onToggleSearch: _toggleSearch,
-                onScanShare: _scanShareQRCode,
-                onPasteShare: _readingClipboard ? null : _pasteShareLink,
-                onOpenMenu: () => _showMobileMenu(context),
-                mediaState: media,
-                mediaFilter: _mediaBrowseFilter,
-                mediaLibrarySection: _mediaLibrarySection,
-                mediaHomeSelected: _mediaHomeSelected,
-                onMediaLibrarySectionChanged: _changeMediaLibrarySection,
-                onMediaSortChanged: (sort) => unawaited(
-                  ref.read(mediaLibraryProvider.notifier).setSort(sort),
-                ),
-                onMediaSortDirectionChanged: (direction) => unawaited(
-                  ref
-                      .read(mediaLibraryProvider.notifier)
-                      .setSortDirection(direction),
-                ),
-                hideMediaIdentity:
-                    _mode == WorkspaceMode.media && _mediaActiveTool != null,
-                uploadProgress: fp.uploadProgress,
-                mediaDetail: mediaDetail,
-                onCloseMediaDetail: () =>
-                    ref.read(activeMediaDetailHeaderProvider.notifier).state =
-                        null,
-              );
-              final rawContent = IndexedStack(
-                index: _mode == WorkspaceMode.cloud ? 0 : 1,
-                children: [_buildCloudContent(fp), _buildMediaContent()],
-              );
-              final content = _mode == WorkspaceMode.media
-                  ? OS26Glass(
-                      radius: 18,
-                      opacity: 0.42,
-                      padding: EdgeInsets.zero,
-                      child: Column(
-                        children: [
-                          if (_mediaActiveTool == null) ...[
-                            topBar,
-                            const ShadSeparator.horizontal(),
-                          ],
-                          Expanded(child: rawContent),
-                        ],
-                      ),
-                    )
-                  : rawContent;
-              if (compact) {
-                return _MobileDrawerSwipeArea(
-                  onOpen: () => _showMobileMenu(context),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                    child: Column(
-                      children: [
-                        if (_mode == WorkspaceMode.cloud) ...[
-                          topBar,
-                          const SizedBox(height: 8),
-                        ],
-                        Expanded(child: content),
-                      ],
-                    ),
+        backgroundColor: Colors.transparent,
+        body: OS26Surface(
+          child: SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 720;
+                final topBar = _TopBar(
+                  mode: _mode,
+                  compact: compact,
+                  searchController: _searchController,
+                  searchFocusNode: _searchFocusNode,
+                  searchOpen: _searchOpen,
+                  onSearch: _submitSearch,
+                  onToggleSearch: _toggleSearch,
+                  onScanShare: _scanShareQRCode,
+                  onPasteShare: _readingClipboard ? null : _pasteShareLink,
+                  onOpenMenu: () => _showMobileMenu(context),
+                  mediaState: media,
+                  mediaFilter: _mediaBrowseFilter,
+                  mediaLibrarySection: _mediaLibrarySection,
+                  mediaHomeSelected: _mediaHomeSelected,
+                  onMediaLibrarySectionChanged: _changeMediaLibrarySection,
+                  onMediaSortChanged: (sort) => unawaited(
+                    ref.read(mediaLibraryProvider.notifier).setSort(sort),
                   ),
+                  onMediaSortDirectionChanged: (direction) => unawaited(
+                    ref
+                        .read(mediaLibraryProvider.notifier)
+                        .setSortDirection(direction),
+                  ),
+                  hideMediaIdentity:
+                      _mode == WorkspaceMode.media && _mediaActiveTool != null,
+                  uploadProgress: fp.uploadProgress,
+                  mediaDetail: mediaDetail,
+                  onCloseMediaDetail: () =>
+                      ref.read(activeMediaDetailHeaderProvider.notifier).state =
+                          null,
                 );
-              }
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-                child: Row(
-                  children: [
-                    _mode == WorkspaceMode.cloud
-                        ? _CloudSidebar(
-                            state: fp,
-                            onSection: (section) => ref
-                                .read(fileProvider.notifier)
-                                .setSection(section),
-                            onSettings: () => _showSettings(context),
-                            onModeChanged: _changeMode,
-                            onSignOut: () =>
-                                ref.read(authProvider.notifier).signOut(),
-                            onTool: _openTool,
-                            activeTool: _cloudActiveTool,
-                          )
-                        : _MediaSidebar(
-                            onModeChanged: _changeMode,
-                            onSettings: () => _showSettings(context),
-                            onScanTasks: () => _showScanTaskManagement(context),
-                            onManage: () =>
-                                _showMediaLibraryManagement(context),
-                            onTool: _openTool,
-                            activeTool: _mediaActiveTool,
-                            selectedFilter: _mediaBrowseFilter,
-                            onFilter: _changeMediaBrowseFilter,
-                            homeSelected: _mediaHomeSelected,
-                            onHome: _showMediaHome,
-                            onSelectLibrary: _selectMediaLibrary,
-                          ),
-                    const SizedBox(width: 16),
-                    Expanded(
+                final rawContent = IndexedStack(
+                  index: _mode == WorkspaceMode.cloud ? 0 : 1,
+                  children: [_buildCloudContent(fp), _buildMediaContent()],
+                );
+                final content = _mode == WorkspaceMode.media
+                    ? OS26Glass(
+                        radius: 18,
+                        opacity: 0.42,
+                        padding: EdgeInsets.zero,
+                        child: Column(
+                          children: [
+                            if (_mediaActiveTool == null) ...[
+                              topBar,
+                              const ShadSeparator.horizontal(),
+                            ],
+                            Expanded(child: rawContent),
+                          ],
+                        ),
+                      )
+                    : rawContent;
+                if (compact) {
+                  return _MobileDrawerSwipeArea(
+                    onOpen: () => _showMobileMenu(context),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
                       child: Column(
                         children: [
                           if (_mode == WorkspaceMode.cloud) ...[
                             topBar,
-                            const SizedBox(height: 6),
+                            const SizedBox(height: 8),
                           ],
                           Expanded(child: content),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              );
-            },
+                  );
+                }
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+                  child: Row(
+                    children: [
+                      _mode == WorkspaceMode.cloud
+                          ? _CloudSidebar(
+                              state: fp,
+                              onSection: (section) => ref
+                                  .read(fileProvider.notifier)
+                                  .setSection(section),
+                              onSettings: () => _showSettings(context),
+                              onModeChanged: _changeMode,
+                              onSignOut: () =>
+                                  ref.read(authProvider.notifier).signOut(),
+                              onTool: _openTool,
+                              activeTool: _cloudActiveTool,
+                            )
+                          : _MediaSidebar(
+                              onModeChanged: _changeMode,
+                              onSettings: () => _showSettings(context),
+                              onScanTasks: () =>
+                                  _showScanTaskManagement(context),
+                              onManage: () =>
+                                  _showMediaLibraryManagement(context),
+                              onTool: _openTool,
+                              activeTool: _mediaActiveTool,
+                              selectedFilter: _mediaBrowseFilter,
+                              onFilter: _changeMediaBrowseFilter,
+                              homeSelected: _mediaHomeSelected,
+                              onHome: _showMediaHome,
+                              onSelectLibrary: _selectMediaLibrary,
+                            ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            if (_mode == WorkspaceMode.cloud) ...[
+                              topBar,
+                              const SizedBox(height: 6),
+                            ],
+                            Expanded(child: content),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           ),
         ),
       ),
-    ),
     );
   }
 
@@ -2164,6 +2165,8 @@ class _MediaLibraryScanTopActionState
       onForceAll: () => ref
           .read(mediaLibraryProvider.notifier)
           .rescanSelectedLibrary(mode: MediaLibraryScanMode.forceAll),
+      onGlobalScan: () =>
+          ref.read(mediaLibraryProvider.notifier).scanGlobalLibrary(),
     );
   }
 }

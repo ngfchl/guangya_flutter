@@ -26,6 +26,8 @@ import '../utils/media_tmdb_candidate_resolver.dart';
 import 'watch_history_provider.dart';
 
 const _mediaScanTaskZoneKey = #mediaScanTaskID;
+const globalMediaLibraryID = '__global__';
+const globalMediaLibraryName = '全局';
 
 /// Blu-ray and DVD folders contain transport streams rather than standalone
 /// media. They must be handled as a disc structure, never as individual files.
@@ -58,8 +60,7 @@ bool isMediaScanDiscItem(CloudFile file, {String? cloudPath}) {
   if (isMediaScanIsoFile(file)) return true;
   if (isMediaScanDiscLayout([file])) return true;
   final path = cloudPath ?? file.cloudPath;
-  if (path != null && isMediaScanDiscInternalPath(path)) return true;
-  return false;
+  return isMediaScanDiscInternalPath(path);
 }
 
 bool isConfirmedCloudFileMissingError(Object error) {
@@ -1755,7 +1756,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       var unmatchedCount = 0;
       _appendScanLog('$modeLabel，媒体识别并发数：$concurrency');
       if (tmdbApiKey.trim().isEmpty) {
-        _appendScanLog('未配置 TMDB API Key，本次仅建立本地媒体索引，不会执行 TMDB 自动识别');
+        _appendScanLog('未配置 TMDB API Key，本次直接使用豆瓣自动识别');
       }
 
       Future<void> indexBatch(List<CloudFile> files) async {
@@ -1898,7 +1899,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             );
             await pendingPersistence;
             final progress = MediaLibraryScanProgress(
-              phase: tmdbApiKey.isEmpty ? '正在建立本地索引' : '正在识别 ${file.name}',
+              phase: '正在识别 ${file.name}',
               completed: completed,
             );
             _setScanProgress(library.id, progress);
@@ -2037,6 +2038,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final libraries = state.libraries
           .map((item) => item.id == library.id ? updatedLibrary : item)
           .toList(growable: false);
+      final statistics = await _store.statistics();
       final allItems = await _loadAllItems();
       final visibleItems = state.selectedLibraryID == library.id
           ? await _loadItems(library.id)
@@ -2051,6 +2053,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         libraries: libraries,
         items: visibleItems,
         allItems: allItems,
+        libraryStatistics: statistics.libraries,
+        storedGlobalStatistics: statistics.global,
         statusMessage: aborted
             ? '扫描已停止，已保留 ${items.length} 个项目'
             : removedMissing == 0
@@ -2377,6 +2381,310 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       _cloudIndexRefreshCompleter = null;
       _scheduleCloudIndexRefresh(minutes);
     }
+  }
+
+  Future<void> scanGlobalLibrary({bool forceAll = true}) async {
+    if (_api == null ||
+        state.isLoading ||
+        state.isLibraryScanning(globalMediaLibraryID)) {
+      return;
+    }
+    _cancelledScanLibraries.remove(globalMediaLibraryID);
+    _stoppedScanLibraries.remove(globalMediaLibraryID);
+    _pausedScanLibraries.remove(globalMediaLibraryID);
+    _releaseScanPauseGate(globalMediaLibraryID);
+    final taskID = 'global-${DateTime.now().microsecondsSinceEpoch}';
+    final task = MediaLibraryScanTask(
+      id: taskID,
+      libraryID: globalMediaLibraryID,
+      libraryName: globalMediaLibraryName,
+      mode: forceAll
+          ? MediaLibraryScanMode.forceAll
+          : MediaLibraryScanMode.unrecognizedOnly,
+      status: MediaLibraryScanTaskStatus.queued,
+      progress: const MediaLibraryScanProgress(phase: '等待开始'),
+      logs: [
+        MediaLibraryScanLog(
+          createdAt: DateTime.now(),
+          message: '任务已创建，等待${forceAll ? '全局强制刮削' : '全局扫描未识别'}',
+        ),
+      ],
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    state = state.copyWith(scanTasks: [task, ...state.scanTasks]);
+    unawaited(_persistScanTaskHistory());
+    final run = runZoned(
+      () => _runGlobalScan(taskID: task.id, forceAll: forceAll),
+      zoneValues: {_mediaScanTaskZoneKey: task.id},
+    );
+    _scanRuns[globalMediaLibraryID] = run;
+    await run;
+    if (identical(_scanRuns[globalMediaLibraryID], run)) {
+      _scanRuns.remove(globalMediaLibraryID);
+    }
+  }
+
+  Future<void> _runGlobalScan({
+    required String taskID,
+    required bool forceAll,
+  }) async {
+    const libraryID = globalMediaLibraryID;
+    if (_pendingMediaRemovals > 0) {
+      _updateScanTask(
+        taskID,
+        status: MediaLibraryScanTaskStatus.stopped,
+        progress: const MediaLibraryScanProgress(phase: '等待移除影视记录完成'),
+        log: '正在移除影视记录，全局刮削未启动',
+      );
+      state = state.copyWith(
+        statusMessage: '正在移除影视记录，请稍后开始全局刮削',
+        clearError: true,
+      );
+      return;
+    }
+
+    final modeLabel = forceAll ? '全局强制刮削' : '全局扫描未识别';
+    final minimumSizeMB = _globalMediaScanMinimumSizeMB;
+    final minimumSizeBytes = minimumSizeMB * 1024 * 1024;
+    final tmdbApiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    final tmdbProxyHost =
+        StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
+    final tmdbProxyPort =
+        StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
+    final concurrency =
+        (int.tryParse(
+                  StorageManager.get<String>(
+                        StorageKeys.mediaScanConcurrency,
+                      ) ??
+                      '3',
+                ) ??
+                3)
+            .clamp(1, 20);
+
+    _updateScanTask(
+      taskID,
+      status: MediaLibraryScanTaskStatus.running,
+      progress: const MediaLibraryScanProgress(phase: '准备全局刮削'),
+      log: '开始$modeLabel，默认筛选大于 $minimumSizeMB MB 的视频文件',
+      clearFailure: true,
+    );
+
+    try {
+      final removedDiscStreams = await _removeDiscInternalItems();
+      if (removedDiscStreams > 0) {
+        _appendScanLog('已清理 $removedDiscStreams 个已入库的光盘目录内部文件');
+      }
+      if (tmdbApiKey.trim().isEmpty) {
+        _appendScanLog('未配置 TMDB API Key，本次直接使用豆瓣自动识别');
+      }
+
+      _setScanProgress(
+        libraryID,
+        const MediaLibraryScanProgress(phase: '正在刷新全盘索引'),
+      );
+      final refreshed = await refreshGlobalCloudIndex(force: forceAll);
+      if (!refreshed) {
+        throw StateError('全盘文件索引刷新失败');
+      }
+
+      final cachedFiles = await FileMetadataCache.allCachedFolderChildren();
+      final allItemsBefore = await _loadAllItems();
+      final explicitFileIDs = {
+        for (final item in allItemsBefore)
+          if (item.libraryID != globalMediaLibraryID) item.id,
+      };
+      String resourceFingerprint(CloudFile file) {
+        final gcid = file.gcid?.trim() ?? '';
+        final path = file.cloudPath.trim();
+        if (gcid.isEmpty || path.isEmpty) return '';
+        return '$gcid\n$path';
+      }
+
+      // Only dedupe the same cloud resource. A different file that matches a
+      // media work already present in a normal library still belongs in the
+      // global bucket because it is not covered by that library's sources.
+      final explicitResourceFingerprints = {
+        for (final item in allItemsBefore)
+          if (item.libraryID != globalMediaLibraryID)
+            resourceFingerprint(item.file),
+      };
+      explicitResourceFingerprints.remove('');
+      final existingGlobalByID = {
+        for (final item in allItemsBefore)
+          if (item.libraryID == globalMediaLibraryID) item.id: item,
+      };
+      final explicitGlobalItems = existingGlobalByID.values
+          .where(
+            (item) =>
+                explicitFileIDs.contains(item.id) ||
+                explicitResourceFingerprints.contains(
+                  resourceFingerprint(item.file),
+                ),
+          )
+          .toList(growable: false);
+      if (explicitGlobalItems.isNotEmpty) {
+        await _store.deleteItems(explicitGlobalItems);
+        for (final item in explicitGlobalItems) {
+          existingGlobalByID.remove(item.id);
+        }
+        _appendScanLog('已移除 ${explicitGlobalItems.length} 个已归属明确媒体库的全局条目');
+      }
+      final candidates = <String, CloudFile>{};
+      for (final file in cachedFiles) {
+        if (file.isDirectory) continue;
+        if (!file.isVideo) continue;
+        if ((file.size ?? 0) < minimumSizeBytes) continue;
+        if (isMediaScanDiscInternalPath(file.cloudPath)) continue;
+        if (explicitFileIDs.contains(file.id)) continue;
+        if (explicitResourceFingerprints.contains(resourceFingerprint(file))) {
+          continue;
+        }
+        final existing = existingGlobalByID[file.id];
+        if (!forceAll && existing?.isMatched == true) continue;
+        candidates[file.id] = file;
+      }
+      final files = candidates.values.toList(growable: false)
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      _appendScanLog(
+        '全盘索引命中 ${cachedFiles.length} 项，筛选出 ${files.length} 个待刮削视频',
+      );
+      _setScanProgress(
+        libraryID,
+        MediaLibraryScanProgress(
+          phase: files.isEmpty ? '没有符合条件的视频' : '正在全局识别',
+          completed: 0,
+          total: files.length,
+        ),
+      );
+
+      var next = 0;
+      var completed = 0;
+      var recognizedCount = 0;
+      var unmatchedCount = 0;
+      final updates = <String, MediaLibraryItem>{
+        for (final entry in existingGlobalByID.entries) entry.key: entry.value,
+      };
+      Future<void> pendingPersistence = Future.value();
+
+      Future<void> worker() async {
+        while (!_scanShouldAbort(libraryID) && next < files.length) {
+          if (!await _waitIfScanPaused(libraryID)) return;
+          final file = files[next++];
+          final fallback = MediaLibraryItem.fromFile(
+            libraryID,
+            file,
+            directoryName: _parentDirectoryName(file.cloudPath),
+          );
+          final existing = existingGlobalByID[file.id];
+          final shouldRecognize =
+              forceAll || existing == null || !existing.isMatched;
+          var item =
+              existing?.copyWith(file: file, updatedAt: DateTime.now()) ??
+              fallback;
+          if (shouldRecognize) {
+            item = await _recognizeMediaItem(
+              fallback,
+              tmdbApiKey,
+              proxyHost: tmdbProxyHost,
+              proxyPort: tmdbProxyPort,
+            );
+          }
+          if (_scanShouldAbort(libraryID)) return;
+          if (!item.isMatched && existing?.isMatched == true) {
+            item = existing!.copyWith(file: file, updatedAt: DateTime.now());
+          }
+          updates[file.id] = item;
+          completed += 1;
+          if (item.isMatched) {
+            recognizedCount += 1;
+          } else {
+            unmatchedCount += 1;
+          }
+          pendingPersistence = pendingPersistence.then(
+            (_) => _upsertItems([item]),
+          );
+          await pendingPersistence;
+          _setScanProgress(
+            libraryID,
+            MediaLibraryScanProgress(
+              phase: '正在识别 ${file.name}',
+              completed: completed,
+              total: files.length,
+            ),
+          );
+          _appendScanLog(
+            item.isMatched
+                ? '已全局识别并入库：${file.name} → ${item.title}'
+                : '已全局入库：${file.name}（未匹配）',
+          );
+        }
+      }
+
+      await Future.wait(List.generate(concurrency, (_) => worker()));
+      await pendingPersistence;
+      final aborted = _scanShouldAbort(libraryID);
+      final statistics = await _store.statistics();
+      final allItems = await _loadAllItems();
+      final visibleItems = state.selectedLibraryID == libraryID
+          ? await _loadItems(libraryID)
+          : state.items;
+      final finalStatus = _cancelledScanLibraries.contains(libraryID)
+          ? MediaLibraryScanTaskStatus.cancelled
+          : _stoppedScanLibraries.contains(libraryID)
+          ? MediaLibraryScanTaskStatus.stopped
+          : MediaLibraryScanTaskStatus.completed;
+      state = state.copyWith(
+        items: visibleItems,
+        allItems: allItems,
+        libraryStatistics: statistics.libraries,
+        storedGlobalStatistics: statistics.global,
+        statusMessage: aborted
+            ? '全局刮削已停止，已处理 $completed 个资源'
+            : '$modeLabel完成：处理 $completed 个资源，识别 $recognizedCount 个',
+        clearError: true,
+      );
+      _appendScanLog(
+        aborted
+            ? '全局刮削已停止，已处理 $completed 个资源'
+            : '$modeLabel完成，本次处理 $completed 个资源，识别 $recognizedCount 个，未匹配 $unmatchedCount 个',
+      );
+      _updateScanTask(
+        taskID,
+        status: finalStatus,
+        progress: MediaLibraryScanProgress(
+          phase: aborted ? '全局刮削已停止' : '任务完成',
+          completed: completed,
+          total: files.length,
+        ),
+      );
+    } catch (e) {
+      state = state.copyWith(errorMessage: e.toString());
+      _appendScanLog('全局刮削失败：$e', isError: true);
+      _updateScanTask(
+        taskID,
+        status: MediaLibraryScanTaskStatus.failed,
+        progress: const MediaLibraryScanProgress(phase: '全局刮削失败'),
+        failureReason: e.toString(),
+        log: '全局刮削失败：$e',
+        isError: true,
+      );
+    } finally {
+      _pausedScanLibraries.remove(libraryID);
+      _stoppedScanLibraries.remove(libraryID);
+      _cancelledScanLibraries.remove(libraryID);
+      _releaseScanPauseGate(libraryID);
+      unawaited(_persistScanHistory());
+      unawaited(_persistScanTaskHistory());
+    }
+  }
+
+  int get _globalMediaScanMinimumSizeMB {
+    final configured = int.tryParse(
+      StorageManager.get<String>(StorageKeys.globalMediaScanMinimumSizeMB) ??
+          '500',
+    );
+    return (configured ?? 500).clamp(1, 1024 * 1024);
   }
 
   void _scheduleCloudIndexRefresh(int minutes) {
@@ -3013,7 +3321,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> recognizeItems(Iterable<MediaLibraryItem> values) async {
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
-    if (_api == null || apiKey.trim().isEmpty) return;
+    if (_api == null) return;
     final groups = <String, List<MediaLibraryItem>>{};
     for (final item in values) {
       final parsed = ParsedMediaName.parse(
@@ -3039,7 +3347,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         proxyHost: StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
         proxyPort: StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
       );
-      final resolved = recognized.tmdbID == null && prototype.tmdbID != null
+      final resolved = !recognized.isMatched && prototype.isMatched
+          ? prototype
+          : recognized.tmdbID == null && prototype.tmdbID != null
           ? prototype
           : recognized;
       updates.addAll(group.map((item) => resolved.copyWith(file: item.file)));
@@ -3048,9 +3358,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     await _store.upsertItems(updates);
     _searchResultsCache.clear();
     final byID = {for (final item in updates) item.id: item};
+    final statistics = await _store.statistics();
     state = state.copyWith(
       items: state.items.map((item) => byID[item.id] ?? item).toList(),
       allItems: await _loadAllItems(),
+      libraryStatistics: statistics.libraries,
+      storedGlobalStatistics: statistics.global,
       statusMessage: '已识别 ${updates.length} 个资源（${groups.length} 个作品）',
     );
     final aggregatedSeries = <String>{};
@@ -3589,7 +3902,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             }
           }
         }
-        if (updated.tmdbID != null) {
+        if (updated.isMatched) {
           if (seriesKey != null && updated.mediaKind == TMDBMediaKind.tv) {
             automaticMatches[seriesKey] = updated;
             matchedSeries[seriesKey] = updated;
@@ -3600,20 +3913,23 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             );
           }
           recognizedCount++;
+          final source = updated.tmdbID != null
+              ? 'TMDB ${updated.tmdbID}'
+              : '豆瓣 ${updated.doubanID ?? '-'}';
           _appendScanLog(
-            '[同步识别][调试] TMDB 命中：${updated.title} '
-            '(tmdbId=${updated.tmdbID}, ${updated.year.isEmpty ? '年份未知' : updated.year})',
+            '[同步识别][调试] 自动识别命中：${updated.title} '
+            '($source, ${updated.year.isEmpty ? '年份未知' : updated.year})',
           );
         } else {
           _appendScanLog(
-            '[同步识别][调试] TMDB 未命中：${parsed.title} '
+            '[同步识别][调试] 自动识别未命中：${parsed.title} '
             '(年份参数=${parsed.year?.toString() ?? '未提供'})',
           );
         }
         // A temporary TMDB or network failure must not erase a previously
         // scraped item just because its refreshed file metadata was available.
-        if (updated.tmdbID == null &&
-            original.tmdbID != null &&
+        if (((!updated.isMatched && original.isMatched) ||
+                (updated.tmdbID == null && original.tmdbID != null)) &&
             !rejectedPersistedMatch) {
           updated = original.copyWith(
             file: fallback.file,
@@ -3638,7 +3954,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           _appendScanLog(
             '[同步识别][调试] 已规范命名：$beforeName -> ${updated.file.name}',
           );
-        } else if (updated.tmdbID != null) {
+        } else if (updated.isMatched) {
           _appendScanLog('[同步识别][调试] 跳过规范命名：名称已符合规则');
         }
         updates.add(updated);
@@ -3659,6 +3975,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       await _replaceItemsByPreviousIDs(replacements);
       _searchResultsCache.clear();
       final byID = {for (final item in updates) item.id: item};
+      final statistics = await _store.statistics();
       state = state.copyWith(
         items: state.items
             .map(
@@ -3669,9 +3986,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             )
             .toList(),
         allItems: await _loadAllItems(),
-        statusMessage: apiKey.trim().isEmpty
-            ? '已同步 ${updates.length} 个资源，未配置 TMDB，未执行自动识别'
-            : _cancelDetailSync
+        libraryStatistics: statistics.libraries,
+        storedGlobalStatistics: statistics.global,
+        statusMessage: _cancelDetailSync
             ? '同步识别已取消，已处理 ${updates.length} 个资源'
             : failures.isEmpty
             ? '已同步 ${updates.length} 个资源，自动识别 $recognizedCount 个，规范命名 $renamedCount 个'
@@ -4353,8 +4670,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     required String proxyHost,
     required String proxyPort,
   }) async {
-    if (_api == null || apiKey.trim().isEmpty) return fallback;
+    if (_api == null) return fallback;
     try {
+      final hasTMDBKey = apiKey.trim().isNotEmpty;
       final parsed = ParsedMediaName.parse(
         fallback.file.name,
         directoryName: _parentDirectoryName(fallback.file.cloudPath),
@@ -4369,29 +4687,36 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         primaryTitle: searchTitle,
       );
       if (titleVariants.isEmpty) {
-        _appendScanLog(
-          '[同步识别][调试] TMDB 跳过：无法从文件名解析有效标题，文件=${fallback.file.name}',
-        );
+        _appendScanLog('[同步识别][调试] 跳过：无法从文件名解析有效标题，文件=${fallback.file.name}');
         return fallback;
       }
-      final taggedCandidate = await _tmdbCandidateFromPathTag(
-        fallback,
-        apiKey,
-        proxyHost: proxyHost,
-        proxyPort: proxyPort,
-      );
-      if (taggedCandidate != null) {
-        final item = _itemFromTMDBCandidate(fallback, taggedCandidate);
-        return _itemFromTMDBDetails(item, taggedCandidate);
+      Map<String, dynamic>? taggedCandidate;
+      _TMDBRecognitionSearchResult searchResult =
+          const _TMDBRecognitionSearchResult(candidates: [], attempts: []);
+      if (hasTMDBKey) {
+        taggedCandidate = await _tmdbCandidateFromPathTag(
+          fallback,
+          apiKey,
+          proxyHost: proxyHost,
+          proxyPort: proxyPort,
+        );
+        if (taggedCandidate != null) {
+          final item = _itemFromTMDBCandidate(fallback, taggedCandidate);
+          return _itemFromTMDBDetails(item, taggedCandidate);
+        }
+        searchResult = await _tmdbSearchForRecognition(
+          titleVariants,
+          mediaKind: requestedKind,
+          apiKey: apiKey,
+          proxyHost: proxyHost,
+          proxyPort: proxyPort,
+          year: parsed.year,
+        );
+      } else {
+        _appendScanLog(
+          '[同步识别][调试] 未配置 TMDB API Key，直接尝试豆瓣：${fallback.file.name}',
+        );
       }
-      final searchResult = await _tmdbSearchForRecognition(
-        titleVariants,
-        mediaKind: requestedKind,
-        apiKey: apiKey,
-        proxyHost: proxyHost,
-        proxyPort: proxyPort,
-        year: parsed.year,
-      );
       final values = searchResult.candidates;
       final doubanItems = await _searchDoubanCandidates(
         titleVariants,
@@ -4400,15 +4725,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       if (values.isEmpty && doubanItems.isEmpty) {
         _appendScanLog(
-          '[同步识别][调试] TMDB + 豆瓣均未命中：${fallback.file.name}；'
-          '${_describeTMDBRecognitionAttempts(searchResult.attempts)}',
+          hasTMDBKey
+              ? '[同步识别][调试] TMDB + 豆瓣均未命中：${fallback.file.name}；'
+                    '${_describeTMDBRecognitionAttempts(searchResult.attempts)}'
+              : '[同步识别][调试] 豆瓣未命中：${fallback.file.name}',
         );
         return fallback;
       }
       if (values.isEmpty && doubanItems.isNotEmpty) {
         _appendScanLog(
-          '[同步识别][调试] TMDB 未命中，豆瓣返回 ${doubanItems.length} 条：'
-          '${fallback.file.name}',
+          hasTMDBKey
+              ? '[同步识别][调试] TMDB 未命中，豆瓣返回 ${doubanItems.length} 条：${fallback.file.name}'
+              : '[同步识别][调试] 豆瓣返回 ${doubanItems.length} 条：${fallback.file.name}',
         );
         final doubanResult = _pickBestDoubanCandidate(
           fallback,
