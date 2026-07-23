@@ -211,9 +211,60 @@ class FastTransferSession {
   );
 }
 
+/// Metadata extracted from a fast-transfer JSON file (may be null if absent).
+class FastTransferMeta {
+  final int? totalFilesCount;
+  final int? totalSize;
+  final String? formattedTotalSize;
+  final int? generatedAt;
+  final int? scannedFoldersCount;
+
+  const FastTransferMeta({
+    this.totalFilesCount,
+    this.totalSize,
+    this.formattedTotalSize,
+    this.generatedAt,
+    this.scannedFoldersCount,
+  });
+
+  factory FastTransferMeta.fromMap(Map<String, dynamic> root) {
+    return FastTransferMeta(
+      totalFilesCount: root['totalFilesCount'] as int?,
+      totalSize: root['totalSize'] as int?,
+      formattedTotalSize: root['formattedTotalSize']?.toString(),
+      generatedAt: root['generatedAt'] as int?,
+      scannedFoldersCount: root['scannedFoldersCount'] as int?,
+    );
+  }
+
+  bool get isEmpty =>
+      totalFilesCount == null &&
+      totalSize == null &&
+      formattedTotalSize == null &&
+      generatedAt == null &&
+      scannedFoldersCount == null;
+}
+
+/// Result of parsing a fast-transfer JSON string.
+class FastTransferParseResult {
+  final List<FastTransferEntry> entries;
+  final FastTransferMeta? meta;
+
+  const FastTransferParseResult(this.entries, [this.meta]);
+}
+
 List<FastTransferEntry> parseFastTransferJSON(String text) {
+  return parseFastTransferJSONWithMeta(text).entries;
+}
+
+FastTransferParseResult parseFastTransferJSONWithMeta(String text) {
   final root = jsonDecode(text);
-  final raw = root is Map && root.containsKey('files') ? root['files'] : root;
+  final Map<String, dynamic>? rootMap =
+      root is Map ? Map<String, dynamic>.from(root) : null;
+  final raw = rootMap != null && rootMap.containsKey('files')
+      ? rootMap['files']
+      : root;
+  final meta = rootMap != null ? FastTransferMeta.fromMap(rootMap) : null;
   final values = raw is List
       ? raw
       : raw is Map
@@ -249,5 +300,5 @@ List<FastTransferEntry> parseFastTransferJSON(String text) {
     );
   }
   if (entries.isEmpty) throw const FormatException('files 不能为空');
-  return entries;
+  return FastTransferParseResult(entries, meta);
 }
