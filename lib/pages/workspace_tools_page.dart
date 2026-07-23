@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
 import '../core/storage/storage_manager.dart';
@@ -24,6 +25,9 @@ import '../widgets/app_loading_indicator.dart';
 import 'media_library_page.dart';
 
 enum WorkspaceTool { scan, rename, fastTransfer, tmdb, organize, categories }
+
+/// Sub-page label for the fast-transfer tool, shown in the tool header breadcrumb.
+final fastTransferSubPageProvider = StateProvider<String?>((ref) => null);
 
 extension WorkspaceToolDetails on WorkspaceTool {
   String get title {
@@ -129,15 +133,26 @@ class _ToolHeader extends ConsumerWidget {
               Icon(tool.icon, size: 20, color: cs.primary),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(
-                  tool.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: cs.foreground,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
+                child: Builder(
+                  builder: (context) {
+                    String titleText = tool.title;
+                    if (tool == WorkspaceTool.fastTransfer) {
+                      final subPage = ref.watch(fastTransferSubPageProvider);
+                      if (subPage != null) {
+                        titleText = '${tool.title} › $subPage';
+                      }
+                    }
+                    return Text(
+                      titleText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: cs.foreground,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    );
+                  },
                 ),
               ),
               if (mediaState != null) ...[
@@ -2108,6 +2123,8 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   String? _targetID;
   String _targetName = '云盘根目录';
   int _concurrency = 3;
+  final _generateSourceLink = LayerLink();
+  FastTransferMeta? _meta;
   var _entries = <FastTransferEntry>[];
   var _taskResults = <FastTransferResult>[];
   final _latestTaskResults = <String, FastTransferResult>{};
@@ -2115,6 +2132,32 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   final _activeEntryIDs = <String>{};
   Future<void> _sessionPersistence = Future.value();
   Timer? _sessionPersistTimer;
+
+  /// Convert entries to the standard fast-transfer JSON format (path, size, gcid only).
+  String _entriesToJSON(
+    List<FastTransferEntry> entries, {
+    bool indent = false,
+    int? totalSize,
+    int? foldersCount,
+  }) {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final data = {
+      'totalFilesCount': entries.length,
+      if (totalSize != null) ...{
+        'totalSize': totalSize,
+        'formattedTotalSize': _formatTransferSize(totalSize),
+      },
+      'generatedAt': now,
+      if (foldersCount != null) 'scannedFoldersCount': foldersCount,
+      'files': entries
+          .map((e) => {'path': e.path, 'size': e.size, 'gcid': e.gcid})
+          .toList(),
+    };
+    if (indent) {
+      return const JsonEncoder.withIndent('  ').convert(data);
+    }
+    return jsonEncode(data);
+  }
 
   @override
   void initState() {
@@ -2140,9 +2183,11 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       _targetName = session.targetName;
       if (_entries.isNotEmpty) {
         _importPhase = _FastTransferImportPhase.ready;
-        _json.text = jsonEncode({
-          'files': _entries.map((entry) => entry.toJson()).toList(),
-        });
+        _json.text = _entriesToJSON(_entries, indent: true);
+        try {
+          final result = parseFastTransferJSONWithMeta(_json.text);
+          _meta = result.meta;
+        } catch (_) {}
       }
       _result = raw['result']?.toString() ?? '';
       _taskResults = session.results.toList();
@@ -2339,6 +2384,120 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     }
   }
 
+  Future<void> _showGenerateSourceMenu() async {
+    if (_generating || _running) return;
+    final cs = ShadTheme.of(context).colorScheme;
+    final overlay = Overlay.of(context);
+    OverlayEntry? entry;
+    entry = OverlayEntry(
+      builder: (context) => Positioned(
+        width: 180,
+        child: CompositedTransformFollower(
+          link: _generateSourceLink,
+          showWhenUnlinked: false,
+          offset: const Offset(0, 36),
+          child: Material(
+            elevation: 4,
+            borderRadius: BorderRadius.circular(8),
+            color: cs.card,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: cs.border),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildSourceMenuItem(
+                    cs,
+                    icon: Icons.folder_open_rounded,
+                    label: '选择文件',
+                    onTap: () async {
+                      entry?.remove();
+                      await _generateLocalJson();
+                    },
+                  ),
+                  Divider(height: 1, color: cs.border),
+                  _buildSourceMenuItem(
+                    cs,
+                    icon: Icons.create_new_folder_outlined,
+                    label: '选择文件夹',
+                    onTap: () async {
+                      entry?.remove();
+                      await _generateLocalFolderJson();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    // Auto-dismiss after 5 seconds.
+    Future.delayed(const Duration(seconds: 5), () {
+      if (entry?.mounted ?? false) entry?.remove();
+    });
+  }
+
+  Widget _buildSourceMenuItem(
+    ShadColorScheme cs, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: cs.foreground),
+            const SizedBox(width: 10),
+            Text(label, style: TextStyle(fontSize: 13, color: cs.foreground)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMetaInfoBar(ShadColorScheme cs) {
+    final meta = _meta!;
+    final items = <String>[];
+    if (meta.totalFilesCount != null) items.add('文件 ${meta.totalFilesCount}');
+    if (meta.formattedTotalSize != null) items.add('大小 ${meta.formattedTotalSize}');
+    if (meta.scannedFoldersCount != null) {
+      items.add('文件夹 ${meta.scannedFoldersCount}');
+    }
+    if (meta.generatedAt != null) {
+      final dt = DateTime.fromMillisecondsSinceEpoch(meta.generatedAt! * 1000);
+      items.add('生成于 ${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}');
+    }
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: cs.muted.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline_rounded, size: 14, color: cs.mutedForeground),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              items.join(' · '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _generateLocalJson() async {
     if (_generating || _running) return;
     final picked = await FilePicker.pickFiles(type: FileType.any);
@@ -2385,6 +2544,9 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     });
     final entries = <FastTransferEntry>[];
     var failures = 0;
+    var totalSize = 0;
+    var foldersCount = 0;
+    final seenFolders = <String>{};
     try {
       for (final candidate in candidates) {
         if (!mounted) return;
@@ -2392,7 +2554,11 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         setState(() => _generationName = candidate.path);
         try {
           final stat = await file.stat();
+          // Track unique parent folders.
+          final parent = file.parent.path;
+          if (seenFolders.add(parent)) foldersCount += 1;
           final hashes = await _calculateLocalHashes(file, stat.size);
+          totalSize += stat.size;
           entries.add(
             FastTransferEntry.create(
               path: candidate.path,
@@ -2413,7 +2579,12 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         _latestTaskResults.clear();
         _json.text = const JsonEncoder.withIndent(
           '  ',
-        ).convert({'files': entries.map((entry) => entry.toJson()).toList()});
+        ).convert(_entriesToJSON(
+          entries,
+          indent: true,
+          totalSize: totalSize,
+          foldersCount: foldersCount,
+        ));
         _result = failures == 0
             ? '已生成 ${entries.length} 个本地文件的秒传 JSON'
             : '已生成 ${entries.length} 项，$failures 项无法读取';
@@ -2484,10 +2655,11 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     }
     await Future<void>.delayed(const Duration(milliseconds: 16));
     try {
-      final entries = await compute(parseFastTransferJSON, text);
+      final result = await compute(parseFastTransferJSONWithMeta, text);
       if (!mounted) return;
       setState(() {
-        _entries = entries;
+        _entries = result.entries;
+        _meta = result.meta;
         _taskResults = [];
         _latestTaskResults.clear();
         _cancelledEntryIDs.clear();
@@ -2496,7 +2668,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         _importPhase = _FastTransferImportPhase.ready;
         _queueSection = _FastTransferQueueSection.pending;
         _queuePage = 0;
-        _result = '已导入 ${entries.length} 个秒传任务';
+        _result = '已导入 ${result.entries.length} 个秒传任务';
       });
       _sessionPersistTimer?.cancel();
       _sessionPersistTimer = null;
@@ -2930,21 +3102,21 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
 
   Widget _buildTargetDirectoryButton(
     ShadColorScheme cs, {
-    double width = 320,
+    double width = 220,
     bool compact = false,
   }) {
     return SizedBox(
       width: width,
       child: ShadButton.outline(
-        size: compact ? ShadButtonSize.sm : ShadButtonSize.regular,
+        size: ShadButtonSize.sm,
         onPressed: _running ? null : _chooseTargetDirectory,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.folder_open_rounded, size: 16),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             SizedBox(
-              width: compact ? 180 : 230,
+              width: compact ? 120 : 140,
               child: Text(
                 _targetName,
                 maxLines: 1,
@@ -2952,7 +3124,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                 style: const TextStyle(fontSize: 13),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
             Icon(
               Icons.arrow_drop_down_rounded,
               size: 18,
@@ -2969,6 +3141,14 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     List<FastTransferEntry> pendingEntries,
   ) {
     final compact = MediaQuery.sizeOf(context).width < 600;
+    final backBtn = ShadTooltip(
+      builder: (_) => const Text('返回'),
+      child: ShadButton.ghost(
+        size: ShadButtonSize.sm,
+        onPressed: _running ? null : _clearFastTransferSession,
+        child: const Icon(Icons.arrow_back_rounded, size: 16),
+      ),
+    );
     final createDirectories = ShadCheckbox(
       value: _createDirectories,
       label: const Text('创建目录'),
@@ -2999,52 +3179,15 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         },
       ),
     );
-    final reset = ShadTooltip(
-      builder: (_) => const Text('重新选择 JSON'),
-      child: ShadButton.outline(
-        size: compact ? ShadButtonSize.sm : ShadButtonSize.regular,
-        onPressed: _running ? null : _clearFastTransferSession,
-        child: const Icon(Icons.undo_rounded, size: 16),
-      ),
-    );
     final run = _buildTransferRunControl(pendingEntries, compact: compact);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth >= 720) {
-          return _buildFastTransferControlRow([
-            _buildTargetDirectoryButton(cs, compact: compact),
-            createDirectories,
-            skipExisting,
-            concurrency,
-            reset,
-            run,
-          ]);
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildTargetDirectoryButton(
-              cs,
-              width: double.infinity,
-              compact: compact,
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 18,
-              runSpacing: 8,
-              children: [createDirectories, skipExisting],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [concurrency, reset, run],
-            ),
-          ],
-        );
-      },
-    );
+    return _buildFastTransferControlRow([
+      backBtn,
+      _buildTargetDirectoryButton(cs, compact: compact),
+      createDirectories,
+      skipExisting,
+      concurrency,
+      run,
+    ]);
   }
 
   Widget _buildGenerateCommandRow(
@@ -3052,33 +3195,31 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     List<FastTransferEntry> pendingEntries,
   ) {
     final compact = MediaQuery.sizeOf(context).width < 600;
-    final buttonSize = compact ? ShadButtonSize.sm : ShadButtonSize.regular;
     final controls = [
-      ShadButton.outline(
-        size: buttonSize,
-        onPressed: _generating || _running
-            ? null
-            : () => setState(() => _generateMode = false),
-        leading: const Icon(Icons.arrow_back_rounded, size: 16),
-        child: const Text('返回'),
-      ),
-      ShadButton.outline(
-        size: buttonSize,
-        onPressed: _generating || _running ? null : _generateLocalJson,
-        leading: Icon(
-          _generating ? Icons.hourglass_top_rounded : Icons.folder_open_rounded,
-          size: 16,
+      ShadTooltip(
+        builder: (_) => const Text('返回'),
+        child: ShadButton.ghost(
+          size: ShadButtonSize.sm,
+          onPressed: _generating || _running
+              ? null
+              : () => setState(() => _generateMode = false),
+          child: const Icon(Icons.arrow_back_rounded, size: 16),
         ),
-        child: Text(_generating ? '正在生成 JSON' : '选择文件'),
+      ),
+      CompositedTransformTarget(
+        link: _generateSourceLink,
+        child: ShadButton.outline(
+          size: ShadButtonSize.sm,
+          onPressed: _generating || _running ? null : _showGenerateSourceMenu,
+          leading: Icon(
+            _generating ? Icons.hourglass_top_rounded : Icons.folder_open_rounded,
+            size: 16,
+          ),
+          child: Text(_generating ? '正在生成 JSON' : '选择文件'),
+        ),
       ),
       ShadButton.outline(
-        size: buttonSize,
-        onPressed: _generating || _running ? null : _generateLocalFolderJson,
-        leading: const Icon(Icons.create_new_folder_outlined, size: 16),
-        child: const Text('选文件夹'),
-      ),
-      ShadButton.outline(
-        size: buttonSize,
+        size: ShadButtonSize.sm,
         onPressed: _generating || _json.text.trim().isEmpty
             ? null
             : _copyGeneratedJSON,
@@ -3086,7 +3227,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         child: const Text('复制'),
       ),
       ShadButton(
-        size: buttonSize,
+        size: ShadButtonSize.sm,
         onPressed: _generating || _json.text.trim().isEmpty
             ? null
             : _exportGeneratedJSON,
@@ -3095,27 +3236,19 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       ),
       _buildTransferRunControl(pendingEntries, compact: compact),
     ];
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth >= 720) {
-          return _buildFastTransferControlRow(controls);
-        }
-        return Wrap(spacing: 8, runSpacing: 8, children: controls);
-      },
-    );
+    return _buildFastTransferControlRow(controls);
   }
 
   Widget _buildTransferRunControl(
     List<FastTransferEntry> pendingEntries, {
     bool compact = false,
   }) {
-    final size = compact ? ShadButtonSize.sm : ShadButtonSize.regular;
     if (_running) {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           ShadButton.outline(
-            size: size,
+            size: ShadButtonSize.sm,
             onPressed: () => setState(() => _paused = !_paused),
             leading: Icon(
               _paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
@@ -3125,7 +3258,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           ),
           const SizedBox(width: 8),
           ShadButton.destructive(
-            size: size,
+            size: ShadButtonSize.sm,
             onPressed: () => setState(() => _cancelRequested = true),
             leading: const Icon(Icons.stop_rounded, size: 16),
             child: const Text('终止'),
@@ -3136,7 +3269,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     final canStart =
         _entries.isNotEmpty && pendingEntries.isNotEmpty && !_generating;
     return ShadButton(
-      size: size,
+      size: ShadButtonSize.sm,
       onPressed: canStart ? _startPending : null,
       leading: const Icon(Icons.bolt_rounded, size: 16),
       child: Text('秒传 ${pendingEntries.length}'),
@@ -3145,30 +3278,40 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
 
   Widget _buildGeneratedJsonPreview(ShadColorScheme cs) {
     final text = _json.text.trim();
-    final displayText = text.isEmpty ? '尚未生成 JSON' : _json.text;
-    return SizedBox(
-      height: MediaQuery.sizeOf(context).width < 600 ? 150 : 220,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: cs.muted.withValues(alpha: 0.18),
-          border: Border.all(color: cs.border),
-          borderRadius: BorderRadius.circular(7),
-        ),
-        child: Scrollbar(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(12),
-            child: SelectableText(
-              displayText,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                color: text.isEmpty ? cs.mutedForeground : cs.foreground,
-              ),
-            ),
+    final displayText = text.isEmpty ? '尚未生成 JSON' : _formatJsonForDisplay(text);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: cs.muted.withValues(alpha: 0.18),
+        border: Border.all(color: cs.border),
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(12),
+        child: SelectableText(
+          displayText,
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 12,
+            color: text.isEmpty ? cs.mutedForeground : cs.foreground,
+            height: 1.5,
           ),
         ),
       ),
     );
+  }
+
+  /// Try to pretty-print the JSON string; fall back to the raw string on error.
+  String _formatJsonForDisplay(String raw) {
+    try {
+      var decoded = jsonDecode(raw);
+      // Handle double-encoded JSON strings (e.g. session restored as string).
+      while (decoded is String) {
+        decoded = jsonDecode(decoded);
+      }
+      return const JsonEncoder.withIndent('  ').convert(decoded);
+    } catch (_) {
+      return raw;
+    }
   }
 
   Widget _buildQueueSection(
@@ -3199,43 +3342,46 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         padding: const EdgeInsets.only(top: 10),
         child: Column(
           children: [
-            Container(
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                color: cs.muted.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(7),
-              ),
-              child: Row(
-                children: [
-                  _queueTab(
-                    cs,
-                    _FastTransferQueueSection.pending,
-                    pendingTasks.length,
-                    Icons.format_list_bulleted_rounded,
-                    const Color(0xFFFF7A1A),
-                  ),
-                  _queueTab(
-                    cs,
-                    _FastTransferQueueSection.issues,
-                    issueTasks.length,
-                    Icons.warning_amber_rounded,
-                    cs.destructive,
-                  ),
-                  _queueTab(
-                    cs,
-                    _FastTransferQueueSection.imported,
-                    importedTasks.length,
-                    Icons.check_circle_outline_rounded,
-                    const Color(0xFF22A559),
-                  ),
-                  _queueTab(
-                    cs,
-                    _FastTransferQueueSection.skipped,
-                    skippedTasks.length,
-                    Icons.skip_next_rounded,
-                    cs.mutedForeground,
-                  ),
-                ],
+            if (issueTasks.isNotEmpty ||
+                importedTasks.isNotEmpty ||
+                skippedTasks.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: cs.muted.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Row(
+                  children: [
+                    _queueTab(
+                      cs,
+                      _FastTransferQueueSection.pending,
+                      pendingTasks.length,
+                      Icons.format_list_bulleted_rounded,
+                      const Color(0xFFFF7A1A),
+                    ),
+                    _queueTab(
+                      cs,
+                      _FastTransferQueueSection.issues,
+                      issueTasks.length,
+                      Icons.warning_amber_rounded,
+                      cs.destructive,
+                    ),
+                    _queueTab(
+                      cs,
+                      _FastTransferQueueSection.imported,
+                      importedTasks.length,
+                      Icons.check_circle_outline_rounded,
+                      const Color(0xFF22A559),
+                    ),
+                    _queueTab(
+                      cs,
+                      _FastTransferQueueSection.skipped,
+                      skippedTasks.length,
+                      Icons.skip_next_rounded,
+                      cs.mutedForeground,
+                    ),
+                  ],
               ),
             ),
             const SizedBox(height: 7),
@@ -3257,7 +3403,10 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                     key: ValueKey(_queuePageSize),
                     initialValue: _queuePageSize,
                     minWidth: 104,
-                    selectedOptionBuilder: (_, value) => Text('$value 条/页'),
+                    selectedOptionBuilder: (_, value) => FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('$value 条/页'),
+                    ),
                     options: const [
                       ShadOption(value: 200, child: Text('200 条/页')),
                       ShadOption(value: 500, child: Text('500 条/页')),
@@ -3593,6 +3742,13 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
+    // Update breadcrumb sub-page label after the current frame finishes building.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(fastTransferSubPageProvider.notifier).state =
+            _generateMode ? '生成秒传' : '秒传任务';
+      }
+    });
     if (!_generateMode && _importPhase != _FastTransferImportPhase.ready) {
       return _buildImportSourceView(cs);
     }
@@ -3635,55 +3791,15 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     final processed = _latestTaskResults.length.clamp(0, _entries.length);
     final progress = _entries.isEmpty ? 0.0 : processed / _entries.length;
     final compact = MediaQuery.sizeOf(context).width < 600;
-    return Padding(
-      padding: EdgeInsets.all(compact ? 10 : 18),
-      child: Column(
+
+    // Build generate mode left column (controls + JSON preview).
+    Widget buildGenerateLeftColumn() {
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _ToolSection(
-            title: _generateMode ? '本地文件生成秒传 JSON' : '秒传任务',
-            description: _generateMode
-                ? '计算本地文件的 MD5 与 GCID，生成可导入的秒传 JSON。'
-                : _targetName,
-            child: Padding(
-              padding: EdgeInsets.only(top: compact ? 8 : 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (_generateMode)
-                    _buildGenerateCommandRow(cs, pendingEntries)
-                  else
-                    _buildImportCommandRow(cs, pendingEntries),
-                  if (_generating) ...[
-                    const SizedBox(height: 8),
-                    Semantics(
-                      label: '正在计算本地文件校验值：$_generated / $_generationTotal',
-                      child: const Align(
-                        alignment: Alignment.centerLeft,
-                        child: AppLoadingIndicator(
-                          size: AppLoadingSize.compact,
-                          semanticsLabel: '正在计算本地文件校验值',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '$_generated / $_generationTotal ${_generationName.isEmpty ? '' : _generationName}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-                    ),
-                  ],
-                  if (_generateMode) ...[
-                    const SizedBox(height: 10),
-                    _buildGeneratedJsonPreview(cs),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          if (_generateMode && _running) ...[
-            const SizedBox(height: 12),
+          _buildGenerateCommandRow(cs, pendingEntries),
+          if (_running) ...[
+            const SizedBox(height: 8),
             const Align(
               alignment: Alignment.centerLeft,
               child: AppLoadingIndicator(
@@ -3692,30 +3808,117 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
               ),
             ),
           ],
-          if (_generateMode && _result.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(_result, style: TextStyle(color: cs.mutedForeground)),
+          if (_result.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(_result, style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
+          ],
+          if (!compact) ...[
+            const SizedBox(height: 8),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(child: _buildGeneratedJsonPreview(cs)),
+                  if (_generating)
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: cs.background.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const AppLoadingIndicator(
+                              size: AppLoadingSize.compact,
+                              semanticsLabel: '正在计算本地文件校验值',
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '$_generated / $_generationTotal ${_generationName.isEmpty ? '' : _generationName}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: cs.mutedForeground,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      );
+    }
+
+    // Build the right column / bottom section (queue).
+    Widget buildQueueColumn() {
+      if (_entries.isEmpty) return const SizedBox.shrink();
+      return _buildQueueSection(
+        cs,
+        latestResults: latestResults,
+        pendingTasks: pendingTasks,
+        issueTasks: issueTasks,
+        importedTasks: importedTasks,
+        skippedTasks: skippedTasks,
+        sectionTasks: sectionTasks,
+        visibleTasks: visibleTasks,
+        pageStart: pageStart,
+        pageEnd: pageEnd,
+        currentPage: currentPage,
+        pageCount: pageCount,
+        processed: processed,
+        progress: progress,
+      );
+    }
+
+    // ── Generate mode: left (controls + JSON) / right (queue) split ──
+    if (_generateMode) {
+      if (!compact && _entries.isNotEmpty) {
+        return Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(flex: 4, child: buildGenerateLeftColumn()),
+              const SizedBox(width: 16),
+              Expanded(flex: 5, child: buildQueueColumn()),
+            ],
+          ),
+        );
+      }
+      return Padding(
+        padding: EdgeInsets.all(compact ? 10 : 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: buildGenerateLeftColumn()),
+            if (_entries.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Expanded(child: buildQueueColumn()),
+            ],
+          ],
+        ),
+      );
+    }
+
+    // ── Import mode: single column, no expanded left ──
+    return Padding(
+      padding: EdgeInsets.all(compact ? 10 : 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildImportCommandRow(cs, pendingEntries),
+          if (_meta != null && !_meta!.isEmpty) ...[
+            const SizedBox(height: 8),
+            _buildMetaInfoBar(cs),
           ],
           if (_entries.isNotEmpty) ...[
             const SizedBox(height: 12),
-            Expanded(
-              child: _buildQueueSection(
-                cs,
-                latestResults: latestResults,
-                pendingTasks: pendingTasks,
-                issueTasks: issueTasks,
-                importedTasks: importedTasks,
-                skippedTasks: skippedTasks,
-                sectionTasks: sectionTasks,
-                visibleTasks: visibleTasks,
-                pageStart: pageStart,
-                pageEnd: pageEnd,
-                currentPage: currentPage,
-                pageCount: pageCount,
-                processed: processed,
-                progress: progress,
-              ),
-            ),
+            Expanded(child: buildQueueColumn()),
           ],
         ],
       ),
