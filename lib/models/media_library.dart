@@ -554,11 +554,15 @@ class MediaLibraryScanProgress {
   final String phase;
   final int completed;
   final int total;
+  final int pending;
+  final int scanned;
 
   const MediaLibraryScanProgress({
     this.phase = '',
     this.completed = 0,
     this.total = 0,
+    this.pending = 0,
+    this.scanned = 0,
   });
 }
 
