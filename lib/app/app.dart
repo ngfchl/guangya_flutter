@@ -8,6 +8,7 @@ import '../providers/media_library_provider.dart';
 import '../pages/login_page.dart';
 import '../pages/workspace_page.dart';
 import '../widgets/app_loading_indicator.dart';
+import '../widgets/remote_control_handler.dart';
 import 'app_theme.dart';
 
 class GuangyaApp extends ConsumerStatefulWidget {
@@ -49,19 +50,21 @@ class _GuangyaAppState extends ConsumerState<GuangyaApp> {
       theme: lightTheme,
       darkTheme: darkTheme,
       themeMode: themeState.themeMode,
-      home: auth.isLoading
-          ? const Scaffold(
-              body: Center(
-                child: AppLoadingIndicator(
-                  size: AppLoadingSize.page,
-                  label: '正在准备光鸭',
-                  description: '正在检查登录状态与本地配置',
+      home: RemoteControlHandler(
+        child: auth.isLoading
+            ? const Scaffold(
+                body: Center(
+                  child: AppLoadingIndicator(
+                    size: AppLoadingSize.page,
+                    label: '正在准备光鸭',
+                    description: '正在检查登录状态与本地配置',
+                  ),
                 ),
-              ),
-            )
-          : auth.isSignedIn
-          ? const WorkspacePage()
-          : const LoginPage(),
+              )
+            : auth.isSignedIn
+            ? const WorkspacePage()
+            : const LoginPage(),
+      ),
     );
   }
 }
