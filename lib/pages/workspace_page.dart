@@ -21,7 +21,6 @@ import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../widgets/app_dialog.dart';
-import '../widgets/audio_player_dialog.dart';
 import '../widgets/breadcrumb_bar.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/confirm_dialog.dart';
@@ -1560,6 +1559,13 @@ class _TopBar extends StatelessWidget {
               Expanded(child: searchOpen ? searchField : identity),
               if (!searchOpen) ...[
                 const SizedBox(width: 4),
+                if (mediaHomeSelected ||
+                    mediaFilter == MediaLibraryBrowseFilter.movies ||
+                    mediaFilter == MediaLibraryBrowseFilter.series ||
+                    mediaFilter == MediaLibraryBrowseFilter.unmatched) ...[
+                  _GlobalScanTopAction(compact: true),
+                  const SizedBox(width: 4),
+                ],
                 if (!mediaHomeSelected) ...[
                   _MediaSortTopAction(
                     selected: mediaState.sort,
@@ -1611,6 +1617,13 @@ class _TopBar extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(width: 8),
+                if (mediaHomeSelected ||
+                    mediaFilter == MediaLibraryBrowseFilter.movies ||
+                    mediaFilter == MediaLibraryBrowseFilter.series ||
+                    mediaFilter == MediaLibraryBrowseFilter.unmatched) ...[
+                  _GlobalScanTopAction(compact: false),
+                  const SizedBox(width: 4),
+                ],
                 if (!mediaHomeSelected) ...[
                   _MediaSortTopAction(
                     selected: mediaState.sort,
@@ -2159,33 +2172,77 @@ class _MediaLibraryScanTopActionState
             width: 38,
             height: 36,
             padding: EdgeInsets.zero,
-            onPressed: () =>
-                ref.read(mediaLibraryProvider.notifier).cancelScan(),
+            onPressed: () => ref
+                .read(mediaLibraryProvider.notifier)
+                .cancelScan(
+                  libraryID:
+                      widget.state.selectedLibrary?.id ?? globalMediaLibraryID,
+                ),
             child: const Icon(Icons.stop_rounded, size: 18),
           ),
         );
       }
       return ShadButton.destructive(
-        width: 124,
-        size: ShadButtonSize.sm,
-        onPressed: () => ref.read(mediaLibraryProvider.notifier).cancelScan(),
-        leading: const Icon(Icons.stop_rounded, size: 16),
-        child: const Text('停止扫描'),
+        width: 38,
+        height: 36,
+        padding: EdgeInsets.zero,
+        onPressed: () => ref
+            .read(mediaLibraryProvider.notifier)
+            .cancelScan(
+              libraryID:
+                  widget.state.selectedLibrary?.id ?? globalMediaLibraryID,
+            ),
+        child: const Icon(Icons.stop_rounded, size: 18),
       );
     }
     return MediaScanMenu(
       compact: widget.compact,
-      iconOnly: widget.compact,
+      iconOnly: true,
       disabled: widget.state.selectedLibrary == null,
       controller: _controller,
+      onScanUnrecognized: widget.state.selectedLibrary == null
+          ? () => ref
+                .read(mediaLibraryProvider.notifier)
+                .scanGlobalLibrary(forceAll: false)
+          : () => ref
+                .read(mediaLibraryProvider.notifier)
+                .rescanSelectedLibrary(
+                  mode: MediaLibraryScanMode.unrecognizedOnly,
+                ),
+      onForceAll: widget.state.selectedLibrary == null
+          ? () => ref
+                .read(mediaLibraryProvider.notifier)
+                .scanGlobalLibrary(forceAll: true)
+          : () => ref
+                .read(mediaLibraryProvider.notifier)
+                .rescanSelectedLibrary(mode: MediaLibraryScanMode.forceAll),
+    );
+  }
+}
+
+class _GlobalScanTopAction extends ConsumerStatefulWidget {
+  final bool compact;
+
+  const _GlobalScanTopAction({required this.compact});
+
+  @override
+  ConsumerState<_GlobalScanTopAction> createState() =>
+      _GlobalScanTopActionState();
+}
+
+class _GlobalScanTopActionState extends ConsumerState<_GlobalScanTopAction> {
+  @override
+  Widget build(BuildContext context) {
+    return MediaScanMenu(
+      compact: widget.compact,
+      iconOnly: true,
+      disabled: false,
       onScanUnrecognized: () => ref
           .read(mediaLibraryProvider.notifier)
-          .rescanSelectedLibrary(mode: MediaLibraryScanMode.unrecognizedOnly),
+          .scanGlobalLibrary(forceAll: false),
       onForceAll: () => ref
           .read(mediaLibraryProvider.notifier)
-          .rescanSelectedLibrary(mode: MediaLibraryScanMode.forceAll),
-      onGlobalScan: () =>
-          ref.read(mediaLibraryProvider.notifier).scanGlobalLibrary(),
+          .scanGlobalLibrary(forceAll: true),
     );
   }
 }
