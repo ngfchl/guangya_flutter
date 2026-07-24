@@ -3790,8 +3790,12 @@ class _MediaLibraryScanTaskDialogState
     final expanded = _expandedTaskIDs.contains(task.id);
     final tint = _taskStatusColor(context, task.status);
     final total = task.progress.total <= 0 ? null : task.progress.total;
+    final isTerminal = task.status == MediaLibraryScanTaskStatus.stopped ||
+        task.status == MediaLibraryScanTaskStatus.cancelled ||
+        task.status == MediaLibraryScanTaskStatus.completed ||
+        task.status == MediaLibraryScanTaskStatus.failed;
     final fraction = total == null || total == 0
-        ? null
+        ? (isTerminal ? 0.0 : null)
         : (task.progress.completed / total).clamp(0.0, 1.0);
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -3850,39 +3854,42 @@ class _MediaLibraryScanTaskDialogState
                 ),
               ],
               const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(999),
-                      child: LinearProgressIndicator(
-                        value: fraction,
-                        minHeight: 6,
-                        color: tint,
-                        backgroundColor: cs.border.withValues(alpha: 0.55),
+              if (total != null && total > 0) ...[
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '已扫描 ${task.progress.scanned} 个文件',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: 96,
-                    child: Text(
-                      total == null
-                          ? '${task.progress.completed}'
-                          : task.progress.pending > 0
-                          ? '${task.progress.scanned}扫 ${task.progress.pending}队 ${task.progress.completed}完/$total'
-                          : '${task.progress.scanned}扫 ${task.progress.completed}完/$total',
-                      textAlign: TextAlign.right,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: cs.mutedForeground,
-                        fontFeatures: const [FontFeature.tabularFigures()],
+                      Text(
+                        task.progress.pending > 0
+                            ? '队列 ${task.progress.pending} · 已完成 ${task.progress.completed}/$total'
+                            : '已完成 ${task.progress.completed}/$total',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
+              ],
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  value: fraction,
+                  minHeight: 6,
+                  color: tint,
+                  backgroundColor: cs.border.withValues(alpha: 0.55),
+                ),
               ),
               if (expanded) ...[
                 const SizedBox(height: 12),
