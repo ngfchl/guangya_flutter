@@ -1684,10 +1684,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
 
     try {
+      AppLogger.info('Media', '$modeLabel [1/5] 清理光盘目录内部文件');
       final removedDiscStreams = await _removeDiscInternalItems();
       if (removedDiscStreams > 0) {
         _appendScanLog('已清理 $removedDiscStreams 个已入库的光盘目录内部文件');
       }
+      AppLogger.info('Media', '$modeLabel [2/5] 加载已有条目');
       final previousLibraryItems = await _loadItems(library.id);
       final existingByID = {
         for (final item in previousLibraryItems) item.id: item,
@@ -1960,6 +1962,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
       if (forceAll && !_scanShouldAbort(library.id)) {
         _appendScanLog('正在强制刷新当前媒体库目录…');
+        AppLogger.info('Media', '$modeLabel [3/5] 开始扫描目录源，并发=$concurrency');
         _setScanProgress(
           library.id,
           const MediaLibraryScanProgress(phase: '正在读取当前媒体库目录'),
@@ -1997,6 +2000,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           mediaFiles = fallback.values.toList(growable: false);
         }
         _appendScanLog('当前媒体库目录刷新完成，发现 ${mediaFiles.length} 个媒体文件');
+        AppLogger.info('Media', '$modeLabel [3/5] 目录扫描完成，发现 ${mediaFiles.length} 个媒体文件');
       } else if (!_scanShouldAbort(library.id)) {
         final unrecognized = previousLibraryItems
             .where((item) => !item.isMatched)
@@ -2011,8 +2015,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           ),
         );
         await enqueueForRecognition(unrecognized);
+        AppLogger.info('Media', '$modeLabel [4/5] 识别 ${unrecognized.length} 个未识别资源');
       }
-      if (!_scanShouldAbort(library.id)) await flushRecognitionQueue();
+      if (!_scanShouldAbort(library.id)) {
+        AppLogger.info('Media', '$modeLabel [4/5] 等待识别队列完成');
+        await flushRecognitionQueue();
+      }
+      AppLogger.info('Media', '$modeLabel [5/5] 识别完成，入库中');
       await pendingPersistence;
       var items = unique.values.toList()
         ..sort(
@@ -6624,10 +6633,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
       await Future.wait(batch.map((folder) async {
         if (_scanShouldAbort(libraryID)) return;
+        AppLogger.info('Media', '扫描目录「${folder.path}」');
         var page = 0;
         final cachedFolder = forceRemote
             ? null
             : await FileMetadataCache.folderChildren(folder.id);
+        if (cachedFolder != null && cachedFolder.isNotEmpty) {
+          AppLogger.info('Media', '目录「${folder.path}」使用缓存，${cachedFolder.length} 项');
+        } else {
+          AppLogger.info('Media', '目录「${folder.path}」无缓存，调 API');
+        }
         final folderSnapshot = <CloudFile>[];
         while (!_scanShouldAbort(libraryID)) {
           if (!await _waitIfScanPaused(libraryID)) break;
@@ -6685,19 +6700,39 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               mediaBatch.add(mainFile);
             }
           } else {
+            var libDirCount = 0;
+            var libVideoCount = 0;
+            var libSmallCount = 0;
+            var libIsoCount = 0;
+            var libOtherCount = 0;
             for (final file in files) {
               if (file.isDirectory) {
+                libDirCount += 1;
                 if (recursive) {
                   final childPath = file.cloudPath;
                   if (!isMediaScanDiscInternalPath(childPath)) {
                     folders.add(_ScanFolder(file.id, childPath));
                   }
                 }
-              } else if (file.isVideo &&
-                  !isMediaScanIsoFile(file) &&
-                  (file.size ?? 0) >= minimumSizeBytes) {
-                mediaBatch.add(file);
+              } else if (file.isVideo) {
+                if (isMediaScanIsoFile(file)) {
+                  libIsoCount += 1;
+                } else if ((file.size ?? 0) < minimumSizeBytes) {
+                  libSmallCount += 1;
+                } else {
+                  libVideoCount += 1;
+                  mediaBatch.add(file);
+                }
+              } else {
+                libOtherCount += 1;
               }
+            }
+            if (mediaBatch.isEmpty && files.isNotEmpty) {
+              _appendScanLog(
+                '目录 ${folder.path}：共 ${files.length} 项，'
+                '子目录 $libDirCount，视频 $libVideoCount，'
+                '小文件 $libSmallCount，ISO $libIsoCount，其他 $libOtherCount',
+              );
             }
           }
           discovered += mediaBatch.length;
