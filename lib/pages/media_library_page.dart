@@ -941,7 +941,6 @@ class MediaScanMenu extends StatefulWidget {
   final bool disabled;
   final VoidCallback onScanUnrecognized;
   final VoidCallback onForceAll;
-  final VoidCallback? onGlobalScan;
   final ShadPopoverController? controller;
 
   const MediaScanMenu({
@@ -951,7 +950,6 @@ class MediaScanMenu extends StatefulWidget {
     required this.disabled,
     required this.onScanUnrecognized,
     required this.onForceAll,
-    this.onGlobalScan,
     this.controller,
   });
 
@@ -971,7 +969,7 @@ class MediaScanMenuState extends State<MediaScanMenu> {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    final triggerDisabled = widget.disabled && widget.onGlobalScan == null;
+    final triggerDisabled = widget.disabled;
     final trigger = widget.iconOnly
         ? ShadTooltip(
             builder: (_) => const Text('重新扫描'),
@@ -1024,15 +1022,6 @@ class MediaScanMenuState extends State<MediaScanMenu> {
                 description: '刷新当前媒体库目录并重新识别全部资源',
                 onPressed: widget.disabled ? null : widget.onForceAll,
               ),
-              if (widget.onGlobalScan != null) ...[
-                const SizedBox(height: 3),
-                _option(
-                  icon: Icons.travel_explore_rounded,
-                  title: '全局刮削',
-                  description: '无需媒体库，扫描全盘索引中的大视频文件',
-                  onPressed: widget.onGlobalScan,
-                ),
-              ],
             ],
           ),
         ),
@@ -2033,8 +2022,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               onForceAll: () => ref
                   .read(mediaLibraryProvider.notifier)
                   .rescanSelectedLibrary(mode: MediaLibraryScanMode.forceAll),
-              onGlobalScan: () =>
-                  ref.read(mediaLibraryProvider.notifier).scanGlobalLibrary(),
             ),
     ];
     final content = compact
@@ -3691,7 +3678,7 @@ class _MediaLibraryScanTaskDialogState
     final cs = ShadTheme.of(context).colorScheme;
     final size = MediaQuery.sizeOf(context);
     final width = (size.width - 32).clamp(340.0, 1000.0).toDouble();
-    final height = (size.height - 140).clamp(420.0, 700.0).toDouble();
+    final height = (size.height - 64).clamp(360.0, size.height).toDouble();
     final tasks = state.scanTasks;
     return ShadDialog(
       title: const Text('刮削任务管理'),
@@ -3749,12 +3736,23 @@ class _MediaLibraryScanTaskDialogState
             Expanded(
               child: tasks.isEmpty
                   ? _emptyState(context)
-                  : ListView.separated(
-                      itemCount: tasks.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 8),
-                      itemBuilder: (context, index) {
-                        final task = tasks[index];
-                        return _taskRow(context, task);
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final expandedLogHeight = (constraints.maxHeight - 138)
+                            .clamp(240.0, constraints.maxHeight)
+                            .toDouble();
+                        return ListView.separated(
+                          itemCount: tasks.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final task = tasks[index];
+                            return _taskRow(
+                              context,
+                              task,
+                              expandedLogHeight: expandedLogHeight,
+                            );
+                          },
+                        );
                       },
                     ),
             ),
@@ -3783,7 +3781,11 @@ class _MediaLibraryScanTaskDialogState
     );
   }
 
-  Widget _taskRow(BuildContext context, MediaLibraryScanTask task) {
+  Widget _taskRow(
+    BuildContext context,
+    MediaLibraryScanTask task, {
+    required double expandedLogHeight,
+  }) {
     final cs = ShadTheme.of(context).colorScheme;
     final expanded = _expandedTaskIDs.contains(task.id);
     final tint = _taskStatusColor(context, task.status);
@@ -3863,11 +3865,13 @@ class _MediaLibraryScanTaskDialogState
                   ),
                   const SizedBox(width: 10),
                   SizedBox(
-                    width: 68,
+                    width: 96,
                     child: Text(
                       total == null
                           ? '${task.progress.completed}'
-                          : '${task.progress.completed}/$total',
+                          : task.progress.pending > 0
+                          ? '${task.progress.scanned}扫 ${task.progress.pending}队 ${task.progress.completed}完/$total'
+                          : '${task.progress.scanned}扫 ${task.progress.completed}完/$total',
                       textAlign: TextAlign.right,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -3889,7 +3893,7 @@ class _MediaLibraryScanTaskDialogState
                   ),
                   const SizedBox(height: 8),
                 ],
-                _taskLogs(context, task),
+                _taskLogs(context, task, height: expandedLogHeight),
               ],
             ],
           ),
@@ -4025,11 +4029,15 @@ class _MediaLibraryScanTaskDialogState
     );
   }
 
-  Widget _taskLogs(BuildContext context, MediaLibraryScanTask task) {
+  Widget _taskLogs(
+    BuildContext context,
+    MediaLibraryScanTask task, {
+    required double height,
+  }) {
     final cs = ShadTheme.of(context).colorScheme;
     final logs = task.logs.reversed.toList(growable: false);
     return Container(
-      height: 190,
+      height: height,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: cs.background.withValues(alpha: 0.72),
