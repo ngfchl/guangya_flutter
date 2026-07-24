@@ -35,6 +35,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   final _pageSizeController = TextEditingController();
   final _mediaLibraryPageSizeController = TextEditingController();
   final _mediaHomePreviewCountController = TextEditingController();
+  var _doubanAutoRecognitionEnabled = false;
 
   @override
   void initState() {
@@ -66,6 +67,11 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         StorageManager.get<String>(StorageKeys.mediaLibraryPageSize) ?? '100';
     _mediaHomePreviewCountController.text =
         StorageManager.get<String>(StorageKeys.mediaHomePreviewCount) ?? '15';
+    final doubanEnabled = StorageManager.get<dynamic>(
+      StorageKeys.doubanAutoRecognitionEnabled,
+    );
+    _doubanAutoRecognitionEnabled =
+        doubanEnabled == true || doubanEnabled?.toString() == 'true';
   }
 
   @override
@@ -282,6 +288,21 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                         placeholder: 'https://wsrv.nl',
                       ),
                     ),
+                    _SettingsRow(
+                      icon: Icons.manage_search_rounded,
+                      label: '豆瓣自动识别',
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: ShadSwitch(
+                          value: _doubanAutoRecognitionEnabled,
+                          label: const Text('启用'),
+                          sublabel: const Text('TMDB 未命中或多候选时使用豆瓣辅助匹配'),
+                          onChanged: (value) => setState(
+                            () => _doubanAutoRecognitionEnabled = value,
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -378,6 +399,10 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       StorageManager.set(
         StorageKeys.tmdbImageProxy,
         _tmdbImageProxyController.text.trim(),
+      ),
+      StorageManager.set(
+        StorageKeys.doubanAutoRecognitionEnabled,
+        _doubanAutoRecognitionEnabled,
       ),
       StorageManager.set(
         StorageKeys.httpProxyHost,

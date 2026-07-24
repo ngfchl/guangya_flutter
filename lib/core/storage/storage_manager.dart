@@ -13,6 +13,8 @@ class StorageKeys {
   static const String tmdbProxyHost = 'guangya.tmdbProxyHost';
   static const String tmdbProxyPort = 'guangya.tmdbProxyPort';
   static const String tmdbImageProxy = 'guangya.tmdbImageProxy';
+  static const String doubanAutoRecognitionEnabled =
+      'guangya.doubanAutoRecognitionEnabled';
   static const String mediaLibraries = 'guangya.mediaLibraries';
   static const String mediaLibraryItems = 'guangya.mediaLibraryItems';
   static const String mediaCategoryRules = 'guangya.mediaCategoryRules';
@@ -35,6 +37,7 @@ class StorageKeys {
   static const String fastTransferSession = 'guangya.fastTransferSession';
   static const String mediaScanHistory = 'guangya.mediaScanHistory';
   static const String mediaScanTaskHistory = 'guangya.mediaScanTaskHistory';
+  static const String globalScanPendingQueue = 'guangya.globalScanPendingQueue';
   static const String cloudIndexRefreshMinutes =
       'guangya.cloudIndexRefreshMinutes';
   static const String cloudIndexConcurrency = 'guangya.cloudIndexConcurrency';
