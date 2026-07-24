@@ -1039,6 +1039,20 @@ class MediaLibraryStore {
     return values.values.toList();
   }
 
+  Future<Map<String, Set<String>>> fileIdsByLibrary() async {
+    final rows = await (await _db).rawQuery(
+      'SELECT library_id, file_id FROM media_items',
+    );
+    final result = <String, Set<String>>{};
+    for (final row in rows) {
+      final libID = row['library_id']?.toString() ?? '';
+      final fileID = row['file_id']?.toString() ?? '';
+      if (fileID.isEmpty) continue;
+      result.putIfAbsent(libID, () => <String>{}).add(fileID);
+    }
+    return result;
+  }
+
   Future<List<CloudFile>?> siblingFiles(String fileID) async {
     final rows = await (await _db).query(
       'folder_children',
