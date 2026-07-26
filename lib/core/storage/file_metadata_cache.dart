@@ -44,6 +44,10 @@ class FileMetadataCache {
 
   static Future<CloudFile?> file(String fileID) => _store.cachedFile(fileID);
 
+  /// Batch lookup that also resolves directories (no gcid required).
+  static Future<Map<String, CloudFile>> filesByIDs(Iterable<String> fileIDs) =>
+      _store.cachedFilesByIDs(fileIDs);
+
   static Future<Map<String, List<CloudFile>>> liveFilesByGCIDs(
     Iterable<String> gcids,
   ) => _store.liveFilesByGCIDs(gcids);

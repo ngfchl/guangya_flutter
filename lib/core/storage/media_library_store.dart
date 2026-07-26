@@ -34,6 +34,11 @@ class MediaLibraryStore {
     _database = await openDatabase(
       databasePath,
       version: 6,
+      onConfigure: (db) async {
+        // Enforce declared foreign keys (e.g. media_items -> media_libraries
+        // ON DELETE CASCADE). Must run before any query on each connection.
+        await db.execute('PRAGMA foreign_keys = ON');
+      },
       onCreate: (db, _) async {
         await _createSchema(db);
       },
@@ -56,9 +61,18 @@ class MediaLibraryStore {
           '已迁移 ${migration.rows} 条刮削记录，移除 ${FormatBytes.format(migration.artworkBytes)} 图片二进制缓存',
         );
       }
-      final tmdbMigrated = await migrateTMDBDoubanData();
-      if (tmdbMigrated > 0) {
-        AppLogger.info('Storage', '已迁移 $tmdbMigrated 条 TMDB/豆瓣数据到独立表');
+      // The TMDB/Douban migration scans the whole media_items table, so run it
+      // only once (or again after new blob-schema migrations) instead of every
+      // cold start. Newly-matched items already write directly to the works
+      // tables via upsertTMDBWork/upsertDoubanWork.
+      final needsWorkMigration =
+          migration != null || await _metaFlag('tmdb_douban_migrated') != '1';
+      if (needsWorkMigration) {
+        final tmdbMigrated = await migrateTMDBDoubanData();
+        if (tmdbMigrated > 0) {
+          AppLogger.info('Storage', '已迁移 $tmdbMigrated 条 TMDB/豆瓣数据到独立表');
+        }
+        await _setMetaFlag('tmdb_douban_migrated', '1');
       }
       await _vacuumIfFragmented(_database!);
     } catch (error, stackTrace) {
@@ -108,18 +122,29 @@ class MediaLibraryStore {
     }
     return rows.map((row) {
       final id = row['id']?.toString() ?? '';
+      final legacyRootID = row['root_id']?.toString();
+      final legacyRootPath = row['root_path']?.toString();
+      // Only synthesise a legacy source when the row actually carries a root.
+      // Libraries that intentionally have no sources (e.g. the global library,
+      // which scans the whole drive) must stay empty, otherwise a phantom
+      // "未配置目录" source leaks into scan paths.
+      final hasLegacyRoot =
+          (legacyRootID != null && legacyRootID.isNotEmpty) ||
+          (legacyRootPath != null && legacyRootPath.isNotEmpty);
       return MediaLibraryDefinition(
         id: id,
         name: row['name']?.toString() ?? '未命名媒体库',
         sources:
             sourcesByLibrary[id] ??
-            [
-              MediaLibrarySource(
-                id: '$id-legacy',
-                rootID: row['root_id']?.toString(),
-                path: row['root_path']?.toString() ?? '未配置目录',
-              ),
-            ],
+            (hasLegacyRoot
+                ? [
+                    MediaLibrarySource(
+                      id: '$id-legacy',
+                      rootID: legacyRootID,
+                      path: legacyRootPath ?? '云盘根目录',
+                    ),
+                  ]
+                : const <MediaLibrarySource>[]),
         kind: MediaLibraryKind.values.firstWhere(
           (kind) => kind.name == row['kind']?.toString(),
           orElse: () => MediaLibraryKind.mixed,
@@ -149,7 +174,7 @@ class MediaLibraryStore {
       items.addAll(rows.map(_itemFromRow));
       if (rows.length < pageSize) break;
     }
-    return items;
+    return enrichItemsWithWorkDetails(items);
   }
 
   /// Process media items in batches via streaming to avoid loading all into memory.
@@ -894,12 +919,14 @@ class MediaLibraryStore {
     final db = await _db;
     await db.transaction((txn) async {
       await _removeStaleFolderFileIndex(txn, folderID, files);
+      final folderKey = _folderID(folderID);
       for (final file in files) {
         final gcid = file.gcid?.trim();
         if (gcid == null || gcid.isEmpty) continue;
         await txn.insert('file_index', {
           'file_id': file.id,
           'gcid': gcid,
+          'folder_id': folderKey,
         }, conflictAlgorithm: ConflictAlgorithm.replace);
         await txn.insert('gcid_details', {
           'gcid': gcid,
@@ -907,7 +934,7 @@ class MediaLibraryStore {
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
       await txn.insert('folder_children', {
-        'folder_id': _folderID(folderID),
+        'folder_id': folderKey,
         'child_ids': jsonEncode(files.map((file) => file.id).toList()),
         'children_json': jsonEncode(
           files.map((file) => file.toJson()).toList(),
@@ -943,12 +970,14 @@ class MediaLibraryStore {
       for (final entry in folders.entries) {
         final files = entry.value;
         await _removeStaleFolderFileIndex(txn, entry.key, files);
+        final folderKey = _folderID(entry.key);
         for (final file in files) {
           final gcid = file.gcid?.trim();
           if (gcid == null || gcid.isEmpty) continue;
           await txn.insert('file_index', {
             'file_id': file.id,
             'gcid': gcid,
+            'folder_id': folderKey,
           }, conflictAlgorithm: ConflictAlgorithm.replace);
           await txn.insert('gcid_details', {
             'gcid': gcid,
@@ -956,7 +985,7 @@ class MediaLibraryStore {
           }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
         await txn.insert('folder_children', {
-          'folder_id': _folderID(entry.key),
+          'folder_id': folderKey,
           'child_ids': jsonEncode(files.map((file) => file.id).toList()),
           'children_json': jsonEncode(
             files.map((file) => file.toJson()).toList(),
@@ -1224,7 +1253,49 @@ class MediaLibraryStore {
   }
 
   Future<List<CloudFile>?> siblingFiles(String fileID) async {
-    final rows = await (await _db).query(
+    final db = await _db;
+    // Fast path: resolve the owning folder via the indexed reverse lookup,
+    // then read that single snapshot instead of scanning every folder.
+    final indexed = await db.query(
+      'file_index',
+      columns: const ['folder_id'],
+      where: 'file_id = ? AND folder_id IS NOT NULL',
+      whereArgs: [fileID],
+      limit: 1,
+    );
+    if (indexed.isNotEmpty) {
+      final folderKey = indexed.first['folder_id']?.toString();
+      if (folderKey != null) {
+        final snapshot = await db.query(
+          'folder_children',
+          columns: const ['children_json'],
+          where: 'folder_id = ?',
+          whereArgs: [folderKey],
+          limit: 1,
+        );
+        if (snapshot.isNotEmpty) {
+          try {
+            final raw = jsonDecode(
+              snapshot.first['children_json']?.toString() ?? '[]',
+            );
+            if (raw is List) {
+              final files = raw
+                  .whereType<Map>()
+                  .map(
+                    (value) =>
+                        CloudFile.fromJson(Map<String, dynamic>.from(value)),
+                  )
+                  .toList();
+              if (files.any((file) => file.id == fileID)) return files;
+            }
+          } catch (_) {
+            // Fall through to the legacy scan below.
+          }
+        }
+      }
+    }
+    // Fallback for legacy rows written before folder_id existed.
+    final rows = await db.query(
       'folder_children',
       columns: const ['children_json'],
       where: 'child_ids LIKE ?',
@@ -1248,10 +1319,73 @@ class MediaLibraryStore {
     return null;
   }
 
+  /// Returns cached [CloudFile] snapshots for [fileIDs], looked up through the
+  /// folder listings they belong to.
+  ///
+  /// Unlike [cachedFile] this does not require a gcid, so it also resolves
+  /// directories — which is what lets folder child counts survive a restart.
+  Future<Map<String, CloudFile>> cachedFilesByIDs(Iterable<String> fileIDs) async {
+    final wanted = fileIDs.toSet();
+    if (wanted.isEmpty) return const {};
+    final db = await _db;
+    final result = <String, CloudFile>{};
+
+    // Resolve the owning folders first so only relevant snapshots are decoded.
+    final folderIDs = <String>{};
+    for (final chunk in _chunked(wanted.toList(), 500)) {
+      final rows = await db.rawQuery(
+        'SELECT file_id, folder_id FROM file_index '
+        'WHERE file_id IN (${chunk.map((_) => '?').join(',')}) '
+        'AND folder_id IS NOT NULL',
+        chunk,
+      );
+      for (final row in rows) {
+        final folderID = row['folder_id']?.toString();
+        if (folderID != null) folderIDs.add(folderID);
+      }
+    }
+    if (folderIDs.isEmpty) return result;
+
+    for (final chunk in _chunked(folderIDs.toList(), 200)) {
+      final rows = await db.rawQuery(
+        'SELECT children_json FROM folder_children '
+        'WHERE folder_id IN (${chunk.map((_) => '?').join(',')})',
+        chunk,
+      );
+      for (final row in rows) {
+        try {
+          final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
+          if (raw is! List) continue;
+          for (final value in raw.whereType<Map>()) {
+            final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+            if (wanted.contains(file.id)) result[file.id] = file;
+          }
+        } catch (_) {
+          // A malformed snapshot should not abort the whole lookup.
+        }
+      }
+    }
+    return result;
+  }
+
   /// Returns the folder snapshot that still contains [fileID]. An empty
   /// string represents the cloud root; null means no cached parent exists.
   Future<String?> parentFolderID(String fileID) async {
-    final rows = await (await _db).query(
+    final db = await _db;
+    // Fast path: indexed reverse lookup via file_index.folder_id.
+    final indexed = await db.query(
+      'file_index',
+      columns: const ['folder_id'],
+      where: 'file_id = ? AND folder_id IS NOT NULL',
+      whereArgs: [fileID],
+      limit: 1,
+    );
+    if (indexed.isNotEmpty) {
+      final folderID = indexed.first['folder_id']?.toString();
+      if (folderID != null) return folderID == _rootFolderID ? '' : folderID;
+    }
+    // Fallback for legacy rows written before folder_id existed.
+    final rows = await db.query(
       'folder_children',
       columns: const ['folder_id', 'child_ids'],
       where: 'child_ids LIKE ?',
@@ -1420,11 +1554,25 @@ class MediaLibraryStore {
       )
     ''');
     await db.execute('''
-      CREATE TABLE IF NOT EXISTS file_index (
-        file_id TEXT PRIMARY KEY NOT NULL,
-        gcid TEXT NOT NULL
+      CREATE TABLE IF NOT EXISTS store_meta (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT
       )
     ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS file_index (
+        file_id TEXT PRIMARY KEY NOT NULL,
+        gcid TEXT NOT NULL,
+        folder_id TEXT
+      )
+    ''');
+    // Reverse lookup file_id -> folder_id, replacing the O(N) full-table
+    // `child_ids LIKE '%"id"%'` scans in parentFolderID / siblingFiles.
+    await _ensureColumn(db, 'file_index', 'folder_id', 'TEXT');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_file_index_folder '
+      'ON file_index(folder_id)',
+    );
     await db.execute('''
       CREATE TABLE IF NOT EXISTS gcid_details (
         gcid TEXT PRIMARY KEY NOT NULL,
@@ -1483,6 +1631,23 @@ class MediaLibraryStore {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_id '
       'ON media_items(tmdb_id)',
+    );
+    // douban_id drives search, statistics work_key grouping and enrichment,
+    // but previously had no index (unlike tmdb_id). Partial index keeps it
+    // small by skipping the many NULL rows.
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_douban_id '
+      'ON media_items(douban_id) WHERE douban_id IS NOT NULL',
+    );
+    // Sort columns exposed by _mediaItemsOrderBy — avoid full-table scans on
+    // large libraries when sorting by release date / recency.
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_release '
+      'ON media_items(release_date)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_updated '
+      'ON media_items(updated_at)',
     );
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_file_index_gcid ON file_index(gcid)',
@@ -1640,6 +1805,18 @@ class MediaLibraryStore {
       'ON media_items(tmdb_id)',
     );
     await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_douban_id '
+      'ON media_items(douban_id) WHERE douban_id IS NOT NULL',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_release '
+      'ON media_items(release_date)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_updated '
+      'ON media_items(updated_at)',
+    );
+    await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_gcid ON media_items(gcid)',
     );
     await db.execute(
@@ -1765,6 +1942,35 @@ class MediaLibraryStore {
   ];
   static String _folderID(String? folderID) => folderID ?? _rootFolderID;
 
+  /// Reads a persisted one-off flag/marker from store_meta (null if unset).
+  Future<String?> _metaFlag(String key) async {
+    final db = await _db;
+    final rows = await db.query(
+      'store_meta',
+      columns: const ['value'],
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['value']?.toString();
+  }
+
+  Future<void> _setMetaFlag(String key, String value) async {
+    final db = await _db;
+    await db.insert('store_meta', {
+      'key': key,
+      'value': value,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Split [values] into chunks of at most [size] to stay under SQLite's
+  /// SQLITE_MAX_VARIABLE_NUMBER limit (999 by default) for `IN (...)` queries.
+  static Iterable<List<T>> _chunked<T>(List<T> values, int size) sync* {
+    for (var i = 0; i < values.length; i += size) {
+      yield values.sublist(i, (i + size).clamp(0, values.length));
+    }
+  }
+
   Future<int> _databaseBytes(String databasePath) async {
     var bytes = 0;
     for (final suffix in const ['', '-wal', '-shm']) {
@@ -1787,6 +1993,63 @@ class MediaLibraryStore {
   }
 
   // ── TMDB Works ──
+
+  /// Searches the local works table by title (exact then fuzzy).
+  ///
+  /// Returns candidates ordered by relevance: exact title match first, then
+  /// original_title match, then LIKE substring. Year and kind are used as
+  /// filters when provided, narrowing the result without requiring a network
+  /// round-trip.
+  Future<List<TMDBWork>> searchTMDBWorksByTitle(
+    String title, {
+    int? year,
+    String? mediaKind,
+    int limit = 10,
+  }) async {
+    final db = await _db;
+    final normalized = title.trim().toLowerCase();
+    if (normalized.isEmpty) return const [];
+
+    // Phase 1: exact match on title or original_title.
+    final exactRows = await db.rawQuery('''
+      SELECT * FROM tmdb_works
+      WHERE (LOWER(title) = ? OR LOWER(original_title) = ?)
+      ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
+      ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
+      ORDER BY rating DESC NULLS LAST
+      LIMIT ?
+    ''', [
+      normalized,
+      normalized,
+      if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+      if (year != null) '$year',
+      limit,
+    ]);
+    if (exactRows.isNotEmpty) {
+      return exactRows.map((r) => TMDBWork.fromJson(r)).toList();
+    }
+
+    // Phase 2: fuzzy LIKE match.
+    final likePattern = '%$normalized%';
+    final fuzzyRows = await db.rawQuery('''
+      SELECT * FROM tmdb_works
+      WHERE (LOWER(title) LIKE ? OR LOWER(original_title) LIKE ?)
+      ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
+      ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
+      ORDER BY
+        CASE WHEN LOWER(title) = ? THEN 0 ELSE 1 END,
+        rating DESC NULLS LAST
+      LIMIT ?
+    ''', [
+      likePattern,
+      likePattern,
+      if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+      if (year != null) '$year',
+      normalized,
+      limit,
+    ]);
+    return fuzzyRows.map((r) => TMDBWork.fromJson(r)).toList();
+  }
 
   Future<TMDBWork?> tmdbWork(int tmdbID) async {
     final rows = await (await _db).query(
@@ -1826,7 +2089,108 @@ class MediaLibraryStore {
     return rows.map((row) => TMDBWork.fromJson(row)).toList();
   }
 
+  /// Batch variant of [upsertTMDBWork]. One transaction for the whole batch
+  /// instead of one per work, which matters during a full-drive scrape.
+  Future<void> upsertTMDBWorks(Iterable<TMDBWork> works) async {
+    final list = works.toList(growable: false);
+    if (list.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final work in list) {
+        batch.rawInsert('''
+          INSERT OR REPLACE INTO tmdb_works
+            (tmdb_id, title, original_title, media_kind, release_date,
+             overview, poster_path, backdrop_path, rating, imdb_id, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', [
+          work.tmdbID,
+          work.title,
+          work.originalTitle,
+          work.mediaKind.name,
+          work.releaseDate,
+          work.overview,
+          work.posterPath,
+          work.backdropPath,
+          work.rating,
+          work.imdbID,
+          work.createdAt.millisecondsSinceEpoch / 1000.0,
+        ]);
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  /// Looks up many TMDB works at once, keyed by `tmdb_id`.
+  Future<Map<int, TMDBWork>> tmdbWorksByIDs(Iterable<int> ids) async {
+    final unique = ids.toSet().toList(growable: false);
+    if (unique.isEmpty) return const {};
+    final db = await _db;
+    final result = <int, TMDBWork>{};
+    for (final chunk in _chunked(unique, 500)) {
+      final rows = await db.rawQuery(
+        'SELECT * FROM tmdb_works WHERE tmdb_id IN '
+        '(${chunk.map((_) => '?').join(',')})',
+        chunk,
+      );
+      for (final row in rows) {
+        final work = TMDBWork.fromJson(row);
+        result[work.tmdbID] = work;
+      }
+    }
+    return result;
+  }
+
   // ── Douban Works ──
+
+  Future<List<DoubanWork>> searchDoubanWorksByTitle(
+    String title, {
+    int? year,
+    String? mediaKind,
+    int limit = 10,
+  }) async {
+    final db = await _db;
+    final normalized = title.trim().toLowerCase();
+    if (normalized.isEmpty) return const [];
+
+    final exactRows = await db.rawQuery('''
+      SELECT * FROM douban_works
+      WHERE (LOWER(title) = ? OR LOWER(original_title) = ?)
+      ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
+      ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
+      ORDER BY rating DESC NULLS LAST
+      LIMIT ?
+    ''', [
+      normalized,
+      normalized,
+      if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+      if (year != null) '$year',
+      limit,
+    ]);
+    if (exactRows.isNotEmpty) {
+      return exactRows.map((r) => DoubanWork.fromJson(r)).toList();
+    }
+
+    final likePattern = '%$normalized%';
+    final fuzzyRows = await db.rawQuery('''
+      SELECT * FROM douban_works
+      WHERE (LOWER(title) LIKE ? OR LOWER(original_title) LIKE ?)
+      ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
+      ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
+      ORDER BY
+        CASE WHEN LOWER(title) = ? THEN 0 ELSE 1 END,
+        rating DESC NULLS LAST
+      LIMIT ?
+    ''', [
+      likePattern,
+      likePattern,
+      if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+      if (year != null) '$year',
+      normalized,
+      limit,
+    ]);
+    return fuzzyRows.map((r) => DoubanWork.fromJson(r)).toList();
+  }
 
   Future<DoubanWork?> doubanWork(String doubanID) async {
     final rows = await (await _db).query(
@@ -1862,6 +2226,154 @@ class MediaLibraryStore {
   Future<List<DoubanWork>> allDoubanWorks() async {
     final rows = await (await _db).query('douban_works', orderBy: 'title');
     return rows.map((row) => DoubanWork.fromJson(row)).toList();
+  }
+
+  /// Batch variant of [upsertDoubanWork]; see [upsertTMDBWorks].
+  Future<void> upsertDoubanWorks(Iterable<DoubanWork> works) async {
+    final list = works.toList(growable: false);
+    if (list.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final work in list) {
+        batch.rawInsert('''
+          INSERT OR REPLACE INTO douban_works
+            (douban_id, title, original_title, media_kind, release_date,
+             overview, poster_path, rating, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', [
+          work.doubanID,
+          work.title,
+          work.originalTitle,
+          work.mediaKind.name,
+          work.releaseDate,
+          work.overview,
+          work.posterPath,
+          work.rating,
+          work.createdAt.millisecondsSinceEpoch / 1000.0,
+        ]);
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  /// Looks up many Douban works at once, keyed by `douban_id`.
+  Future<Map<String, DoubanWork>> doubanWorksByIDs(Iterable<String> ids) async {
+    final unique = ids.where((id) => id.isNotEmpty).toSet().toList(
+      growable: false,
+    );
+    if (unique.isEmpty) return const {};
+    final db = await _db;
+    final result = <String, DoubanWork>{};
+    for (final chunk in _chunked(unique, 500)) {
+      final rows = await db.rawQuery(
+        'SELECT * FROM douban_works WHERE douban_id IN '
+        '(${chunk.map((_) => '?').join(',')})',
+        chunk,
+      );
+      for (final row in rows) {
+        final work = DoubanWork.fromJson(row);
+        result[work.doubanID] = work;
+      }
+    }
+    return result;
+  }
+
+  /// 从 TMDB/豆瓣独立表加载详情，附加到 media items 上
+  Future<List<MediaLibraryItem>> enrichItemsWithWorkDetails(
+    List<MediaLibraryItem> items,
+  ) async {
+    if (items.isEmpty) return items;
+    final tmdbIds = <int>{};
+    final doubanIds = <String>{};
+    for (final item in items) {
+      if (item.tmdbID != null) tmdbIds.add(item.tmdbID!);
+      if (item.doubanID != null && item.doubanID!.isNotEmpty) {
+        doubanIds.add(item.doubanID!);
+      }
+    }
+    if (tmdbIds.isEmpty && doubanIds.isEmpty) return items;
+
+    final db = await _db;
+    final tmdbMap = <int, TMDBWork>{};
+    for (final chunk in _chunked(tmdbIds.toList(), 500)) {
+      final rows = await db.rawQuery(
+        'SELECT * FROM tmdb_works WHERE tmdb_id IN '
+        '(${chunk.map((_) => '?').join(',')})',
+        chunk,
+      );
+      for (final row in rows) {
+        final work = TMDBWork.fromJson(row);
+        tmdbMap[work.tmdbID] = work;
+      }
+    }
+    final doubanMap = <String, DoubanWork>{};
+    for (final chunk in _chunked(doubanIds.toList(), 500)) {
+      final rows = await db.rawQuery(
+        'SELECT * FROM douban_works WHERE douban_id IN '
+        '(${chunk.map((_) => '?').join(',')})',
+        chunk,
+      );
+      for (final row in rows) {
+        final work = DoubanWork.fromJson(row);
+        doubanMap[work.doubanID] = work;
+      }
+    }
+
+    return items.map((item) {
+      final tmdbWork = item.tmdbID != null ? tmdbMap[item.tmdbID] : null;
+      final doubanWork = item.doubanID != null
+          ? doubanMap[item.doubanID!]
+          : null;
+      if (tmdbWork == null && doubanWork == null) return item;
+      // Priority: TMDB first, then Douban (only when a douban id exists),
+      // finally the item's own value. Empty strings are treated as absent so a
+      // partially-filled TMDB row still falls back to Douban field-by-field.
+      String pickText(String? tmdb, String? douban, String fallback) {
+        if (tmdb != null && tmdb.trim().isNotEmpty) return tmdb;
+        if (douban != null && douban.trim().isNotEmpty) return douban;
+        return fallback;
+      }
+      String? pickNullableText(String? tmdb, String? douban, String? fallback) {
+        if (tmdb != null && tmdb.trim().isNotEmpty) return tmdb;
+        if (douban != null && douban.trim().isNotEmpty) return douban;
+        return fallback;
+      }
+      return item.copyWith(
+        title: pickText(tmdbWork?.title, doubanWork?.title, item.title),
+        originalTitle: pickText(
+          tmdbWork?.originalTitle,
+          doubanWork?.originalTitle,
+          item.originalTitle,
+        ),
+        mediaKind: tmdbWork?.mediaKind ??
+            doubanWork?.mediaKind ??
+            item.mediaKind,
+        releaseDate: pickText(
+          tmdbWork?.releaseDate,
+          doubanWork?.releaseDate,
+          item.releaseDate,
+        ),
+        overview: pickText(
+          tmdbWork?.overview,
+          doubanWork?.overview,
+          item.overview,
+        ),
+        posterPath: pickNullableText(
+          tmdbWork?.posterPath,
+          doubanWork?.posterPath,
+          item.posterPath,
+        ),
+        backdropPath: pickNullableText(
+          tmdbWork?.backdropPath,
+          null,
+          item.backdropPath,
+        ),
+        tmdbRating: tmdbWork?.rating ?? item.tmdbRating,
+        doubanRating: doubanWork?.rating ?? item.doubanRating,
+        imdbID: pickNullableText(tmdbWork?.imdbID, null, item.imdbID),
+      );
+    }).toList();
   }
 
   // ── Migration: 将 media_items 中的 TMDB/豆瓣数据迁移到独立表 ──
