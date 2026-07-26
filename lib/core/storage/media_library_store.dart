@@ -148,6 +148,44 @@ class MediaLibraryStore {
     return items;
   }
 
+  /// Process media items in batches via streaming to avoid loading all into memory.
+  Future<void> allItemsBatched({
+    required String? libraryID,
+    required Future<void> Function(List<MediaLibraryItem> batch) onBatch,
+    bool unmatchedOnly = false,
+    int batchSize = 200,
+  }) async {
+    final db = await _db;
+    await _ensureMediaItemLocationColumns(db);
+    final where = <String>[];
+    final args = <Object?>[];
+    if (libraryID != null) {
+      where.add('library_id = ?');
+      args.add(libraryID);
+    }
+    if (unmatchedOnly) {
+      where.add('(tmdb_id IS NULL OR tmdb_id = \'\') AND (douban_id IS NULL OR douban_id = \'\')');
+    }
+    final whereClause = where.isEmpty ? null : where.join(' AND ');
+    var offset = 0;
+    while (true) {
+      final rows = await db.query(
+        'media_items',
+        columns: _itemMetadataColumns,
+        where: whereClause,
+        whereArgs: args.isEmpty ? null : args,
+        orderBy: 'title COLLATE NOCASE, library_id, file_id',
+        limit: batchSize,
+        offset: offset,
+      );
+      if (rows.isEmpty) break;
+      offset += rows.length;
+      final batch = rows.map(_itemFromRow).toList();
+      if (batch.isNotEmpty) await onBatch(batch);
+      if (rows.length < batchSize) break;
+    }
+  }
+
   Future<List<MediaLibraryItem>> itemsPage({
     String? libraryID,
     String? mediaKind,
@@ -627,6 +665,64 @@ class MediaLibraryStore {
     });
   }
 
+  /// Remove all items whose resource_path contains BDMV or VIDEO_TS
+  /// (disc internal files) for the given library in a single SQL query.
+  Future<int> removeDiscItems(String libraryID) async {
+    final db = await _db;
+    final removed = await db.delete(
+      'media_items',
+      where: 'library_id = ? AND (resource_path LIKE ? OR resource_path LIKE ?)',
+      whereArgs: [libraryID, '%/BDMV/%', '%/VIDEO_TS/%'],
+    );
+    final removedUnmatched = await db.delete(
+      'media_items',
+      where: 'library_id = ? AND (tmdb_id IS NULL OR tmdb_id = \'\') '
+          'AND (resource_path LIKE ? OR resource_path LIKE ?)',
+      whereArgs: [libraryID, '%BDMV%', '%VIDEO_TS%'],
+    );
+    final removedM2ts = await db.delete(
+      'media_items',
+      where: 'library_id = ? AND (cloud_name LIKE ? OR cloud_name LIKE ? '
+          'OR cloud_name LIKE ? OR cloud_name LIKE ? OR cloud_name LIKE ?)',
+      whereArgs: [libraryID, '%.m2ts', '%.M2TS', '%.vob', '%.VOB', '%.IFO'],
+    );
+    return removed + removedUnmatched + removedM2ts;
+  }
+
+  /// Remove items matching exclusion folder IDs or keywords via SQL.
+  Future<int> removeExcludedItems(
+    String libraryID,
+    Set<String> excludedFolders,
+    List<String> excludedKeywords,
+  ) async {
+    final db = await _db;
+    final conditions = <String>[];
+    final args = <Object?>[];
+
+    // 排除文件夹：full_parent_ids 包含排除文件夹ID
+    if (excludedFolders.isNotEmpty) {
+      for (final folderID in excludedFolders) {
+        conditions.add('full_parent_ids LIKE ?');
+        args.add('%$folderID%');
+      }
+    }
+    // 排除关键词：文件名或路径包含关键词
+    if (excludedKeywords.isNotEmpty) {
+      for (final kw in excludedKeywords) {
+        conditions.add('(cloud_name LIKE ? OR resource_path LIKE ?)');
+        args.addAll(['%$kw%', '%$kw%']);
+      }
+    }
+    if (conditions.isEmpty) return 0;
+
+    final where = conditions.map((c) => '($c)').join(' OR ');
+    return db.delete(
+      'media_items',
+      where: 'library_id = ? AND ($where)',
+      whereArgs: [libraryID, ...args],
+    );
+  }
+
   Future<void> replaceItemsByPreviousIDs(
     Iterable<
       ({String previousLibraryID, String previousFileID, MediaLibraryItem item})
@@ -1019,24 +1115,43 @@ class MediaLibraryStore {
   }
 
   Future<List<CloudFile>> allCachedFolderChildren() async {
-    final rows = await (await _db).query(
-      'folder_children',
-      columns: const ['children_json'],
-    );
-    final values = <String, CloudFile>{};
-    for (final row in rows) {
-      try {
-        final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
-        if (raw is! List) continue;
-        for (final value in raw.whereType<Map>()) {
-          final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
-          values[file.id] = file;
-        }
-      } catch (_) {
-        // Ignore a malformed stale folder row and keep the remaining index.
+    final result = <CloudFile>[];
+    await allCachedFolderChildrenBatched((batch) async {
+      result.addAll(batch);
+    });
+    return result;
+  }
+
+  /// Process all cached folder children in batches to avoid loading everything
+  /// into memory at once. [onBatch] is called for each batch of files.
+  Future<void> allCachedFolderChildrenBatched(
+    Future<void> Function(List<CloudFile> batch) onBatch, {
+    int batchSize = 500,
+  }) async {
+    final db = await _db;
+    var offset = 0;
+    while (true) {
+      final rows = await db.query(
+        'folder_children',
+        columns: const ['children_json'],
+        limit: batchSize,
+        offset: offset,
+      );
+      if (rows.isEmpty) break;
+      offset += rows.length;
+      final batch = <CloudFile>{};
+      for (final row in rows) {
+        try {
+          final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
+          if (raw is! List) continue;
+          for (final value in raw.whereType<Map>()) {
+            final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+            batch.add(file);
+          }
+        } catch (_) {}
       }
+      if (batch.isNotEmpty) await onBatch(batch.toList());
     }
-    return values.values.toList();
   }
 
   Future<Map<String, Set<String>>> fileIdsByLibrary() async {
@@ -1051,6 +1166,57 @@ class MediaLibraryStore {
       result.putIfAbsent(libID, () => <String>{}).add(fileID);
     }
     return result;
+  }
+
+  /// Stream file IDs by library in batches to avoid loading all into memory.
+  Future<void> fileIdsByLibraryBatched(
+    Future<void> Function(String libraryID, Set<String> ids) onBatch, {
+    int batchSize = 500,
+  }) async {
+    final db = await _db;
+    final libIds = <String, Set<String>>{};
+    var offset = 0;
+    while (true) {
+      final rows = await db.rawQuery(
+        'SELECT library_id, file_id FROM media_items LIMIT ? OFFSET ?',
+        [batchSize, offset],
+      );
+      if (rows.isEmpty) break;
+      offset += rows.length;
+      libIds.clear();
+      for (final row in rows) {
+        final libID = row['library_id']?.toString() ?? '';
+        final fileID = row['file_id']?.toString() ?? '';
+        if (fileID.isEmpty) continue;
+        libIds.putIfAbsent(libID, () => <String>{}).add(fileID);
+      }
+      for (final entry in libIds.entries) {
+        await onBatch(entry.key, entry.value);
+      }
+      if (rows.length < batchSize) break;
+    }
+  }
+
+  Future<Set<String>> fileIdsForLibrary(String libraryId) async {
+    final rows = await (await _db).rawQuery(
+      'SELECT file_id FROM media_items WHERE library_id = ?',
+      [libraryId],
+    );
+    return rows
+        .map((r) => r['file_id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+  }
+
+  Future<Set<String>> fileIdsExcludingLibrary(String libraryId) async {
+    final rows = await (await _db).rawQuery(
+      'SELECT file_id FROM media_items WHERE library_id != ?',
+      [libraryId],
+    );
+    return rows
+        .map((r) => r['file_id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
   }
 
   Future<List<CloudFile>?> siblingFiles(String fileID) async {

@@ -30,6 +30,12 @@ class FileMetadataCache {
   static Future<List<CloudFile>> allCachedFolderChildren() =>
       _store.allCachedFolderChildren();
 
+  static Future<void> allCachedFolderChildrenBatched(
+    Future<void> Function(List<CloudFile> batch) onBatch, {
+    int batchSize = 500,
+  }) =>
+      _store.allCachedFolderChildrenBatched(onBatch, batchSize: batchSize);
+
   static Future<List<CloudFile>?> siblingFiles(String fileID) =>
       _store.siblingFiles(fileID);
 
