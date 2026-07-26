@@ -282,7 +282,7 @@ Future<bool> _copyOrMoveFilesToDestination(
   if (files.isEmpty) return false;
   final destination = await showShadDialog<_CloudFolderDestination>(
     context: context,
-    builder: (_) => _CloudFolderDestinationPicker(move: move),
+    builder: (_) => _CloudFolderDestinationPicker(move: move, files: files),
   );
   if (destination == null || !context.mounted) return false;
   if (move &&
@@ -309,8 +309,12 @@ Future<bool> _copyOrMoveFilesToDestination(
 
 class _CloudFolderDestinationPicker extends ConsumerStatefulWidget {
   final bool move;
+  final List<CloudFile> _files;
 
-  const _CloudFolderDestinationPicker({required this.move});
+  const _CloudFolderDestinationPicker({
+    required this.move,
+    required List<CloudFile> files,
+  }) : _files = files;
 
   @override
   ConsumerState<_CloudFolderDestinationPicker> createState() =>
@@ -324,6 +328,7 @@ class _CloudFolderDestinationPickerState
   var _folders = <CloudFile>[];
   CloudFile? _selectedFolder;
   var _loading = false;
+  var _executing = false;
   String? _error;
   String _filterQuery = '';
 
@@ -404,18 +409,39 @@ class _CloudFolderDestinationPickerState
           child: const Text('取消'),
         ),
         ShadButton(
-          onPressed: () => Navigator.of(context).pop(
-            _CloudFolderDestination(
-              _selectedFolder?.id ?? (_path.isEmpty ? null : _path.last.id),
-            ),
-          ),
-          child: const Text('选择'),
+          onPressed: _executing
+              ? null
+              : () async {
+                  setState(() => _executing = true);
+                  final destinationID =
+                      _selectedFolder?.id ?? (_path.isEmpty ? null : _path.last.id);
+                  final notifier = ref.read(fileProvider.notifier);
+                  try {
+                    if (widget.move) {
+                      await notifier.moveFilesTo(widget._files, parentID: destinationID);
+                    } else {
+                      await notifier.copyFilesTo(widget._files, parentID: destinationID);
+                    }
+                    if (mounted) Navigator.of(context).pop(true);
+                  } catch (e) {
+                    if (mounted) setState(() => _executing = false);
+                    rethrow;
+                  }
+                },
+          child: _executing
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('选择'),
         ),
       ],
       child: SizedBox(
         width: 440,
         height: 340,
-        child: Column(
+        child: Material(
+          type: MaterialType.transparency,
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Wrap(
@@ -536,6 +562,7 @@ class _CloudFolderDestinationPickerState
                     ),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -2203,16 +2230,29 @@ class _MediaLibraryScanTopActionState
       onScanUnrecognized: widget.state.selectedLibrary == null
           ? () => ref
                 .read(mediaLibraryProvider.notifier)
-                .scanGlobalLibrary(forceAll: false)
+                .scanGlobalLibrary(
+                  mode: MediaLibraryScanMode.unrecognizedOnly,
+                )
           : () => ref
                 .read(mediaLibraryProvider.notifier)
                 .rescanSelectedLibrary(
                   mode: MediaLibraryScanMode.unrecognizedOnly,
                 ),
+      onScanUnindexed: widget.state.selectedLibrary == null
+          ? () => ref
+                .read(mediaLibraryProvider.notifier)
+                .scanGlobalLibrary(
+                  mode: MediaLibraryScanMode.unindexedOnly,
+                )
+          : () => ref
+                .read(mediaLibraryProvider.notifier)
+                .rescanSelectedLibrary(
+                  mode: MediaLibraryScanMode.unindexedOnly,
+                ),
       onForceAll: widget.state.selectedLibrary == null
           ? () => ref
                 .read(mediaLibraryProvider.notifier)
-                .scanGlobalLibrary(forceAll: true)
+                .scanGlobalLibrary(mode: MediaLibraryScanMode.forceAll)
           : () => ref
                 .read(mediaLibraryProvider.notifier)
                 .rescanSelectedLibrary(mode: MediaLibraryScanMode.forceAll),
@@ -2239,10 +2279,13 @@ class _GlobalScanTopActionState extends ConsumerState<_GlobalScanTopAction> {
       disabled: false,
       onScanUnrecognized: () => ref
           .read(mediaLibraryProvider.notifier)
-          .scanGlobalLibrary(forceAll: false),
+          .scanGlobalLibrary(mode: MediaLibraryScanMode.unrecognizedOnly),
+      onScanUnindexed: () => ref
+          .read(mediaLibraryProvider.notifier)
+          .scanGlobalLibrary(mode: MediaLibraryScanMode.unindexedOnly),
       onForceAll: () => ref
           .read(mediaLibraryProvider.notifier)
-          .scanGlobalLibrary(forceAll: true),
+          .scanGlobalLibrary(mode: MediaLibraryScanMode.forceAll),
     );
   }
 }
