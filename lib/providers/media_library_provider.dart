@@ -449,6 +449,10 @@ class MediaLibraryState {
 }
 
 class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
+  /// How often the global scan writes an aggregated recognition-progress line
+  /// to the user-facing scan log (instead of one line per file).
+  static const _globalScanRecognitionLogStep = 50;
+
   final Future<void> Function(Set<String>)? _removeWatchHistory;
   GuangyaAPI? _api;
   final MediaLibraryStore _store;
@@ -468,6 +472,22 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<void> _scanHistoryPersistence = Future.value();
   bool _cancelDetailSync = false;
   bool _refreshingCloudIndex = false;
+  /// Number of in-flight background manual-match enrichment tasks.
+  ///
+  /// Search results keyed by (title + year + kind + apiKey). Many files share
+  /// the same parsed title (e.g. 24 episodes of a season, or multiple releases
+  /// of the same movie), so caching here avoids redundant network round-trips.
+  /// In-flight requests are also merged: if two workers hit the same title at
+  /// the same time they share the same Future instead of firing two requests.
+  final _recognitionSearchCache = <String, Future<({
+    _TMDBRecognitionSearchResult tmdb,
+    List<Map<String, dynamic>> douban,
+    List<String> attempts,
+  })>>{};
+  int _manualMatchEnrichment = 0;
+  /// Serializes background manual-match enrichment so concurrent tasks do not
+  /// race on shared state (items list / allItems reload).
+  Future<void> _manualMatchEnrichmentTail = Future.value();
   bool _reconcilingMediaGCIDs = false;
   Future<void> _mediaRemovalQueue = Future.value();
   int _pendingMediaRemovals = 0;
@@ -723,43 +743,59 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       return;
     }
-    final removedItems = (await _loadAllItems())
-        .where((item) => item.libraryID == id)
-        .toList(growable: false);
-    await _store.deleteLibrary(id);
-    final allItems = await _loadAllItems();
-    final retainedFileIDs = allItems.map((item) => item.id).toSet();
-    final orphanedHistoryIDs = removedItems
-        .map((item) => item.id)
-        .where((fileID) => !retainedFileIDs.contains(fileID))
-        .toSet();
-    if (orphanedHistoryIDs.isNotEmpty) {
-      try {
-        await _removeWatchHistory?.call(orphanedHistoryIDs);
-      } catch (error) {
-        AppLogger.warning('Media', '媒体库已删除，但观看历史清理失败：$error');
-      }
+    // Pre-check: ensure the library actually exists in state; bail early if not.
+    if (!state.libraries.any((l) => l.id == id)) {
+      state = state.copyWith(
+        statusMessage: '媒体库不存在或已被删除',
+        clearError: true,
+      );
+      return;
     }
-    _librarySelectionSerial += 1;
-    final libraries = state.libraries
-        .where((library) => library.id != id)
-        .toList(growable: false);
-    final selectedID = state.selectedLibraryID == id
-        ? (libraries.isEmpty ? null : libraries.first.id)
-        : state.selectedLibraryID;
-    final selectedItems = selectedID == null
-        ? const <MediaLibraryItem>[]
-        : allItems
-              .where((item) => item.libraryID == selectedID)
-              .toList(growable: false);
-    state = state.copyWith(
-      libraries: libraries,
-      selectedLibraryID: selectedID,
-      clearSelectedLibrary: selectedID == null,
-      items: selectedItems,
-      allItems: allItems,
-      statusMessage: '媒体库已删除',
-    );
+    try {
+      final removedItems = (await _loadAllItems())
+          .where((item) => item.libraryID == id)
+          .toList(growable: false);
+      await _store.deleteLibrary(id);
+      final allItems = await _loadAllItems();
+      final retainedFileIDs = allItems.map((item) => item.id).toSet();
+      final orphanedHistoryIDs = removedItems
+          .map((item) => item.id)
+          .where((fileID) => !retainedFileIDs.contains(fileID))
+          .toSet();
+      if (orphanedHistoryIDs.isNotEmpty) {
+        try {
+          await _removeWatchHistory?.call(orphanedHistoryIDs);
+        } catch (error) {
+          AppLogger.warning('Media', '媒体库已删除，但观看历史清理失败：$error');
+        }
+      }
+      _librarySelectionSerial += 1;
+      final libraries = state.libraries
+          .where((library) => library.id != id)
+          .toList(growable: false);
+      final selectedID = state.selectedLibraryID == id
+          ? (libraries.isEmpty ? null : libraries.first.id)
+          : state.selectedLibraryID;
+      final selectedItems = selectedID == null
+          ? const <MediaLibraryItem>[]
+          : allItems
+                .where((item) => item.libraryID == selectedID)
+                .toList(growable: false);
+      state = state.copyWith(
+        libraries: libraries,
+        selectedLibraryID: selectedID,
+        clearSelectedLibrary: selectedID == null,
+        items: selectedItems,
+        allItems: allItems,
+        statusMessage: '媒体库已删除',
+      );
+    } catch (error) {
+      AppLogger.warning('Media', '删除媒体库失败：$error');
+      state = state.copyWith(
+        errorMessage: '删除媒体库失败：$error',
+        clearStatus: true,
+      );
+    }
   }
 
   Future<void> clearLibrary(String id) async {
@@ -1614,6 +1650,58 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     _scanPauseGates.remove(libraryID)?.complete();
   }
 
+  /// Clears the title-level search memo so a new scan does not accidentally
+  /// reuse stale results from a previous run.
+  void _clearRecognitionSearchCache() {
+    _recognitionSearchCache.clear();
+  }
+
+  /// Cache key for title-level search results.
+  String _searchCacheKey(
+    List<_MediaTitleVariant> variants,
+    String mediaKind,
+    int? year,
+    String apiKey,
+    bool douban,
+  ) {
+    final variantKey = variants.map((v) => '${v.source}:${v.value}').join('|');
+    return '$variantKey#$mediaKind#${year ?? '_'}#$apiKey#${douban ? '1' : '0'}';
+  }
+
+  /// Waits up to [duration], but returns early as soon as the scan for
+  /// [libraryID] is cancelled or stopped. Polling keeps this dependency-free
+  /// while making cancellation feel immediate during retry backoffs.
+  Future<void> _abortableDelay(String libraryID, Duration duration) async {
+    const tick = Duration(milliseconds: 200);
+    var waited = Duration.zero;
+    while (waited < duration) {
+      if (_scanShouldAbort(libraryID)) return;
+      final step = duration - waited < tick ? duration - waited : tick;
+      await Future<void>.delayed(step);
+      waited += step;
+    }
+  }
+
+  /// Picks the scan mode used when a stopped task is resumed.
+  ///
+  /// A stopped run already walked the cloud directories and persisted the file
+  /// index, so re-running `forceAll` would redo that whole traversal — which is
+  /// exactly the "resume restarts from scratch" symptom. Once any file has been
+  /// indexed we downgrade to recognition-only so the run picks up at the first
+  /// still-unrecognised item.
+  MediaLibraryScanMode _resumeModeFor(MediaLibraryScanTask task) {
+    final indexedSomething =
+        task.progress.completed > 0 || task.progress.scanned > 0;
+    if (!indexedSomething) return task.mode;
+    switch (task.mode) {
+      case MediaLibraryScanMode.forceAll:
+      case MediaLibraryScanMode.unindexedOnly:
+        return MediaLibraryScanMode.unrecognizedOnly;
+      case MediaLibraryScanMode.unrecognizedOnly:
+        return MediaLibraryScanMode.unrecognizedOnly;
+    }
+  }
+
   List<MediaLibraryScanTask> _loadScanTaskHistory() {
     final raw = StorageManager.get<dynamic>(StorageKeys.mediaScanTaskHistory);
     if (raw is! List) return const [];
@@ -1658,6 +1746,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     _stoppedScanLibraries.remove(libraryID);
     _pausedScanLibraries.remove(libraryID);
     _releaseScanPauseGate(libraryID);
+    _clearRecognitionSearchCache();
     final task = MediaLibraryScanTask.create(library: library, mode: mode);
     state = state.copyWith(
       scanTasks: [task, ...state.scanTasks.where((item) => item.id != task.id)],
@@ -1743,6 +1832,27 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
       var completed = 0;
       Future<void> pendingPersistence = Future.value();
+      // Throttle the two most expensive per-item side effects during a scan:
+      //   1. Persisting each recognized item as its own SQLite transaction.
+      //   2. Rebuilding + sorting the entire visible list on every file, which
+      //      is O(N log N) per item → O(N² log N) for a large library.
+      // Instead we buffer upserts and only flush / refresh the UI every
+      // [_scanFlushCount] items or [_scanFlushInterval], cutting transaction
+      // count and eliminating the quadratic re-sort blowup.
+      const scanFlushCount = 50;
+      const scanFlushInterval = Duration(milliseconds: 600);
+      final pendingUpserts = <MediaLibraryItem>[];
+      var lastUiRefresh = DateTime.fromMillisecondsSinceEpoch(0);
+      Future<void> flushPendingUpserts({bool force = false}) async {
+        if (pendingUpserts.isEmpty) return;
+        if (!force && pendingUpserts.length < scanFlushCount) return;
+        final batch = List<MediaLibraryItem>.of(pendingUpserts);
+        pendingUpserts.clear();
+        pendingPersistence = pendingPersistence.then(
+          (_) => _upsertItems(batch),
+        );
+        await pendingPersistence;
+      }
       final seriesMatches = <String, MediaLibraryItem>{};
       final knownMatches = MediaKnownMatchIndex(previousLibraryItems);
       if (!forceAll) {
@@ -1779,17 +1889,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                     StorageManager.get<String>(
                           StorageKeys.mediaScanConcurrency,
                         ) ??
-                        '3',
+                        '6',
                   ) ??
-                  3)
+                  6)
               .clamp(1, 20);
-      final recognitionBatchSize = concurrency * 4;
-      final queuedForRecognition = <CloudFile>[];
+      final recognitionQueue = <CloudFile>[];
       final queuedRecognitionIDs = <String>{};
       Future<void> recognitionTail = Future.value();
-      var scheduledRecognitionBatches = 0;
       var recognizedCount = 0;
       var unmatchedCount = 0;
+      var skippedCount = 0;
+      var discoveredCount = 0;
+      // Rows matched with deferred details, drained once recognition finishes.
+      final deferredDetailItems = <MediaLibraryItem>[];
       _appendScanLog('$modeLabel，媒体识别并发数：$concurrency');
       final doubanAutoRecognition = _doubanAutoRecognitionEnabled;
       if (tmdbApiKey.trim().isEmpty && doubanAutoRecognition) {
@@ -1803,9 +1915,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         if (pending.isEmpty || _scanShouldAbort(library.id)) return;
         var next = 0;
         Future<void> worker() async {
-          while (!_scanShouldAbort(library.id) && next < pending.length) {
+          while (!_scanShouldAbort(library.id)) {
+            // Claim the index synchronously before any await so that two
+            // workers cannot both read the same slot (fixes RangeError
+            // when _waitIfScanPaused yields the event loop).
+            if (next >= pending.length) break;
+            final idx = next++;
             if (!await _waitIfScanPaused(library.id)) return;
-            final file = pending[next++];
+            final file = pending[idx];
             final fallback = MediaLibraryItem.fromFile(
               library.id,
               file,
@@ -1832,6 +1949,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               existing: existing,
               sameCloudResource: sameCloudResource,
             );
+            // An already complete record that this run does not need to touch
+            // counts as skipped rather than freshly recognised.
+            if (!shouldRecognize && existing != null && existing.isMatched) {
+              skippedCount += 1;
+            }
             var item =
                 existing?.copyWith(file: file, updatedAt: DateTime.now()) ??
                 fallback;
@@ -1863,6 +1985,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                   tmdbApiKey,
                   proxyHost: tmdbProxyHost,
                   proxyPort: tmdbProxyPort,
+                  deferDetails: true,
                 );
               } else {
                 final inFlight = seriesRecognitionTasks[seriesKey];
@@ -1878,6 +2001,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                           tmdbApiKey,
                           proxyHost: tmdbProxyHost,
                           proxyPort: tmdbProxyPort,
+                          deferDetails: true,
                         );
                 } else {
                   final task = _recognizeMediaItem(
@@ -1885,6 +2009,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                     tmdbApiKey,
                     proxyHost: tmdbProxyHost,
                     proxyPort: tmdbProxyPort,
+                    deferDetails: true,
                   );
                   seriesRecognitionTasks[seriesKey] = task;
                   recognized = await task;
@@ -1925,24 +2050,36 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             completed += 1;
             if (item.isMatched) {
               recognizedCount += 1;
+              if (item.needsDetailHydration) deferredDetailItems.add(item);
             } else {
               unmatchedCount += 1;
             }
-            final visible = unique.values.toList()
-              ..sort(
-                (a, b) =>
-                    a.title.toLowerCase().compareTo(b.title.toLowerCase()),
-              );
-            pendingPersistence = pendingPersistence.then(
-              (_) => _upsertItems([item]),
-            );
-            await pendingPersistence;
+            // Buffer the write; flush in batches instead of one txn per item.
+            pendingUpserts.add(item);
+            await flushPendingUpserts();
             final progress = MediaLibraryScanProgress(
               phase: '正在识别 ${file.name}',
               completed: completed,
+              total: discoveredCount,
+              scanned: discoveredCount,
+              pending: (discoveredCount - completed).clamp(0, discoveredCount),
+              matched: recognizedCount,
+              unmatched: unmatchedCount,
+              skipped: skippedCount,
             );
             _setScanProgress(library.id, progress);
-            if (state.selectedLibraryID == library.id) {
+            // Only rebuild + sort the visible list (O(N log N)) periodically,
+            // not on every single file. Time-based throttle keeps the UI live
+            // without the quadratic cost on large libraries.
+            final now = DateTime.now();
+            if (state.selectedLibraryID == library.id &&
+                now.difference(lastUiRefresh) >= scanFlushInterval) {
+              lastUiRefresh = now;
+              final visible = unique.values.toList()
+                ..sort(
+                  (a, b) =>
+                      a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+                );
               state = state.copyWith(items: visible);
             }
             _appendScanLog(
@@ -1957,6 +2094,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
         await Future.wait(List.generate(concurrency, (_) => worker()));
       }
+
+      int scheduledRecognitionBatches = 0;
+      const recognitionBatchSize = 50;
 
       void scheduleRecognitionBatch(List<CloudFile> batch) {
         scheduledRecognitionBatches += 1;
@@ -1973,24 +2113,30 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         if (_scanShouldAbort(library.id)) return;
         if (!await _waitIfScanPaused(library.id)) return;
         for (final file in files) {
+          // 双重去重：既检查队列，也检查已发现的文件
           if (queuedRecognitionIDs.add(file.id)) {
-            queuedForRecognition.add(file);
+            recognitionQueue.add(file);
+            discoveredCount += 1;
           }
         }
-        if (queuedForRecognition.length < recognitionBatchSize) return;
-        final batch = queuedForRecognition.toList(growable: false);
-        queuedForRecognition.clear();
-        scheduleRecognitionBatch(batch);
-        if (scheduledRecognitionBatches >= 2) await recognitionTail;
+        // 只要队列达到批次大小就触发批处理
+        if (recognitionQueue.length >= recognitionBatchSize) {
+          final batch = recognitionQueue.take(recognitionBatchSize).toList();
+          recognitionQueue.removeRange(0, batch.length);
+          scheduleRecognitionBatch(batch);
+          if (scheduledRecognitionBatches >= 1) await recognitionTail;
+        }
       }
 
       Future<void> flushRecognitionQueue() async {
-        if (queuedForRecognition.isNotEmpty) {
-          final batch = queuedForRecognition.toList(growable: false);
-          queuedForRecognition.clear();
+        // 将剩余所有文件一次性处理
+        if (recognitionQueue.isNotEmpty) {
+          final batch = recognitionQueue.toList();
+          recognitionQueue.clear();
           scheduleRecognitionBatch(batch);
+          // 等待批处理完成后再返回
+          await recognitionTail;
         }
-        await recognitionTail;
       }
 
       if (forceAll && !_scanShouldAbort(library.id)) {
@@ -2035,6 +2181,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         _appendScanLog('当前媒体库目录刷新完成，发现 ${mediaFiles.length} 个媒体文件');
         AppLogger.info('Media', '$modeLabel [3/5] 目录扫描完成，发现 ${mediaFiles.length} 个媒体文件');
       } else if (!_scanShouldAbort(library.id)) {
+        // 扫描未识别的文件：数据库中存在但 isMatched = false
         final unrecognized = previousLibraryItems
             .where((item) => !item.isMatched)
             .map((item) => item.file)
@@ -2054,7 +2201,38 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         AppLogger.info('Media', '$modeLabel [4/5] 等待识别队列完成');
         await flushRecognitionQueue();
       }
+      // Consumer stage: matching produced ids only, so hydrate the detail
+      // documents now — batched and deduplicated per work.
+      if (!_scanShouldAbort(library.id) && deferredDetailItems.isNotEmpty) {
+        _setScanProgress(
+          library.id,
+          MediaLibraryScanProgress(
+            phase: '正在补全刮削详情',
+            completed: completed,
+            total: discoveredCount,
+            scanned: discoveredCount,
+            matched: recognizedCount,
+            unmatched: unmatchedCount,
+            skipped: skippedCount,
+          ),
+        );
+        _appendScanLog('识别完成，开始补全 ${deferredDetailItems.length} 条刮削详情…');
+        final hydrated = await _hydrateDeferredDetails(
+          deferredDetailItems,
+          apiKey: tmdbApiKey,
+          proxyHost: tmdbProxyHost,
+          proxyPort: tmdbProxyPort,
+          libraryID: library.id,
+          concurrency: concurrency,
+        );
+        // Fold hydrated rows back into the set that gets persisted below.
+        for (final item in hydrated) {
+          if (unique.containsKey(item.id)) unique[item.id] = item;
+        }
+      }
       AppLogger.info('Media', '$modeLabel [5/5] 识别完成，入库中');
+      // Flush any items still buffered by the throttled writer.
+      await flushPendingUpserts(force: true);
       await pendingPersistence;
       var items = unique.values.toList()
         ..sort(
@@ -2235,10 +2413,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       );
       return;
     }
+    final isGlobalTask = task.libraryID == globalMediaLibraryID;
     final library = state.libraries
         .where((candidate) => candidate.id == task.libraryID)
         .firstOrNull;
-    if (library == null ||
+    if ((library == null && !isGlobalTask) ||
         _api == null ||
         state.scanTasks.any(
           (candidate) =>
@@ -2265,8 +2444,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           : '用户继续任务',
       clearFailure: true,
     );
+    // Resuming continues where the run stopped: the file index was already
+    // built, so only unfinished recognition work is replayed. A retry after a
+    // failure keeps the original mode.
+    final isRetry = task.status == MediaLibraryScanTaskStatus.failed;
+    final resumeMode = isRetry
+        ? task.mode
+        : _resumeModeFor(task);
     final run = runZoned(
-      () => _runLibraryScan(library, taskID: task.id, mode: task.mode),
+      () => isGlobalTask
+          ? _runGlobalScan(taskID: task.id, mode: resumeMode)
+          : _runLibraryScan(library!, taskID: task.id, mode: resumeMode),
       zoneValues: {_mediaScanTaskZoneKey: task.id},
     );
     _scanRuns[task.libraryID] = run;
@@ -2456,6 +2644,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     _stoppedScanLibraries.remove(libraryID);
     _pausedScanLibraries.remove(libraryID);
     _releaseScanPauseGate(libraryID);
+    _clearRecognitionSearchCache();
 
     final taskID = 'global-${DateTime.now().microsecondsSinceEpoch}';
     final task = MediaLibraryScanTask(
@@ -2503,9 +2692,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final concurrency =
         (int.tryParse(
                   StorageManager.get<String>(StorageKeys.mediaScanConcurrency) ??
-                      '3',
+                      '6',
                 ) ??
-                3)
+                6)
             .clamp(1, 20);
 
     _updateScanTask(
@@ -2533,10 +2722,63 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
       AppLogger.info('Media', '$modeLabel 全局条目 ${existingGlobalFileIDs.length} 个，其他库 ${otherLibraryFileIDs.length} 个');
 
+      // 流式加载本库已入库但未匹配的文件 ID（unindexedOnly 模式需要重新识别这些）
+      final unmatchedFileIDs = <String>{};
+      if (!forceAll) {
+        await _store.allItemsBatched(
+          libraryID: libraryID,
+          unmatchedOnly: true,
+          onBatch: (batch) async {
+            for (final item in batch) {
+              unmatchedFileIDs.add(item.id);
+            }
+          },
+        );
+      }
+      _appendScanLog('当前媒体库已匹配 ${existingGlobalFileIDs.length - unmatchedFileIDs.length} 个，未匹配 ${unmatchedFileIDs.length} 个');
+
       _appendScanLog('从缓存读取文件列表…');
-      final cachedFiles = await FileMetadataCache.allCachedFolderChildren();
-      AppLogger.info('Media', '$modeLabel 缓存中共 ${cachedFiles.length} 个文件');
-      _appendScanLog('缓存共 ${cachedFiles.length} 个文件，开始筛选并发识别');
+      // ── 流式管道：DB 分批读取，边筛选边入队，消费者立刻开始消费 ──
+      // 以前 allCachedFolderChildren() 一次性把全表读进内存（7万条≈几十MB），
+      // 筛选完才开始入库，延迟高且内存压力大。现在用 batched 游标读取，
+      // 每批 500 条，筛选后直接入 recognizeQueue，消费者并行刮削。
+      const batchSize = 500;
+      var totalCachedFiles = 0;
+
+      // ── 加载排除设置 ──
+      final excludedFolderIDs = Set<String>.from(
+        StorageManager.get<List>(StorageKeys.globalScanExcludedFolders)
+                ?.cast<String>() ??
+            [],
+      );
+      final excludedKeywords = List<String>.from(
+        StorageManager.get<List>(StorageKeys.globalScanExcludedKeywords)
+                ?.cast<String>() ??
+            [],
+      );
+      final hasExclusions =
+          excludedFolderIDs.isNotEmpty || excludedKeywords.isNotEmpty;
+
+      bool isExcluded(CloudFile file) {
+        if (excludedFolderIDs.isNotEmpty && file.fullParentIDs != null) {
+          for (final fid in excludedFolderIDs) {
+            if (file.fullParentIDs!.contains(fid)) return true;
+          }
+        }
+        if (excludedKeywords.isNotEmpty) {
+          final lowerName = file.name.toLowerCase();
+          final lowerPath = file.cloudPath.toLowerCase();
+          for (final kw in excludedKeywords) {
+            final lk = kw.toLowerCase();
+            if (lowerName.contains(lk) || lowerPath.contains(lk)) return true;
+          }
+        }
+        return false;
+      }
+
+      AppLogger.info('Media', '$modeLabel 开始流式读取，批大小 $batchSize，'
+          '排除文件夹 ${excludedFolderIDs.length} 个，排除关键词 ${excludedKeywords.length} 个');
+      _appendScanLog('开始流式读取并筛选…');
 
       var scannedFiles = 0;
       var insertedCount = 0;
@@ -2546,13 +2788,18 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       var skippedOtherLib = 0;
       var skippedDuplicate = 0;
       var skippedNotVideo = 0;
+      var skippedExcluded = 0;
       var recognizedCount = 0;
       var unmatchedCount = 0;
 
       final recognizeQueue = <MediaLibraryItem>[];
+      // Rows matched with deferred details, drained after recognition ends.
+      final deferredDetailItems = <MediaLibraryItem>[];
       var producerDone = false;
       var nextRecognize = 0;
 
+      // Consumers are defined here but launched after the variables they
+      // close over (recognizeQueue, nextRecognize, producerDone) are ready.
       Future<void> consumer(int id) async {
         while (!_scanShouldAbort(libraryID)) {
           if (!await _waitIfScanPaused(libraryID)) return;
@@ -2563,22 +2810,46 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           }
           final item = recognizeQueue[nextRecognize++];
           try {
+            // Producer stage: a resolved TMDB/Douban id already counts as
+            // "scraped". Detail documents are fetched afterwards, batched and
+            // deduplicated per work by _hydrateDeferredDetails.
             final recognized = await _recognizeMediaItem(
               item, tmdbApiKey,
               proxyHost: tmdbProxyHost, proxyPort: tmdbProxyPort,
+              deferDetails: true,
             );
             if (_scanShouldAbort(libraryID)) return;
-            await _store.upsertItems([recognized]);
+            // Route through _upsertItems so the shared TMDB/Douban works cache
+            // is mirrored for globally-scanned matches too.
+            await _upsertItems([recognized]);
+            if (recognized.needsDetailHydration) {
+              deferredDetailItems.add(recognized);
+            }
             completed += 1;
-            if (recognized.isMatched) recognizedCount += 1;
-            else unmatchedCount += 1;
+            if (recognized.isMatched) {
+              recognizedCount += 1;
+            } else {
+              unmatchedCount += 1;
+            }
+            // Per-item detail floods the log on a large library (one line per
+            // file). Keep unmatched files (the actionable ones) at debug level
+            // and let the periodic summary below report overall progress.
+            if (!recognized.isMatched) {
+              AppLogger.debug(
+                'Media',
+                '[$modeLabel] 未匹配 [$completed/$insertedCount] ${item.file.name}',
+              );
+            }
           } catch (e) {
             AppLogger.warning('Media', '识别失败（跳过）：${item.file.name}，$e');
             completed += 1;
             unmatchedCount += 1;
           }
           if (completed % 5 == 0) {
-            if (completed % 10 == 0) {
+            // Reloading + enriching the entire library from SQLite is O(N);
+            // doing it every 10 items makes a large scan O(N²). A coarser
+            // interval keeps the grid live without the quadratic cost.
+            if (completed % 200 == 0) {
               final refreshedItems = await _loadItems(libraryID);
               state = state.copyWith(items: refreshedItems);
             }
@@ -2595,70 +2866,123 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               ),
             );
           }
+          // Aggregated, user-facing recognition progress. One concise line
+          // every [recognitionLogStep] items instead of one line per file.
+          if (completed % _globalScanRecognitionLogStep == 0) {
+            _appendScanLog(
+              '识别进度 $completed/$insertedCount'
+              '（匹配 $recognizedCount，未匹配 $unmatchedCount）',
+            );
+          }
         }
       }
 
+      // 流式生产者：每批从 DB 读取 → 筛选 → 入队，消费者并行消费
       _appendScanLog('启动 $concurrency 个并发识别消费者…');
       final consumers = List.generate(concurrency, (i) => consumer(i + 1));
 
-      // 生产者：筛选文件写入数据库
       final insertBatch = <MediaLibraryItem>[];
-      for (final file in cachedFiles) {
-        if (_scanShouldAbort(libraryID)) break;
-        scannedFiles += 1;
-        if (file.isDirectory) continue;
-        if (!file.isVideo) { skippedNotVideo += 1; continue; }
-        if (isMediaScanIsoFile(file)) { skippedIso += 1; continue; }
-        if (isMediaScanDiscInternalPath(file.cloudPath)) {
-          skippedDiscInternal += 1;
-          continue;
-        }
-        if ((file.size ?? 0) < minimumSizeBytes) { skippedSmall += 1; continue; }
-        if (otherLibraryFileIDs.contains(file.id)) { skippedOtherLib += 1; continue; }
-        if (existingGlobalFileIDs.contains(file.id) && !forceAll) {
-          skippedDuplicate += 1;
-          continue;
-        }
-        final item = MediaLibraryItem.fromFile(
-          libraryID,
-          file,
-          directoryName: _parentDirectoryName(file.cloudPath),
-        );
-        insertBatch.add(item);
-        recognizeQueue.add(item);
-        insertedCount += 1;
-        if (insertBatch.length >= 200) {
-          await _store.upsertItems(insertBatch);
-          insertBatch.clear();
-          _setScanProgress(
-            libraryID,
-            MediaLibraryScanProgress(
-              phase: '已筛选 $scannedFiles 个文件，写入 $insertedCount 条',
-              scanned: scannedFiles,
-              completed: completed,
-              total: insertedCount,
-              pending: (insertedCount - nextRecognize).clamp(0, insertedCount),
-            ),
-          );
-        }
-      }
+      await FileMetadataCache.allCachedFolderChildrenBatched(
+        (batch) async {
+          if (_scanShouldAbort(libraryID)) return;
+          totalCachedFiles += batch.length;
+          for (final file in batch) {
+            if (_scanShouldAbort(libraryID)) return;
+            scannedFiles += 1;
+            if (file.isDirectory) continue;
+            if (!file.isVideo) { skippedNotVideo += 1; continue; }
+            if (hasExclusions && isExcluded(file)) { skippedExcluded += 1; continue; }
+            if (isMediaScanIsoFile(file)) { skippedIso += 1; continue; }
+            if (isMediaScanDiscInternalPath(file.cloudPath)) {
+              skippedDiscInternal += 1;
+              continue;
+            }
+            if ((file.size ?? 0) < minimumSizeBytes) { skippedSmall += 1; continue; }
+            if (otherLibraryFileIDs.contains(file.id)) { skippedOtherLib += 1; continue; }
+            if (existingGlobalFileIDs.contains(file.id) && !forceAll) {
+              if (!unmatchedFileIDs.contains(file.id)) {
+                // 已入库且已匹配 → 跳过
+                skippedDuplicate += 1;
+                continue;
+              }
+              // 已入库但未匹配 → 需要重新识别
+            }
+            final item = MediaLibraryItem.fromFile(
+              libraryID,
+              file,
+              directoryName: _parentDirectoryName(file.cloudPath),
+            );
+            insertBatch.add(item);
+            recognizeQueue.add(item);
+            insertedCount += 1;
+            if (insertBatch.length >= 200) {
+              await _store.upsertItems(insertBatch);
+              insertBatch.clear();
+            }
+          }
+          // 每批处理完让出事件循环，使消费者有机会消费
+          await Future<void>.delayed(Duration.zero);
+          if (scannedFiles % 500 == 0) {
+            _appendScanLog(
+              '扫描进度 $scannedFiles 个文件，'
+              '已写入 $insertedCount 条，排除 $skippedExcluded 个',
+            );
+          }
+        },
+        batchSize: batchSize,
+      );
       if (insertBatch.isNotEmpty) await _store.upsertItems(insertBatch);
 
       final totalSkipped = skippedNotVideo + skippedIso + skippedSmall +
-          skippedDiscInternal + skippedOtherLib + skippedDuplicate;
+          skippedDiscInternal + skippedOtherLib + skippedDuplicate + skippedExcluded;
       _appendScanLog(
-        '筛选完成：缓存 ${cachedFiles.length} 个，写入 $insertedCount 条，'
-        '跳过 非视频$skippedNotVideo ISO$skippedIso 小文件$skippedSmall '
-        '原盘$skippedDiscInternal 已归属$skippedOtherLib 重复$skippedDuplicate',
+        '筛选完成：缓存共 $totalCachedFiles 个，写入 $insertedCount 条，'
+        '跳过 $totalSkipped 个（非视频$skippedNotVideo ISO$skippedIso '
+        '小文件$skippedSmall 原盘$skippedDiscInternal 已归属$skippedOtherLib '
+        '重复$skippedDuplicate'
+        '${skippedExcluded > 0 ? ' 排除$skippedExcluded' : ''}）',
       );
 
       // 生产者结束，等待消费者处理完队列中剩余数据
       producerDone = true;
       await Future.wait(consumers);
 
+      // ── 3.5 详情补全消费者 ──
+      // Matching only resolved ids; now turn those into full records. Grouped
+      // per work, so a 24-episode season costs one request, not 24.
+      if (!_scanShouldAbort(libraryID) && deferredDetailItems.isNotEmpty) {
+        _setScanProgress(
+          libraryID,
+          MediaLibraryScanProgress(
+            phase: '正在补全刮削详情',
+            completed: completed,
+            total: insertedCount,
+            scanned: scannedFiles,
+            matched: recognizedCount,
+            unmatched: unmatchedCount,
+          ),
+        );
+        _appendScanLog('识别完成，开始补全 ${deferredDetailItems.length} 条刮削详情…');
+        await _hydrateDeferredDetails(
+          deferredDetailItems,
+          apiKey: tmdbApiKey,
+          proxyHost: tmdbProxyHost,
+          proxyPort: tmdbProxyPort,
+          libraryID: libraryID,
+          concurrency: concurrency,
+        );
+      }
+
       // ── 4. 最终统计 ──
       final stats = await _store.statistics();
-      state = state.copyWith(storedGlobalStatistics: stats.global);
+      // Final grid refresh so the throttled UI reflects every recognized item.
+      final finalItems = state.selectedLibraryID == libraryID
+          ? await _loadItems(libraryID)
+          : null;
+      state = state.copyWith(
+        storedGlobalStatistics: stats.global,
+        items: finalItems,
+      );
 
       final aborted = _scanShouldAbort(libraryID);
       final finalStatus = _cancelledScanLibraries.contains(libraryID)
@@ -4228,42 +4552,28 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
   }
 
+  /// Manual match fast path.
+  ///
+  /// Writes the selected TMDB/Douban id and the metadata already carried by the
+  /// search candidate (title, poster, rating, kind) to the database
+  /// immediately, updates the UI and returns — so the manual-match dialog is
+  /// snappy instead of blocking on a TMDB detail request and a cloud rename.
+  /// The expensive work (full detail hydration + canonical file rename) is then
+  /// scheduled as a background task via [_enrichManualMatchInBackground].
   Future<MediaLibraryItem> applyTMDBMatch(
     MediaLibraryItem item,
     Map<String, dynamic> candidate, {
     bool applyManualEpisodeOverride = true,
   }) async {
-    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
     final candidateSeason = _toInt(candidate['_manualSeason']);
     final candidateEpisode = _toInt(candidate['_manualEpisode']);
     final manualSeason = applyManualEpisodeOverride ? candidateSeason : null;
     final manualEpisode = applyManualEpisodeOverride ? candidateEpisode : null;
-    var updated = _itemFromTMDBCandidate(item, candidate);
-    if (updated.tmdbID != null && apiKey.isNotEmpty) {
-      try {
-        final details = await _tmdbDetails(
-          updated.tmdbID!,
-          updated.mediaKind,
-          apiKey: apiKey,
-          proxyHost:
-              StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
-          proxyPort:
-              StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
-        );
-        updated = _itemFromTMDBDetails(updated, details);
-      } catch (error) {
-        // A selected candidate is still valid if its detail request fails.
-        AppLogger.warning(
-          'Media',
-          '手动选择的 TMDB 候选详情补全失败：id=${updated.tmdbID}，$error',
-        );
-      }
-    }
-    updated = await _renameMatchedMediaFile(
-      updated,
-      manualSeason: manualSeason,
-      manualEpisode: manualEpisode,
-    );
+    // Instant: build the row from the search candidate (id + basic metadata).
+    final updated = _itemFromTMDBCandidate(
+      item,
+      candidate,
+    ).copyWith(updatedAt: DateTime.now());
     await _replaceItemsByPreviousIDs({'${item.libraryID}:${item.id}': updated});
     state = state.copyWith(
       items: state.items
@@ -4275,18 +4585,98 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           )
           .toList(),
       allItems: await _loadAllItems(),
-      statusMessage: updated.file.name == item.file.name
-          ? '已匹配《${updated.title}》'
-          : '已匹配并规范命名《${updated.title}》',
+      statusMessage: '已匹配《${updated.title}》，正在后台补全刮削信息…',
       clearError: true,
     );
-    final seriesKey = _seriesRecognitionKey(item);
-    if (seriesKey != null &&
-        updated.tmdbID != null &&
-        updated.mediaKind == TMDBMediaKind.tv) {
-      await _aggregateStoredSeriesRecognition(seriesKey, updated);
-    }
+    // Background: hydrate full details, rename the file, re-persist, refresh.
+    // Serialized through a tail future so concurrent episode matches don't race
+    // on the shared items list.
+    _manualMatchEnrichment += 1;
+    _manualMatchEnrichmentTail = _manualMatchEnrichmentTail.then(
+      (_) => _enrichManualMatchInBackground(
+        updated,
+        manualSeason: manualSeason,
+        manualEpisode: manualEpisode,
+      ),
+    );
+    unawaited(_manualMatchEnrichmentTail);
     return updated;
+  }
+
+  /// Completes a manual match off the UI path: fetches full TMDB details,
+  /// applies the canonical rename, persists the result and refreshes state.
+  Future<void> _enrichManualMatchInBackground(
+    MediaLibraryItem item, {
+    int? manualSeason,
+    int? manualEpisode,
+  }) async {
+    try {
+      final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+      var enriched = item;
+      if (enriched.tmdbID != null && apiKey.isNotEmpty) {
+        try {
+          final details = await _tmdbDetails(
+            enriched.tmdbID!,
+            enriched.mediaKind,
+            apiKey: apiKey,
+            proxyHost:
+                StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+            proxyPort:
+                StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+          );
+          enriched = _itemFromTMDBDetails(enriched, details);
+        } catch (error) {
+          // A selected candidate is still valid if its detail request fails.
+          AppLogger.warning(
+            'Media',
+            '手动匹配后台详情补全失败：id=${enriched.tmdbID}，$error',
+          );
+        }
+      }
+      final renamed = await _renameMatchedMediaFile(
+        enriched,
+        manualSeason: manualSeason,
+        manualEpisode: manualEpisode,
+      );
+      // The instant write used the candidate id as the row key; the rename may
+      // have changed the underlying cloud file id, so replace by that key.
+      await _replaceItemsByPreviousIDs({
+        '${item.libraryID}:${item.id}': renamed,
+      });
+      final pending = _manualMatchEnrichment - 1;
+      state = state.copyWith(
+        items: state.items
+            .map(
+              (current) =>
+                  current.libraryID == item.libraryID && current.id == item.id
+                  ? renamed
+                  : current,
+            )
+            .toList(),
+        allItems: await _loadAllItems(),
+        statusMessage: pending > 0
+            ? '正在后台补全刮削信息…（剩余 $pending 项）'
+            : renamed.file.name == item.file.name
+            ? '已补全《${renamed.title}》的刮削信息'
+            : '已补全并规范命名《${renamed.title}》',
+        clearError: true,
+      );
+      final seriesKey = _seriesRecognitionKey(item);
+      if (seriesKey != null &&
+          renamed.tmdbID != null &&
+          renamed.mediaKind == TMDBMediaKind.tv) {
+        await _aggregateStoredSeriesRecognition(seriesKey, renamed);
+      }
+    } catch (error, stackTrace) {
+      AppLogger.error(
+        'Media',
+        '手动匹配后台任务异常：${item.file.name}',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _manualMatchEnrichment -= 1;
+    }
   }
 
   /// Refresh legacy unmatched records with the current filename parser before
@@ -4370,9 +4760,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                   StorageManager.get<String>(
                         StorageKeys.mediaScanConcurrency,
                       ) ??
-                      '3',
+                      '6',
                 ) ??
-                3)
+                6)
             .clamp(1, 12);
     final groups = missingByTMDB.entries.toList();
     var completed = 0;
@@ -4723,11 +5113,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         RegExp(r'\d').hasMatch(value);
   }
 
+  /// Resolves [fallback] to a TMDB/Douban work.
+  ///
+  /// When [deferDetails] is true the method returns as soon as a candidate is
+  /// picked, *without* fetching the TMDB detail document. The row is then
+  /// considered "matched" (production done) and the detail hydration is left to
+  /// the enrichment consumer, which batches those requests separately. This
+  /// keeps the matching stage from blocking on a second round-trip per file.
   Future<MediaLibraryItem> _recognizeMediaItem(
     MediaLibraryItem fallback,
     String apiKey, {
     required String proxyHost,
     required String proxyPort,
+    bool deferDetails = false,
   }) async {
     if (_api == null) return fallback;
     try {
@@ -4753,40 +5151,161 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       Map<String, dynamic>? taggedCandidate;
       _TMDBRecognitionSearchResult searchResult =
           const _TMDBRecognitionSearchResult(candidates: [], attempts: []);
-      if (hasTMDBKey) {
-        taggedCandidate = await _tmdbCandidateFromPathTag(
-          fallback,
-          apiKey,
-          proxyHost: proxyHost,
-          proxyPort: proxyPort,
-        );
-        if (taggedCandidate != null) {
-          final item = _itemFromTMDBCandidate(fallback, taggedCandidate);
-          return _itemFromTMDBDetails(item, taggedCandidate);
-        }
-        searchResult = await _tmdbSearchForRecognition(
-          titleVariants,
-          mediaKind: requestedKind,
-          apiKey: apiKey,
-          proxyHost: proxyHost,
-          proxyPort: proxyPort,
+
+      // ── Layer 1: local works pre-match. The tmdb_works / douban_works tables
+      // accumulate every title ever matched, so over time this short-circuits
+      // more and more files with zero network cost.
+      if (taggedCandidate == null && parsed.title.trim().isNotEmpty) {
+        final localTMDB = await _store.searchTMDBWorksByTitle(
+          parsed.title,
           year: parsed.year,
+          mediaKind: requestedKind == 'auto' ? null : requestedKind,
+          limit: 5,
         );
-      } else if (doubanAutoRecognition) {
-        _appendScanLog(
-          '[同步识别][调试] 未配置 TMDB API Key，直接尝试豆瓣：${fallback.file.name}',
-        );
-      } else {
-        _appendScanLog(
-          '[同步识别][调试] 未配置 TMDB API Key，豆瓣自动识别已关闭：${fallback.file.name}',
-        );
+        if (localTMDB.isNotEmpty) {
+          // Convert the local work record into the candidate shape the rest of
+          // the pipeline expects.
+          final candidates = [
+            for (final work in localTMDB)
+              <String, dynamic>{
+                'id': work.tmdbID,
+                'title': work.title,
+                'original_title': work.originalTitle,
+                'media_type': work.mediaKind.name == 'tv' ? 'tv' : 'movie',
+                'release_date': work.releaseDate,
+                'poster_path': work.posterPath,
+                'backdrop_path': work.backdropPath,
+                'vote_average': work.rating,
+                'overview': work.overview,
+                '_recognitionResolvedByLocal': true,
+              },
+          ];
+          searchResult = _TMDBRecognitionSearchResult(
+            candidates: candidates,
+            attempts: ['本地 works 表命中：${parsed.title}'],
+          );
+          AppLogger.info('Media', '本地预匹配命中：${parsed.title} → ${localTMDB.first.title}');
+        }
+
+        if (searchResult.candidates.isEmpty && doubanAutoRecognition) {
+          final localDouban = await _store.searchDoubanWorksByTitle(
+            parsed.title,
+            year: parsed.year,
+            mediaKind: requestedKind == 'auto' ? null : requestedKind,
+            limit: 5,
+          );
+          if (localDouban.isNotEmpty) {
+            // Build a synthetic candidate set so the downstream cross-reference
+            // logic can still fuse TMDB + Douban signals if both exist.
+            final candidates = [
+              for (final work in localDouban)
+                <String, dynamic>{
+                  'id': work.doubanID,
+                  'title': work.title,
+                  'original_title': work.originalTitle,
+                  'media_type': work.mediaKind.name == 'tv' ? 'tv' : 'movie',
+                  'release_date': work.releaseDate,
+                  'poster_path': work.posterPath,
+                  'vote_average': work.rating,
+                  'overview': work.overview,
+                  '_recognitionResolvedByLocal': true,
+                  '_source': 'douban',
+                },
+            ];
+            // Store as a pseudo-TMDB result so the rest of the convergence
+            // logic treats it uniformly.
+            searchResult = _TMDBRecognitionSearchResult(
+              candidates: candidates,
+              attempts: ['本地豆瓣 works 表命中：${parsed.title}'],
+            );
+          }
+        }
       }
-      final values = searchResult.candidates;
-      final doubanItems = await _searchDoubanCandidates(
+
+      // ── Title-level search cache: many files share the same parsed title
+      // (e.g. 24 episodes of a season, or multiple releases of the same movie).
+      // Caching the raw search results avoids redundant network round-trips.
+      final cacheKey = _searchCacheKey(
         titleVariants,
         requestedKind,
         parsed.year,
+        apiKey,
+        doubanAutoRecognition,
       );
+      final cachedSearch = _recognitionSearchCache[cacheKey];
+
+      Future<List<Map<String, dynamic>>>? doubanFuture;
+      if (cachedSearch != null) {
+        // Reuse the in-flight or completed search from a previous file.
+        final resolved = await cachedSearch;
+        searchResult = resolved.tmdb;
+        doubanFuture = Future.value(resolved.douban);
+      } else if (searchResult.candidates.isNotEmpty) {
+        // Layer 1 local match already resolved; skip network search.
+        doubanFuture = Future.value(const <Map<String, dynamic>>[]);
+      } else {
+        // Douban search is independent of the TMDB search, so kick it off in
+        // parallel and await it only once both are needed.
+        if (doubanAutoRecognition) {
+          doubanFuture = _searchDoubanCandidates(
+            titleVariants,
+            requestedKind,
+            parsed.year,
+          );
+        }
+        if (hasTMDBKey) {
+          taggedCandidate = await _tmdbCandidateFromPathTag(
+            fallback,
+            apiKey,
+            proxyHost: proxyHost,
+            proxyPort: proxyPort,
+          );
+          if (taggedCandidate != null) {
+            unawaited(doubanFuture?.catchError((_) => const <Map<String, dynamic>>[]));
+            final item = _itemFromTMDBCandidate(fallback, taggedCandidate);
+            return _itemFromTMDBDetails(item, taggedCandidate);
+          }
+        }
+        // Create a shared Future so concurrent workers on the same title
+        // merge into one request.
+        final request = () async {
+          late final _TMDBRecognitionSearchResult tmdbResult;
+          late final List<Map<String, dynamic>> doubanResult;
+          late final List<String> attemptLog;
+          if (hasTMDBKey) {
+            tmdbResult = await _tmdbSearchForRecognition(
+              titleVariants,
+              mediaKind: requestedKind,
+              apiKey: apiKey,
+              proxyHost: proxyHost,
+              proxyPort: proxyPort,
+              year: parsed.year,
+            );
+            attemptLog = tmdbResult.attempts;
+          } else {
+            tmdbResult = const _TMDBRecognitionSearchResult(
+              candidates: [],
+              attempts: [],
+            );
+            attemptLog = [];
+          }
+          doubanResult = doubanFuture == null
+              ? const <Map<String, dynamic>>[]
+              : await doubanFuture;
+          return (tmdb: tmdbResult, douban: doubanResult, attempts: attemptLog);
+        }();
+        _recognitionSearchCache[cacheKey] = request;
+        final resolved = await request;
+        searchResult = resolved.tmdb;
+        doubanFuture = Future.value(resolved.douban);
+      }
+      final values = searchResult.candidates;
+      final List<Map<String, dynamic>> doubanItems;
+      if (doubanFuture == null) {
+        doubanItems = const [];
+      } else {
+        doubanItems = await doubanFuture;
+      }
       if (values.isEmpty && doubanItems.isEmpty) {
         final missMessage = hasTMDBKey
             ? doubanAutoRecognition
@@ -4933,6 +5452,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
       var item = _itemFromTMDBCandidate(fallback, candidate);
       if (item.tmdbID == null) return item;
+      // Matching is done here. With deferred details the row is handed to the
+      // enrichment consumer instead of paying for a detail round-trip inline;
+      // `needsDetailHydration` is what puts it on that queue.
+      if (deferDetails) return item;
       try {
         final details = await _tmdbDetails(
           item.tmdbID!,
@@ -6319,12 +6842,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         '';
     final source = candidate['_source']?.toString();
     final isDouban = source == 'douban';
+    // TMDB and Douban ids co-exist on a single item: matching one source must
+    // not clear the other. A Douban candidate keeps any existing TMDB id/rating
+    // (and vice versa), so a resource can carry both scores and both links.
+    final candidateDoubanID = isDouban
+        ? candidate['id']?.toString()
+        : candidate['douban_id']?.toString();
+    final candidateRating = _ratingValue(candidate['vote_average']);
     return fallback.copyWith(
+      // Only overwrite the id belonging to the matched source; leave the other
+      // untouched (copyWith keeps the existing value when the arg is null).
       tmdbID: isDouban ? null : _toInt(candidate['id']),
-      clearTMDBID: isDouban,
-      doubanID: isDouban
-          ? candidate['id']?.toString()
-          : candidate['douban_id']?.toString(),
+      doubanID: (candidateDoubanID != null && candidateDoubanID.isNotEmpty)
+          ? candidateDoubanID
+          : null,
       title: title == null || title.isEmpty ? fallback.title : title,
       originalTitle: originalTitle == null || originalTitle.isEmpty
           ? fallback.originalTitle
@@ -6334,15 +6865,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           : type == 'movie'
           ? TMDBMediaKind.movie
           : fallback.mediaKind,
-      releaseDate: releaseDate,
-      overview: candidate['overview']?.toString() ?? '',
+      releaseDate: releaseDate.isNotEmpty ? releaseDate : fallback.releaseDate,
+      overview: candidate['overview']?.toString().trim().isNotEmpty == true
+          ? candidate['overview'].toString()
+          : fallback.overview,
       posterPath:
           candidate['poster_path']?.toString() ??
-          (isDouban ? doubanPosterPath(candidate) : null),
-      backdropPath: candidate['backdrop_path']?.toString(),
-      tmdbRating: isDouban ? null : _ratingValue(candidate['vote_average']),
-      doubanRating: isDouban ? _ratingValue(candidate['vote_average']) : null,
-      imdbID: _extractImdbID(candidate),
+          (isDouban ? doubanPosterPath(candidate) : null) ??
+          fallback.posterPath,
+      backdropPath:
+          candidate['backdrop_path']?.toString() ?? fallback.backdropPath,
+      // Each source updates only its own rating; the other rating persists.
+      tmdbRating: isDouban ? null : candidateRating,
+      doubanRating: isDouban ? candidateRating : null,
+      imdbID: _extractImdbID(candidate) ?? fallback.imdbID,
       updatedAt: DateTime.now(),
     );
   }
@@ -6713,7 +7249,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               } catch (e) {
                 if (retry < 2) {
                   AppLogger.warning('Media', '读取目录 ${folder.path} 失败（${retry + 1}/3），稍后重试：$e');
-                  await Future<void>.delayed(Duration(seconds: (retry + 1) * 2));
+                  // Interruptible backoff: a cancel request during the wait
+                  // takes effect immediately instead of after the full delay.
+                  await _abortableDelay(
+                    libraryID,
+                    Duration(seconds: (retry + 1) * 2),
+                  );
+                  if (_scanShouldAbort(libraryID)) break;
                 } else {
                   AppLogger.warning('Media', '读取目录 ${folder.path} 3次均失败，跳过：$e');
                   _appendScanLog('跳过目录 ${folder.path}（网络错误）');
@@ -7613,8 +8155,168 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return _store.deleteItems(removed);
   }
 
-  Future<void> _upsertItems(Iterable<MediaLibraryItem> items) {
-    return _store.upsertItems(items);
+  Future<void> _upsertItems(Iterable<MediaLibraryItem> items) async {
+    final list = items.toList(growable: false);
+    await _store.upsertItems(list);
+    // Mirror matched metadata into the shared TMDB/Douban works cache so that
+    // enrichItemsWithWorkDetails can rehydrate any item that merely carries a
+    // tmdb_id / douban_id. Runs in the background; never blocks the scan.
+    unawaited(_mirrorWorksCache(list));
+  }
+
+  /// Fills in TMDB detail fields for rows that were matched with deferred
+  /// details, then persists them.
+  ///
+  /// This is the consumer half of the scrape pipeline: matching (the producer)
+  /// only resolves an id, and this stage turns that id into a full record.
+  /// Work is deduplicated per `tmdbID`, so a season of 24 episodes costs a
+  /// single detail request, and already-cached works cost none at all.
+  Future<List<MediaLibraryItem>> _hydrateDeferredDetails(
+    List<MediaLibraryItem> items, {
+    required String apiKey,
+    required String proxyHost,
+    required String proxyPort,
+    required String libraryID,
+    int concurrency = 6,
+  }) async {
+    if (items.isEmpty || apiKey.trim().isEmpty) return items;
+    final pending = [
+      for (final item in items)
+        if (item.needsDetailHydration && item.tmdbID != null) item,
+    ];
+    if (pending.isEmpty) return items;
+
+    // Group by work: one detail fetch serves every file of the same title.
+    final byWork = <int, List<MediaLibraryItem>>{};
+    for (final item in pending) {
+      byWork.putIfAbsent(item.tmdbID!, () => []).add(item);
+    }
+
+    // Reuse anything already mirrored into the works cache before hitting API.
+    final cached = await _store.tmdbWorksByIDs(byWork.keys);
+    final toFetch = byWork.keys.where((id) => !cached.containsKey(id)).toList();
+
+    final details = <int, Map<String, dynamic>>{};
+    var next = 0;
+    Future<void> worker() async {
+      while (!_scanShouldAbort(libraryID)) {
+        if (next >= toFetch.length) break;
+        final id = toFetch[next++];
+        if (!await _waitIfScanPaused(libraryID)) return;
+        final kind = byWork[id]!.first.mediaKind;
+        try {
+          details[id] = await _tmdbDetails(
+            id,
+            kind,
+            apiKey: apiKey,
+            proxyHost: proxyHost,
+            proxyPort: proxyPort,
+          );
+        } catch (error) {
+          AppLogger.warning('Media', '详情补全失败：tmdbId=$id，$error');
+        }
+      }
+    }
+
+    await Future.wait(
+      List.generate(concurrency.clamp(1, 12), (_) => worker()),
+    );
+
+    final hydrated = <MediaLibraryItem>[];
+    final result = [
+      for (final item in items)
+        () {
+          final id = item.tmdbID;
+          if (id == null || !item.needsDetailHydration) return item;
+          final detail = details[id];
+          if (detail != null) {
+            final next = _itemFromTMDBDetails(item, detail);
+            hydrated.add(next);
+            return next;
+          }
+          final work = cached[id];
+          if (work != null) {
+            final next = item.copyWith(
+              overview: item.overview.trim().isEmpty
+                  ? work.overview
+                  : item.overview,
+              posterPath: item.posterPath?.trim().isNotEmpty == true
+                  ? item.posterPath
+                  : work.posterPath,
+              backdropPath: item.backdropPath?.trim().isNotEmpty == true
+                  ? item.backdropPath
+                  : work.backdropPath,
+              updatedAt: DateTime.now(),
+            );
+            hydrated.add(next);
+            return next;
+          }
+          return item;
+        }(),
+    ];
+    if (hydrated.isNotEmpty) {
+      await _upsertItems(hydrated);
+      _appendScanLog(
+        '详情补全：${hydrated.length} 条'
+        '（作品 ${byWork.length} 个，API 拉取 ${details.length} 次）',
+      );
+    }
+    return result;
+  }
+
+  /// Persists TMDB/Douban work metadata from freshly matched items into the
+  /// shared works tables (deduplicated per id within the batch).
+  Future<void> _mirrorWorksCache(List<MediaLibraryItem> items) async {
+    if (items.isEmpty) return;
+    final tmdbWorks = <int, TMDBWork>{};
+    final doubanWorks = <String, DoubanWork>{};
+    final now = DateTime.now();
+    for (final item in items) {
+      final tmdbID = item.tmdbID;
+      if (tmdbID != null && tmdbID != 0 && item.title.trim().isNotEmpty) {
+        tmdbWorks[tmdbID] = TMDBWork(
+          id: 0,
+          tmdbID: tmdbID,
+          title: item.title,
+          originalTitle: item.originalTitle,
+          mediaKind: item.mediaKind ?? TMDBMediaKind.automatic,
+          releaseDate: item.releaseDate,
+          overview: item.overview,
+          posterPath: item.posterPath,
+          backdropPath: item.backdropPath,
+          rating: item.tmdbRating,
+          imdbID: item.imdbID,
+          createdAt: now,
+        );
+      }
+      final doubanID = item.doubanID;
+      if (doubanID != null &&
+          doubanID.isNotEmpty &&
+          item.title.trim().isNotEmpty) {
+        doubanWorks[doubanID] = DoubanWork(
+          id: 0,
+          doubanID: doubanID,
+          title: item.title,
+          originalTitle: item.originalTitle,
+          mediaKind: item.mediaKind ?? TMDBMediaKind.automatic,
+          releaseDate: item.releaseDate,
+          overview: item.overview,
+          posterPath: item.posterPath,
+          rating: item.doubanRating,
+          createdAt: now,
+        );
+      }
+    }
+    try {
+      await _store.upsertTMDBWorks(tmdbWorks.values);
+      await _store.upsertDoubanWorks(doubanWorks.values);
+    } catch (error, stackTrace) {
+      AppLogger.warning(
+        'Media',
+        '同步 TMDB/豆瓣作品缓存失败：$error',
+      );
+      AppLogger.error('Media', '作品缓存同步异常', error: error, stackTrace: stackTrace);
+    }
   }
 
   /*
