@@ -185,9 +185,13 @@ class MediaLibraryDefinition {
 
   String? get rootID => sources.isEmpty ? null : sources.first.rootID;
 
+  /// True when the library has no explicit source and therefore covers the
+  /// whole drive (the global library).
+  bool get scansEntireDrive => sources.isEmpty;
+
   String get rootPath {
     if (sources.length == 1) return sources.first.path;
-    if (sources.isEmpty) return '未配置目录';
+    if (sources.isEmpty) return '云盘根目录';
     return '${sources.length} 个媒体目录';
   }
 
@@ -210,6 +214,26 @@ class MediaLibraryDefinition {
     );
   }
 
+  /// Builds sources for legacy payloads that predate the `sources` list.
+  /// Returns an empty list when the payload carries no root at all, so that
+  /// source-less libraries (like the global one) never gain a phantom
+  /// "未配置目录" entry that would then be scanned as a real path.
+  static List<MediaLibrarySource> _legacySources(Map<String, dynamic> json) {
+    final rootID = json['rootID']?.toString();
+    final rootPath = json['rootPath']?.toString();
+    final hasRoot =
+        (rootID != null && rootID.isNotEmpty) ||
+        (rootPath != null && rootPath.isNotEmpty);
+    if (!hasRoot) return const [];
+    return [
+      MediaLibrarySource(
+        id: '${json['id'] ?? DateTime.now().microsecondsSinceEpoch}-legacy',
+        rootID: rootID,
+        path: rootPath ?? '云盘根目录',
+      ),
+    ];
+  }
+
   factory MediaLibraryDefinition.fromJson(Map<String, dynamic> json) {
     final rawSources = json['sources'];
     final sources = rawSources is List
@@ -221,13 +245,7 @@ class MediaLibraryDefinition {
                 ),
               )
               .toList()
-        : [
-            MediaLibrarySource(
-              id: '${json['id'] ?? DateTime.now().microsecondsSinceEpoch}-legacy',
-              rootID: json['rootID']?.toString(),
-              path: json['rootPath']?.toString() ?? '未配置目录',
-            ),
-          ];
+        : _legacySources(json);
     return MediaLibraryDefinition(
       id:
           json['id']?.toString() ??
@@ -302,6 +320,17 @@ class MediaLibraryItem {
   String get year => releaseDate.length >= 4 ? releaseDate.substring(0, 4) : '';
   bool get isMatched =>
       mediaKind != null && (tmdbID != null || doubanID != null);
+
+  /// True for a row that is matched to a work but still lacks the fields that
+  /// only the TMDB/Douban *detail* document provides. The scrape pipeline
+  /// treats matching as "production complete" and lets a separate consumer
+  /// fill these in, so this flag is what feeds that queue.
+  bool get needsDetailHydration {
+    if (!isMatched) return false;
+    return overview.trim().isEmpty ||
+        posterPath == null ||
+        posterPath!.trim().isEmpty;
+  }
 
   bool matchesSearch(String value) {
     final query = value.trim().toLowerCase();
@@ -551,13 +580,29 @@ class MediaLibraryStatistics {
 }
 
 class MediaLibraryScanProgress {
+  /// Human readable description of the current step.
   final String phase;
+
+  /// Files handed to the recognition pipeline so far (入库文件).
   final int completed;
+
+  /// Total files expected for this run, when known.
   final int total;
+
+  /// Files queued but not yet processed (待识别).
   final int pending;
+
+  /// Files discovered while walking the cloud directories (已有文件).
   final int scanned;
+
+  /// Files that resolved to a TMDB/豆瓣 entry (已识别).
   final int matched;
+
+  /// Files stored without a metadata match (未匹配).
   final int unmatched;
+
+  /// Files skipped because they were already complete (已跳过).
+  final int skipped;
 
   const MediaLibraryScanProgress({
     this.phase = '',
@@ -567,7 +612,69 @@ class MediaLibraryScanProgress {
     this.scanned = 0,
     this.matched = 0,
     this.unmatched = 0,
+    this.skipped = 0,
   });
+
+  /// Fraction in `[0, 1]`, or null when the total is still unknown.
+  double? get fraction {
+    if (total <= 0) return null;
+    return (completed / total).clamp(0.0, 1.0);
+  }
+
+  bool get hasStats =>
+      scanned > 0 ||
+      completed > 0 ||
+      pending > 0 ||
+      matched > 0 ||
+      unmatched > 0 ||
+      skipped > 0;
+
+  MediaLibraryScanProgress copyWith({
+    String? phase,
+    int? completed,
+    int? total,
+    int? pending,
+    int? scanned,
+    int? matched,
+    int? unmatched,
+    int? skipped,
+  }) {
+    return MediaLibraryScanProgress(
+      phase: phase ?? this.phase,
+      completed: completed ?? this.completed,
+      total: total ?? this.total,
+      pending: pending ?? this.pending,
+      scanned: scanned ?? this.scanned,
+      matched: matched ?? this.matched,
+      unmatched: unmatched ?? this.unmatched,
+      skipped: skipped ?? this.skipped,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'phase': phase,
+    'completed': completed,
+    'total': total,
+    'pending': pending,
+    'scanned': scanned,
+    'matched': matched,
+    'unmatched': unmatched,
+    'skipped': skipped,
+  };
+
+  factory MediaLibraryScanProgress.fromJson(Map<String, dynamic> json) {
+    int read(String key) => _toInt(json[key]) ?? 0;
+    return MediaLibraryScanProgress(
+      phase: json['phase']?.toString() ?? '',
+      completed: read('completed'),
+      total: read('total'),
+      pending: read('pending'),
+      scanned: read('scanned'),
+      matched: read('matched'),
+      unmatched: read('unmatched'),
+      skipped: read('skipped'),
+    );
+  }
 }
 
 enum MediaLibraryScanMode { unrecognizedOnly, unindexedOnly, forceAll }
@@ -791,13 +898,8 @@ class MediaLibraryScanTask {
         orElse: () => MediaLibraryScanMode.unrecognizedOnly,
       ),
       status: status,
-      progress: MediaLibraryScanProgress(
-        phase: restoredStatus.isActive
-            ? '应用重新启动，任务已停止'
-            : progressMap['phase']?.toString() ?? '',
-        completed:
-            int.tryParse(progressMap['completed']?.toString() ?? '') ?? 0,
-        total: int.tryParse(progressMap['total']?.toString() ?? '') ?? 0,
+      progress: MediaLibraryScanProgress.fromJson(progressMap).copyWith(
+        phase: restoredStatus.isActive ? '应用重新启动，任务已停止' : null,
       ),
       logs: logs,
       createdAt: createdAt,
@@ -812,11 +914,7 @@ class MediaLibraryScanTask {
     'libraryName': libraryName,
     'mode': mode.name,
     'status': status.name,
-    'progress': {
-      'phase': progress.phase,
-      'completed': progress.completed,
-      'total': progress.total,
-    },
+    'progress': progress.toJson(),
     'logs': logs.map((entry) => entry.toJson()).toList(),
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
