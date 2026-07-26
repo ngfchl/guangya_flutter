@@ -24,6 +24,9 @@ class FileListTile extends StatefulWidget {
   final VoidCallback? onCopyFastTransfer;
   final VoidCallback? onDelete;
   final VoidCallback? onDetail;
+  /// Called when this tile is first built — i.e. the user scrolled it into
+  /// view. The caller uses it to trigger lazily-loaded metadata.
+  final VoidCallback? onVisible;
   final bool isRecycleItem;
 
   const FileListTile({
@@ -45,6 +48,7 @@ class FileListTile extends StatefulWidget {
     this.onCopyFastTransfer,
     this.onDelete,
     this.onDetail,
+    this.onVisible,
     this.isRecycleItem = false,
   });
 
@@ -63,6 +67,9 @@ class _FileListTileState extends State<FileListTile> {
     super.initState();
     _renameController = TextEditingController(text: widget.file.name);
     _renameFocusNode = FocusNode(debugLabel: 'rename-${widget.file.id}');
+    // ListView.builder only instantiates rows near the viewport, so initState
+    // is a cheap visibility signal — no scroll-math or observers needed.
+    widget.onVisible?.call();
   }
 
   @override

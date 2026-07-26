@@ -98,6 +98,18 @@ String? firstExistingExecutablePath(
   return null;
 }
 
+/// Folder statistics resolved from the `get_file_detail` response.
+///
+/// The file *list* endpoint omits these, so they are filled in lazily by
+/// [FileNotifier._enrichFolderSizes] and cached alongside the folder size.
+class _FolderDetail {
+  final int? size;
+  final int? subDirectoryCount;
+  final int? subFileCount;
+
+  const _FolderDetail({this.size, this.subDirectoryCount, this.subFileCount});
+}
+
 class _FastTransferSource {
   final CloudFile file;
   final String path;
@@ -277,6 +289,8 @@ class FileNotifier extends StateNotifier<FileState> {
   GuangyaAPI? _api;
   var _detailGeneration = 0;
   String? _selectionAnchorID;
+  final _pendingStatsIDs = <String>{};
+  Timer? _statsDebounce;
 
   FileNotifier() : super(const FileState());
 
@@ -331,7 +345,11 @@ class FileNotifier extends StateNotifier<FileState> {
         if (state.section == WorkspaceSection.shares) {
           unawaited(_enrichShareSizes(cached, generation));
         } else {
-          unawaited(_enrichFolderSizes(cached, generation));
+          // Apply cached statistics only; uncached rows are fetched when they
+          // scroll into view via [requestFolderStats].
+          unawaited(
+            _enrichFolderSizes(cached, generation, visibleIDs: const {}),
+          );
         }
         return;
       }
@@ -348,7 +366,9 @@ class FileNotifier extends StateNotifier<FileState> {
       if (state.section == WorkspaceSection.shares) {
         unawaited(_enrichShareSizes(extracted, generation));
       } else {
-        unawaited(_enrichFolderSizes(extracted, generation));
+        unawaited(
+          _enrichFolderSizes(extracted, generation, visibleIDs: const {}),
+        );
       }
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
@@ -398,7 +418,33 @@ class FileNotifier extends StateNotifier<FileState> {
     await StorageManager.set(StorageKeys.fileListCache, cache);
   }
 
-  Future<void> _enrichFolderSizes(List<CloudFile> files, int generation) async {
+  /// Requests statistics for a folder row that just scrolled into view.
+  ///
+  /// Calls are coalesced over a short window so flinging through a long
+  /// directory issues one batched round of requests instead of one per row.
+  void requestFolderStats(String fileID) {
+    if (_api == null || !_pendingStatsIDs.add(fileID)) return;
+    _statsDebounce?.cancel();
+    _statsDebounce = Timer(const Duration(milliseconds: 250), () {
+      final batch = _pendingStatsIDs.toSet();
+      _pendingStatsIDs.clear();
+      if (batch.isEmpty || state.files.isEmpty) return;
+      unawaited(
+        _enrichFolderSizes(state.files, _detailGeneration, visibleIDs: batch),
+      );
+    });
+  }
+
+  /// Fills in folder size and child counts.
+  ///
+  /// [visibleIDs] limits the network round-trips to the rows currently on
+  /// screen; cached entries are still applied for the whole list because that
+  /// costs nothing. Passing null keeps the eager behaviour.
+  Future<void> _enrichFolderSizes(
+    List<CloudFile> files,
+    int generation, {
+    Set<String>? visibleIDs,
+  }) async {
     if (_api == null || files.isEmpty) return;
     final cache = _readMetadataCache();
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -419,29 +465,53 @@ class FileNotifier extends StateNotifier<FileState> {
       final entry = cache[file.id];
       final cachedAt = int.tryParse(entry?['cachedAt']?.toString() ?? '');
       final cachedSize = int.tryParse(entry?['size']?.toString() ?? '');
+      // Entries cached before child counts were recorded must be refetched,
+      // otherwise the folder row would keep showing size only.
+      final hasCounts =
+          entry?['subDirCount'] != null || entry?['subFileCount'] != null;
       if (cachedAt != null &&
           cachedSize != null &&
           cachedSize > 0 &&
+          hasCounts &&
           now - cachedAt <= ttl) {
         known[file.id] = cachedSize;
-      } else {
+      } else if (visibleIDs == null || visibleIDs.contains(file.id)) {
         pending.add(file);
       }
     }
 
-    void apply(Map<String, int> sizes) {
-      if (generation != _detailGeneration || sizes.isEmpty) return;
+    // The detail response carries child counts alongside the size, so both are
+    // applied from the same round-trip. The list endpoint never returns them,
+    // which is why folder rows would otherwise show no "N 个文件夹，M 个文件".
+    void apply(Map<String, _FolderDetail> details) {
+      if (generation != _detailGeneration || details.isEmpty) return;
       final updated = state.files
-          .map(
-            (file) => sizes.containsKey(file.id)
-                ? file.copyWith(size: sizes[file.id])
-                : file,
-          )
+          .map((file) {
+            final detail = details[file.id];
+            if (detail == null) return file;
+            return file.copyWith(
+              size: detail.size ?? file.size,
+              subDirectoryCount:
+                  detail.subDirectoryCount ?? file.subDirectoryCount,
+              subFileCount: detail.subFileCount ?? file.subFileCount,
+            );
+          })
           .toList();
       state = state.copyWith(files: updated);
     }
 
-    apply(known);
+    apply({
+      for (final entry in known.entries)
+        entry.key: _FolderDetail(
+          size: entry.value,
+          subDirectoryCount: int.tryParse(
+            cache[entry.key]?['subDirCount']?.toString() ?? '',
+          ),
+          subFileCount: int.tryParse(
+            cache[entry.key]?['subFileCount']?.toString() ?? '',
+          ),
+        ),
+    });
     if (pending.isEmpty) return;
 
     final queue = List<CloudFile>.from(pending);
@@ -469,10 +539,36 @@ class FileNotifier extends StateNotifier<FileState> {
                   'folderSize',
                 ]) ??
                 detailFile?.size;
-            if (size == null) continue;
-            cache[file.id] = {'size': size, 'cachedAt': now};
-            resolved[file.id] = size;
-            apply({file.id: size});
+            // `sizeInfo.subDirCount` / `sizeInfo.subFileCount`.
+            final subDirCount =
+                JsonDeep.findInt(detail, const [
+                  'subDirCount',
+                  'subDirectoryCount',
+                ]) ??
+                detailFile?.subDirectoryCount;
+            final subFileCount =
+                JsonDeep.findInt(detail, const [
+                  'subFileCount',
+                  'subFileNum',
+                ]) ??
+                detailFile?.subFileCount;
+            if (size == null && subDirCount == null && subFileCount == null) {
+              continue;
+            }
+            cache[file.id] = {
+              'size': size,
+              'subDirCount': subDirCount,
+              'subFileCount': subFileCount,
+              'cachedAt': now,
+            };
+            if (size != null) resolved[file.id] = size;
+            apply({
+              file.id: _FolderDetail(
+                size: size,
+                subDirectoryCount: subDirCount,
+                subFileCount: subFileCount,
+              ),
+            });
           } catch (e) {
             AppLogger.debug(
               'Storage',
