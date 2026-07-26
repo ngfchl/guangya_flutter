@@ -13,6 +13,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../app/app_theme.dart';
 import '../core/storage/storage_manager.dart';
+import '../core/utils/folder_stats_loader.dart';
 import '../core/utils/guangya_share_link.dart';
 import '../models/cloud_file.dart';
 import '../models/media_library.dart';
@@ -1360,6 +1361,10 @@ class _TopBar extends StatelessWidget {
                       child: TextField(
                         controller: searchController,
                         focusNode: searchFocusNode,
+                        style: TextStyle(
+                          color: cs.foreground,
+                          fontSize: 13,
+                        ),
                         decoration: InputDecoration(
                           border: InputBorder.none,
                           isDense: true,
@@ -1367,7 +1372,7 @@ class _TopBar extends StatelessWidget {
                               ? '搜索文件'
                               : '搜索影视资源',
                           hintStyle: TextStyle(
-                            color: cs.mutedForeground.withValues(alpha: 0.7),
+                            color: cs.mutedForeground,
                             fontSize: 13,
                           ),
                         ),
@@ -1462,6 +1467,10 @@ class _TopBar extends StatelessWidget {
                           child: TextField(
                             controller: searchController,
                             focusNode: searchFocusNode,
+                            style: TextStyle(
+                              color: cs.foreground,
+                              fontSize: 13,
+                            ),
                             decoration: InputDecoration(
                               border: InputBorder.none,
                               isDense: true,
@@ -1469,7 +1478,7 @@ class _TopBar extends StatelessWidget {
                                   ? '搜索文件'
                                   : '搜索影视资源',
                               hintStyle: TextStyle(
-                                color: cs.foreground.withValues(alpha: 0.4),
+                                color: cs.mutedForeground,
                                 fontSize: 13,
                               ),
                             ),
@@ -1545,12 +1554,16 @@ class _TopBar extends StatelessWidget {
             child: TextField(
               controller: searchController,
               focusNode: searchFocusNode,
+              style: TextStyle(
+                color: cs.foreground,
+                fontSize: 13,
+              ),
               decoration: InputDecoration(
                 border: InputBorder.none,
                 isDense: true,
                 hintText: '搜索影视资源',
                 hintStyle: TextStyle(
-                  color: cs.mutedForeground.withValues(alpha: 0.7),
+                  color: cs.mutedForeground,
                   fontSize: 13,
                 ),
               ),
@@ -2875,36 +2888,38 @@ class _MediaSidebar extends ConsumerWidget {
                     onTap: () => onFilter(MediaLibraryBrowseFilter.unmatched),
                   ),
                   const SizedBox(height: 8),
-                  const _SidebarSectionLabel('媒体库'),
-                  Expanded(
-                    child: ListView(
-                      children: [
-                        for (final library in state.libraries)
-                          Builder(
-                            builder: (context) {
-                              final statistics =
-                                  state.libraryStatistics[library.id] ??
-                                  const MediaLibraryStatistics();
-                              return _SidebarTile(
-                                icon: library.kind == MediaLibraryKind.series
-                                    ? Icons.live_tv_rounded
-                                    : Icons.smart_display_rounded,
-                                label: library.name,
-                                subtitle: _mediaLibraryStatisticsLabel(
-                                  statistics,
-                                ),
-                                selected:
-                                    !homeSelected &&
-                                    selectedFilter ==
-                                        MediaLibraryBrowseFilter.all &&
-                                    state.selectedLibrary?.id == library.id,
-                                onTap: () => onSelectLibrary(library.id),
-                              );
-                            },
-                          ),
-                      ],
+                  if (_shouldShowLibrarySection(state)) ...[
+                    const _SidebarSectionLabel('媒体库'),
+                    Expanded(
+                      child: ListView(
+                        children: [
+                          for (final library in state.libraries)
+                            Builder(
+                              builder: (context) {
+                                final statistics =
+                                    state.libraryStatistics[library.id] ??
+                                    const MediaLibraryStatistics();
+                                return _SidebarTile(
+                                  icon: library.kind == MediaLibraryKind.series
+                                      ? Icons.live_tv_rounded
+                                      : Icons.smart_display_rounded,
+                                  label: library.name,
+                                  subtitle: _mediaLibraryStatisticsLabel(
+                                    statistics,
+                                  ),
+                                  selected:
+                                      !homeSelected &&
+                                      selectedFilter ==
+                                          MediaLibraryBrowseFilter.all &&
+                                      state.selectedLibrary?.id == library.id,
+                                  onTap: () => onSelectLibrary(library.id),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
+                  ],
                   const Padding(
                     padding: EdgeInsets.only(top: 8, bottom: 10),
                     child: ShadSeparator.horizontal(),
@@ -2943,6 +2958,15 @@ class _MediaSidebar extends ConsumerWidget {
       ),
     );
   }
+}
+
+bool _shouldShowLibrarySection(MediaLibraryState state) {
+  if (state.libraries.isEmpty) return false;
+  if (state.libraries.length == 1 &&
+      state.libraries.first.id == globalMediaLibraryID) {
+    return false;
+  }
+  return true;
 }
 
 class _SidebarSectionLabel extends StatelessWidget {
@@ -3939,6 +3963,9 @@ class _PrimaryFilePane extends ConsumerWidget {
             final tile = FileListTile(
               file: file,
               isSelected: selected,
+              onVisible: file.isDirectory
+                  ? () => notifier.requestFolderStats(file.id)
+                  : null,
               onSelect: () => _selectDesktopFile(notifier, file),
               onOpen: file.isDirectory
                   ? () => notifier.navigateToFolder(file)
@@ -4469,6 +4496,9 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
   List<CloudFile> _path = const [];
   var _generation = 0;
   final _scrollController = ScrollController();
+  /// One tracker per column index, so folder statistics are fetched only for
+  /// the rows that scroll into view.
+  final _statsTrackers = <int, VisibleFolderStatsTracker>{};
 
   @override
   void initState() {
@@ -4478,8 +4508,55 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
 
   @override
   void dispose() {
+    for (final tracker in _statsTrackers.values) {
+      tracker.dispose();
+    }
+    _statsTrackers.clear();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// Returns the tracker for [index], creating it on first use. Trackers read
+  /// live state through closures so they stay correct as columns are replaced.
+  VisibleFolderStatsTracker _statsTrackerFor(int index) {
+    return _statsTrackers.putIfAbsent(index, () {
+      final generation = _generation;
+      return VisibleFolderStatsTracker(
+        api: () => ref.read(authProvider.notifier).api,
+        currentFiles: () =>
+            index < _columns.length ? _columns[index].files : const [],
+        parentID: () =>
+            index < _columns.length ? _columns[index].parentID : null,
+        isCancelled: () =>
+            !mounted || generation != _generation || index >= _columns.length,
+        onUpdated: (enriched) {
+          if (index >= _columns.length) return;
+          _replaceColumn(
+            index,
+            _columns[index].copyWith(files: enriched),
+            _generation,
+          );
+        },
+      );
+    });
+  }
+
+  /// Drops trackers for columns that no longer exist, and for every column
+  /// when the navigation generation changes.
+  void _pruneStatsTrackers({bool all = false}) {
+    if (all) {
+      for (final tracker in _statsTrackers.values) {
+        tracker.dispose();
+      }
+      _statsTrackers.clear();
+      return;
+    }
+    final stale = _statsTrackers.keys
+        .where((index) => index >= _columns.length)
+        .toList();
+    for (final index in stale) {
+      _statsTrackers.remove(index)?.dispose();
+    }
   }
 
   @override
@@ -4534,6 +4611,8 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
   }) async {
     final generation = ++_generation;
     final restoredPath = List<CloudFile>.unmodifiable(path);
+    // Every column is rebuilt from scratch here.
+    _pruneStatsTrackers(all: true);
     setState(() {
       _path = restoredPath;
       _columns = [
@@ -4585,18 +4664,48 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
       requestGeneration,
     );
     try {
-      final result = await ref
-          .read(authProvider.notifier)
-          .api
-          .fsFiles(parentID: _columns[index].parentID, page: 0, pageSize: 200);
+      final api = ref.read(authProvider.notifier).api;
+      final result = await api.fsFiles(
+        parentID: _columns[index].parentID,
+        page: 0,
+        pageSize: 200,
+      );
+      // The list endpoint omits per-folder child counts; apply whatever is
+      // already memoised so cached columns render complete immediately.
+      final files = FolderStatsLoader.instance.applyCached(
+        _cloudFilesFromResponse(result),
+      );
       _replaceColumn(
         index,
         _columns[index].copyWith(
-          files: _cloudFilesFromResponse(result),
+          files: files,
           isLoading: false,
           clearError: true,
         ),
         requestGeneration,
+      );
+      // Pull anything already in the persistent cache — one local query for the
+      // whole column, no network. Rows still missing statistics are fetched
+      // lazily as they scroll into view (see _statsTrackerFor).
+      unawaited(
+        FolderStatsLoader.instance.hydrate(
+          files,
+          api: api,
+          parentID: _columns[index].parentID,
+          visibleIDs: const {},
+          isCancelled: () =>
+              !mounted ||
+              requestGeneration != _generation ||
+              index >= _columns.length,
+          onUpdated: (enriched) {
+            if (index >= _columns.length) return;
+            _replaceColumn(
+              index,
+              _columns[index].copyWith(files: enriched),
+              requestGeneration,
+            );
+          },
+        ),
       );
     } catch (error) {
       _replaceColumn(
@@ -4624,6 +4733,11 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
   void _openFolder(int index, CloudFile folder) {
     final path = [..._path.take(index), folder];
     final generation = ++_generation;
+    // Columns beyond this one are replaced, so their trackers would otherwise
+    // keep pointing at the previous directory.
+    for (final key in _statsTrackers.keys.where((key) => key > index).toList()) {
+      _statsTrackers.remove(key)?.dispose();
+    }
     setState(() {
       _path = List<CloudFile>.unmodifiable(path);
       final columns = _columns.take(index + 1).toList();
@@ -4655,6 +4769,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
       _path = List<CloudFile>.unmodifiable(path);
       _columns = _columns.take(index + 1).toList(growable: false);
     });
+    _pruneStatsTrackers();
     _notifyPathChanged(path);
     _scrollToColumn(index);
   }
@@ -4913,6 +5028,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
                         column: _columns[index],
                         source: widget.source,
                         enableCloudDrag: widget.enableCloudDrag,
+                        onItemVisible: _statsTrackerFor(index).onItemBuilt,
                         onActivate: () => _collapseToColumn(index),
                         onSelect: (file) => _selectColumnFile(index, file),
                         onSelectAll: () => _selectAllColumn(index),
@@ -4982,6 +5098,9 @@ class _FinderColumn extends StatefulWidget {
   final _ColumnListing column;
   final _PaneIdentity source;
   final bool enableCloudDrag;
+  /// Reports rows as the list builds them, so folder statistics are only
+  /// fetched for what the user can actually see.
+  final void Function(CloudFile file)? onItemVisible;
   final VoidCallback onActivate;
   final ValueChanged<CloudFile> onSelect;
   final VoidCallback onSelectAll;
@@ -5004,6 +5123,7 @@ class _FinderColumn extends StatefulWidget {
     required this.column,
     required this.source,
     required this.enableCloudDrag,
+    this.onItemVisible,
     required this.onActivate,
     required this.onSelect,
     required this.onSelectAll,
@@ -5177,6 +5297,10 @@ class _FinderColumnState extends State<_FinderColumn> {
                               itemCount: column.files.length,
                               itemBuilder: (context, index) {
                                 final file = column.files[index];
+                                // ListView.builder only builds rows near the
+                                // viewport, making this an accurate signal for
+                                // lazily loading folder statistics.
+                                widget.onItemVisible?.call(file);
                                 final selected = column.selectedIDs.contains(
                                   file.id,
                                 );
@@ -5945,6 +6069,9 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
             final row = FileListTile(
               file: file,
               isSelected: selected,
+              onVisible: file.isDirectory
+                  ? () => ref.read(fileProvider.notifier).requestFolderStats(file.id)
+                  : null,
               onSelect: () => _selectWithModifiers(file),
               onOpen: () => _open(file),
               onPreview: canPreviewCloudFile(file)

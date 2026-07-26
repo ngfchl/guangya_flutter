@@ -1196,6 +1196,52 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     _setDetailHeader(null);
   }
 
+  /// Re-derive the currently open detail work from a fresh items list. Called
+  /// when the provider items change (e.g. a manual match wrote a tmdb/douban id
+  /// and its background enrichment finished) so the detail page reflects the
+  /// latest scraped metadata without a manual reopen.
+  ///
+  /// Matching is done by the resource file ids the detail currently shows,
+  /// because a successful match changes the work key (an unmatched title-keyed
+  /// work becomes tmdb/douban-keyed) and a rename can change file names.
+  void _syncOpenDetailWithItems(List<MediaLibraryItem> items) {
+    final current = _detailWork;
+    if (current == null) return;
+    final resourceIDs = current.resources.map((item) => item.id).toSet();
+    if (resourceIDs.isEmpty) return;
+    final works = _MediaWork.fromItems(items);
+    // Prefer the work that still owns any of the tracked resource ids.
+    final refreshed = works
+        .where(
+          (work) => work.resources.any((item) => resourceIDs.contains(item.id)),
+        )
+        .firstOrNull;
+    if (refreshed == null) return;
+    // Skip redundant rebuilds when nothing observable changed.
+    final before = current.primary;
+    final after = refreshed.primary;
+    String resourceSignature(_MediaWork work) => work.resources
+        .map((item) => '${item.id}|${item.file.name}')
+        .join(',');
+    final unchanged =
+        refreshed.key == current.key &&
+        after.tmdbID == before.tmdbID &&
+        after.doubanID == before.doubanID &&
+        after.title == before.title &&
+        after.posterPath == before.posterPath &&
+        after.overview == before.overview &&
+        resourceSignature(refreshed) == resourceSignature(current);
+    if (unchanged) return;
+    setState(() => _detailWork = refreshed);
+    _setDetailHeader(
+      MediaDetailHeader(
+        title: refreshed.primary.title,
+        mediaKind: refreshed.primary.mediaKind,
+        year: refreshed.primary.year,
+      ),
+    );
+  }
+
   Future<void> _removeMediaRecords(List<MediaLibraryItem> records) async {
     if (records.isEmpty) return;
     AppLogger.info('Media', '[媒体库页面-移除记录] 请求移除 ${records.length} 条记录');
@@ -1748,6 +1794,25 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     });
     final compact = MediaQuery.sizeOf(context).width < 720;
     ref.listen<MediaLibraryState>(mediaLibraryProvider, (previous, next) {
+      // Keep an open detail page in sync with metadata written in the
+      // background (e.g. after a manual match wrote a tmdb/douban id and its
+      // enrichment finished).
+      if (_detailWork != null &&
+          (previous == null ||
+              !identical(previous.items, next.items) ||
+              !identical(previous.allItems, next.allItems))) {
+        final useGlobalBrowse =
+            widget.showHomePanel ||
+            _wallFilter == MediaLibraryBrowseFilter.movies ||
+            _wallFilter == MediaLibraryBrowseFilter.series ||
+            _wallFilter == MediaLibraryBrowseFilter.unmatched;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _syncOpenDetailWithItems(
+            useGlobalBrowse ? next.allItems : next.items,
+          );
+        });
+      }
       final message = next.errorMessage ?? next.statusMessage;
       final previousMessage = previous?.errorMessage ?? previous?.statusMessage;
       final isProgressMessage =
@@ -1797,7 +1862,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             child:
                 widget.showLibrarySidebar &&
                     !widget.showManagementToolbar &&
-                    !compact
+                    !compact &&
+                    !_hideLibrarySection(state)
                 ? Row(
                     children: [
                       _buildLibraryList(context, state),
@@ -1861,7 +1927,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       controller: _searchController,
       placeholder: const Text('搜索影视库或匹配 TMDB…'),
       placeholderStyle: TextStyle(
-        color: cs.mutedForeground.withValues(alpha: 0.7),
+        color: cs.mutedForeground,
+        fontSize: 13,
+      ),
+      style: TextStyle(
+        color: cs.foreground,
         fontSize: 13,
       ),
       leading: Icon(Icons.search_rounded, size: 16, color: cs.mutedForeground),
@@ -1925,7 +1995,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                   controller: _searchController,
                   placeholder: const Text('搜索影视库或匹配 TMDB…'),
                   placeholderStyle: TextStyle(
-                    color: cs.mutedForeground.withValues(alpha: 0.7),
+                    color: cs.mutedForeground,
+                    fontSize: 13,
+                  ),
+                  style: TextStyle(
+                    color: cs.foreground,
                     fontSize: 13,
                   ),
                   leading: Icon(
@@ -1972,7 +2046,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             controller: _searchController,
             placeholder: const Text('搜索影视库或匹配 TMDB…'),
             placeholderStyle: TextStyle(
-              color: cs.mutedForeground.withValues(alpha: 0.7),
+              color: cs.mutedForeground,
+              fontSize: 13,
+            ),
+            style: TextStyle(
+              color: cs.foreground,
               fontSize: 13,
             ),
             leading: Icon(
@@ -2068,6 +2146,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   }
 
   Widget _buildLibraryList(BuildContext context, MediaLibraryState state) {
+    if (_hideLibrarySection(state)) return const SizedBox.shrink();
     final cs = ShadTheme.of(context).colorScheme;
     return SizedBox(
       width: 260,
@@ -2099,9 +2178,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                             .selectLibrary(library.id),
                         onEdit: () =>
                             _showEditLibraryDialog(context, ref, library),
-                        onDelete: () => ref
-                            .read(mediaLibraryProvider.notifier)
-                            .deleteLibrary(library.id),
+                        onDelete: () => _deleteSidebarLibrary(library),
                       );
                     },
                   ),
@@ -2109,6 +2186,15 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ],
       ),
     );
+  }
+
+  static bool _hideLibrarySection(MediaLibraryState state) {
+    if (state.libraries.isEmpty) return true;
+    if (state.libraries.length == 1 &&
+        state.libraries.first.id == globalMediaLibraryID) {
+      return true;
+    }
+    return false;
   }
 
   Widget _emptyLibraryHint(BuildContext context) {
@@ -2355,23 +2441,17 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                                             .downloadFile(work.primary.file),
                                         onRecognize: state.isScanning
                                             ? null
-                                            : () {
-                                                _openDetail(work);
-                                                unawaited(
-                                                  _refreshAndRecognizeDetail(
-                                                    work,
-                                                  ),
-                                                );
-                                              },
-                                        onManualMatch: () {
-                                          _openDetail(work);
-                                          unawaited(
-                                            _showManualTMDBMatch(
-                                              work,
-                                              work.primary,
-                                            ),
-                                          );
-                                        },
+                                            : () => unawaited(
+                                                _refreshAndRecognizeDetail(
+                                                  work,
+                                                ),
+                                              ),
+                                        onManualMatch: () => unawaited(
+                                          _showManualTMDBMatch(
+                                            work,
+                                            work.primary,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                 ],
@@ -2673,14 +2753,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                   onDownload: () => ref
                       .read(fileProvider.notifier)
                       .downloadFile(work.primary.file),
-                  onRecognize: () {
-                    _openDetail(work);
-                    unawaited(_refreshAndRecognizeDetail(work));
-                  },
-                  onManualMatch: () {
-                    _openDetail(work);
-                    unawaited(_showManualTMDBMatch(work, work.primary));
-                  },
+                  onRecognize: () =>
+                      unawaited(_refreshAndRecognizeDetail(work)),
+                  onManualMatch: () =>
+                      unawaited(_showManualTMDBMatch(work, work.primary)),
                 ),
               );
             },
@@ -2753,7 +2829,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '已发现 ${state.progress.completed} 个视频文件，已入库资源会实时显示。',
+                        '已入库资源会实时显示。',
                         style: TextStyle(
                           fontSize: 12,
                           color: cs.mutedForeground,
@@ -2764,8 +2840,73 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 ),
               ],
             ),
+            if (state.progress.hasStats) ...[
+              const SizedBox(height: 10),
+              _scanStatsRow(context, state.progress),
+            ],
+            if (state.progress.fraction != null) ...[
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: state.progress.fraction,
+                  minHeight: 4,
+                  backgroundColor: cs.border,
+                ),
+              ),
+            ],
           ],
         ),
+      ),
+    );
+  }
+
+  /// Compact statistics strip shown above the progress bar.
+  Widget _scanStatsRow(BuildContext context, MediaLibraryScanProgress p) {
+    final entries = <({String label, int value})>[
+      (label: '已有文件', value: p.scanned),
+      (label: '入库文件', value: p.completed),
+      (label: '待识别', value: p.pending),
+      (label: '已识别', value: p.matched),
+      (label: '未匹配', value: p.unmatched),
+      (label: '已跳过', value: p.skipped),
+    ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: [
+        for (final entry in entries)
+          _scanStatChip(context, entry.label, entry.value),
+      ],
+    );
+  }
+
+  Widget _scanStatChip(BuildContext context, String label, int value) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: cs.background,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: cs.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$value',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: cs.foreground,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2931,6 +3072,22 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         editingLibrary: library,
       ),
     );
+  }
+
+  Future<void> _deleteSidebarLibrary(MediaLibraryDefinition library) async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: '删除媒体库',
+      content: '将删除「${library.name}」的媒体库记录和本地刮削数据，不会删除云盘文件。',
+      confirmText: '删除',
+    );
+    if (!confirmed || !mounted) return;
+    AppLogger.info('Media', '[媒体库侧边栏-删除] 确认删除「${library.name}」，ID=${library.id}');
+    try {
+      await ref.read(mediaLibraryProvider.notifier).deleteLibrary(library.id);
+    } catch (error) {
+      AppLogger.warning('Media', '[媒体库侧边栏-删除] 删除失败：$error');
+    }
   }
 
   Future<void> _exportScrapedData() async {
@@ -3504,9 +3661,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       // to initialize the search. Refreshing every resource in a large
       // series here blocks the dialog behind storage writes and a full reload.
       final resources = work.resources;
+      // Works from the list too: do not require an open detail page. Only bail
+      // if this invocation was superseded (session changed) or has no targets.
       if (!mounted ||
           _detailSession != detailSession ||
-          _detailWork == null ||
           resources.isEmpty) {
         return;
       }
@@ -3541,8 +3699,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       );
       if (candidate == null ||
           !mounted ||
-          _detailSession != detailSession ||
-          _detailWork == null) {
+          _detailSession != detailSession) {
         AppLogger.info('Media', '[手动匹配] 用户取消：${target.file.name}');
         return;
       }
@@ -3574,19 +3731,23 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           );
         }
       }
-      if (!mounted || _detailSession != detailSession || _detailWork == null) {
+      if (!mounted || _detailSession != detailSession) {
         return;
       }
-      final resourceIDs = resources.map((item) => item.id).toSet();
-      final refreshed =
-          _MediaWork.fromItems(ref.read(mediaLibraryProvider).items)
-              .where(
-                (candidate) => candidate.resources.any(
-                  (item) => resourceIDs.contains(item.id),
-                ),
-              )
-              .firstOrNull;
-      if (refreshed != null) setState(() => _detailWork = refreshed);
+      // Only update the open detail page if one is actually open; when invoked
+      // from the list, the grid refreshes itself via the provider watch.
+      if (_detailWork != null) {
+        final resourceIDs = resources.map((item) => item.id).toSet();
+        final refreshed =
+            _MediaWork.fromItems(ref.read(mediaLibraryProvider).items)
+                .where(
+                  (candidate) => candidate.resources.any(
+                    (item) => resourceIDs.contains(item.id),
+                  ),
+                )
+                .firstOrNull;
+        if (refreshed != null) setState(() => _detailWork = refreshed);
+      }
     } finally {
       if (mounted && identical(_manualMatchOperations[targetKey], operation)) {
         setState(() {
@@ -4379,6 +4540,23 @@ class _MediaLibraryManagementDialogState
     AppLogger.info('Media', '[媒体库页面-删除媒体库] 确认删除「${library.name}」，ID=${library.id}');
     try {
       await ref.read(mediaLibraryProvider.notifier).deleteLibrary(library.id);
+    } catch (error) {
+      AppLogger.warning('Media', '[媒体库页面-删除媒体库] 删除失败：$error');
+      if (mounted) {
+        showShadDialog(
+          context: context,
+          builder: (_) => ShadDialog(
+            title: const Text('删除失败'),
+            description: Text('删除媒体库「${library.name}」时出错：$error'),
+            actions: [
+              ShadButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('确定'),
+              ),
+            ],
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _backupBusy = false);
     }
@@ -6334,10 +6512,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                             Wrap(
                               spacing: 6,
                               runSpacing: 6,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 ShadBadge(child: Text(isSeries ? '剧集' : '电影')),
                                 if (item.year.isNotEmpty)
                                   ShadBadge.outline(child: Text(item.year)),
+                                ..._ratingBadges(item),
                                 if (item.hasChineseAudio)
                                   const ShadBadge.outline(child: Text('中文音轨')),
                                 if (item.hasChineseSubtitle)
@@ -6345,9 +6525,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                               ],
                             ),
                             const SizedBox(height: 14),
-                            SelectableText(
+                            Text(
                               item.overview.isEmpty ? '暂无影视简介。' : item.overview,
                               maxLines: compact ? 3 : 4,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 13,
                                 height: 1.55,
@@ -6369,6 +6550,77 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           ),
         );
       },
+    );
+  }
+
+  /// Rating badges for the current resource. Shows TMDB and/or Douban scores
+  /// when available; each badge opens the matching web page on tap.
+  List<Widget> _ratingBadges(MediaLibraryItem item) {
+    final badges = <Widget>[];
+    final tmdbRating = item.tmdbRating;
+    if (tmdbRating != null && tmdbRating > 0 && item.tmdbID != null) {
+      final kind = item.mediaKind == TMDBMediaKind.tv ? 'tv' : 'movie';
+      badges.add(
+        _ratingBadge(
+          label: 'TMDB',
+          score: tmdbRating,
+          color: const Color(0xFF01B4E4),
+          url: 'https://www.themoviedb.org/$kind/${item.tmdbID}',
+        ),
+      );
+    }
+    final doubanRating = item.doubanRating;
+    if (doubanRating != null &&
+        doubanRating > 0 &&
+        item.doubanID != null &&
+        item.doubanID!.isNotEmpty) {
+      badges.add(
+        _ratingBadge(
+          label: '豆瓣',
+          score: doubanRating,
+          color: const Color(0xFF2E963B),
+          url: 'https://movie.douban.com/subject/${item.doubanID}/',
+        ),
+      );
+    }
+    return badges;
+  }
+
+  Widget _ratingBadge({
+    required String label,
+    required double score,
+    required Color color,
+    required String url,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: () => launchUrl(Uri.parse(url)),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: color.withValues(alpha: 0.55)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.star_rounded, size: 13, color: color),
+              const SizedBox(width: 3),
+              Text(
+                '$label ${score.toStringAsFixed(1)}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -6429,10 +6681,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             color: cs.foreground,
           ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         Wrap(
-          spacing: 20,
-          runSpacing: 10,
+          spacing: 8,
+          runSpacing: 8,
           children: [
             _metadataPill(context, 'TMDB', item.tmdbID?.toString() ?? '未匹配'),
             if (item.doubanID != null && item.doubanID!.isNotEmpty)
@@ -6449,21 +6701,32 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               _metadataPill(context, '音频', parsed.audio!),
           ],
         ),
-        const SizedBox(height: 12),
-        _metadataRow(context, '当前文件', _resource.file.name),
-        _metadataRow(context, '文件 ID', _resource.file.id),
-        _metadataRow(
-          context,
-          'GCID',
-          _resource.file.gcid?.isNotEmpty == true
-              ? _resource.file.gcid!
-              : '未获取',
+        const SizedBox(height: 14),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: cs.muted.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _metadataRow(context, '文件', _resource.file.name),
+              _metadataRow(context, '文件 ID', _resource.file.id),
+              _metadataRow(
+                context,
+                'GCID',
+                _resource.file.gcid?.isNotEmpty == true
+                    ? _resource.file.gcid!
+                    : '未获取',
+              ),
+              _metadataRow(context, '云盘位置', _resource.file.cloudPath),
+              if (item.doubanID != null && item.doubanID!.isNotEmpty)
+                _metadataRow(context, '豆瓣 ID', item.doubanID!),
+            ],
+          ),
         ),
-        _metadataRow(context, '云盘位置', _resource.file.cloudPath),
-        if (item.doubanID != null && item.doubanID!.isNotEmpty)
-          _metadataRow(context, '豆瓣 ID', item.doubanID!),
-        if (item.imdbID != null && item.imdbID!.isNotEmpty)
-          _metadataRow(context, 'IMDB ID', item.imdbID!),
       ],
     );
   }
@@ -6988,22 +7251,29 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
 
   Widget _metadataPill(BuildContext context, String label, String value) {
     final cs = ShadTheme.of(context).colorScheme;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          '$label ',
-          style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-        ),
-        SelectableText(
-          value,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: cs.foreground,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: cs.muted.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$label ',
+            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
           ),
-        ),
-      ],
+          SelectableText(
+            value,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: cs.foreground,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -7056,30 +7326,49 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               color: cs.foreground,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           SizedBox(
-            height: 160,
+            height: 180,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: posters.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (context, index) => ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: CachedNetworkImage(
-                  imageUrl: _tmdbImageURL(posters[index], size: 'w342'),
-                  width: 106,
-                  fit: BoxFit.cover,
-                  errorWidget: (_, _, _) => _tmdbDirectFallback(
-                    path: posters[index],
-                    size: 'w342',
-                    width: 106,
-                    fallback: const SizedBox(width: 106),
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (context, index) => Container(
+                width: 120,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: CachedNetworkImage(
+                    imageUrl: _tmdbImageURL(posters[index], size: 'w342'),
+                    width: 120,
+                    height: 180,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, _, _) => _tmdbDirectFallback(
+                      path: posters[index],
+                      size: 'w342',
+                      width: 120,
+                      height: 180,
+                      fallback: Container(
+                        width: 120,
+                        height: 180,
+                        color: cs.muted,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 22),
         ],
         if (showCast && cast.isNotEmpty) ...[
           Text(
@@ -7090,71 +7379,81 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               color: cs.foreground,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           SizedBox(
-            height: 180,
+            height: 200,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: cast.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
                 final person = cast[index];
                 final profile = person['profile_path']?.toString();
+                final name = person['name']?.toString() ?? '';
+                final character = person['character']?.toString() ?? '';
                 return SizedBox(
-                  width: 96,
+                  width: 100,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(8),
                         child: profile == null || profile.isEmpty
                             ? Container(
-                                width: 96,
-                                height: 122,
-                                color: cs.muted,
+                                width: 100,
+                                height: 130,
+                                decoration: BoxDecoration(
+                                  color: cs.muted,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
                                 child: Icon(
                                   Icons.person_rounded,
                                   color: cs.mutedForeground,
+                                  size: 32,
                                 ),
                               )
                             : CachedNetworkImage(
                                 imageUrl: _tmdbImageURL(profile, size: 'w185'),
-                                width: 96,
-                                height: 122,
+                                width: 100,
+                                height: 130,
                                 fit: BoxFit.cover,
                                 errorWidget: (_, _, _) => _tmdbDirectFallback(
                                   path: profile,
                                   size: 'w185',
-                                  width: 96,
-                                  height: 122,
+                                  width: 100,
+                                  height: 130,
                                   fallback: Container(
-                                    width: 96,
-                                    height: 122,
+                                    width: 100,
+                                    height: 130,
                                     color: cs.muted,
                                   ),
                                 ),
                               ),
                       ),
-                      const SizedBox(height: 5),
-                      Text(
-                        person['name']?.toString() ?? '',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: cs.foreground,
+                      const SizedBox(height: 6),
+                      if (name.isNotEmpty)
+                        Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: cs.foreground,
+                          ),
                         ),
-                      ),
-                      Text(
-                        person['character']?.toString() ?? '',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: cs.mutedForeground,
+                      if (character.isNotEmpty) ...[
+                        const SizedBox(height: 1),
+                        Text(
+                          character,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: cs.mutedForeground,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 );
@@ -7191,21 +7490,27 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   Widget _metadataRow(BuildContext context, String label, String value) {
     final cs = ShadTheme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
+      padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 64,
-            child: SelectableText(
+            width: 58,
+            child: Text(
               label,
-              style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+              style: TextStyle(
+                fontSize: 11.5,
+                color: cs.mutedForeground,
+              ),
             ),
           ),
           Expanded(
             child: SelectableText(
               value,
-              style: TextStyle(fontSize: 12, color: cs.foreground),
+              style: TextStyle(
+                fontSize: 11.5,
+                color: cs.foreground,
+              ),
               maxLines: 2,
             ),
           ),
@@ -7615,72 +7920,174 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           color: Colors.transparent,
           child: InkWell(
             onTap: () => _selectEpisode(resource),
-            borderRadius: BorderRadius.circular(6),
-            child: Container(
+            borderRadius: BorderRadius.circular(8),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
               width: double.infinity,
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                color: selected ? cs.primary.withValues(alpha: 0.10) : cs.card,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: selected ? cs.primary : cs.border),
+                color: selected ? cs.primary.withValues(alpha: 0.08) : cs.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: selected
+                      ? cs.primary.withValues(alpha: 0.8)
+                      : cs.border,
+                  width: selected ? 1.4 : 1,
+                ),
               ),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
+                  // Leading: episode badge for series, file-type icon otherwise.
                   if (episode != null)
-                    SizedBox(
-                      width: 38,
+                    Container(
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? cs.primary
+                            : cs.primary.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(7),
+                      ),
                       child: Text(
-                        'E${episode.toString().padLeft(2, '0')}',
+                        episode.toString().padLeft(2, '0'),
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: cs.primary,
+                          color: selected ? cs.primaryForeground : cs.primary,
                         ),
                       ),
+                    )
+                  else
+                    Container(
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: cs.muted,
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Icon(
+                        resource.file.isIso
+                            ? LucideIcons.disc
+                            : LucideIcons.clapperboard,
+                        size: 18,
+                        color: cs.mutedForeground,
+                      ),
                     ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        SelectableText(
+                        Text(
                           resource.file.name,
-                          maxLines: 2,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 12.5,
                             fontWeight: FontWeight.w600,
                             color: cs.foreground,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        SelectableText(
-                          '${resource.file.formattedSize} · ${resource.file.modifiedAt}',
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: cs.mutedForeground,
-                          ),
-                        ),
+                        const SizedBox(height: 6),
+                        _resourceTags(resource, cs),
                       ],
                     ),
                   ),
-                  if (selected)
+                  if (selected) ...[
+                    const SizedBox(width: 8),
                     Icon(
                       Icons.check_circle_rounded,
-                      size: 16,
+                      size: 18,
                       color: cs.primary,
                     ),
-                  const SizedBox(width: 10),
+                  ],
+                  const SizedBox(width: 8),
                   if (!resource.file.isIso)
-                    ShadButton.outline(
+                    ShadButton(
                       size: ShadButtonSize.sm,
                       onPressed: () => widget.onPlay(resource),
-                      leading: const Icon(Icons.play_arrow_rounded, size: 15),
+                      leading: const Icon(Icons.play_arrow_rounded, size: 16),
                       child: const Text('播放'),
                     ),
                 ],
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Compact tag row for a resource: size + technical spec (resolution, codec,
+  /// HDR, audio) + Chinese audio/subtitle flags. Helps distinguish multiple
+  /// versions of the same title at a glance.
+  Widget _resourceTags(MediaLibraryItem resource, ShadColorScheme cs) {
+    final parsed = ParsedMediaName.parse(
+      resource.file.name,
+      directoryName: _parentDirectoryName(resource.file.cloudPath),
+    );
+    final specs = <String>[
+      if (parsed.resolution?.isNotEmpty == true) parsed.resolution!,
+      if (parsed.dynamicRange?.isNotEmpty == true) parsed.dynamicRange!,
+      if (parsed.videoCodec?.isNotEmpty == true) parsed.videoCodec!,
+      if (parsed.audio?.isNotEmpty == true) parsed.audio!,
+    ];
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _resourceChip(
+          resource.file.formattedSize,
+          cs,
+          muted: true,
+        ),
+        for (final spec in specs) _resourceChip(spec, cs),
+        if (resource.hasChineseAudio)
+          _resourceChip('中文音轨', cs, accent: true),
+        if (resource.hasChineseSubtitle)
+          _resourceChip('中文字幕', cs, accent: true),
+        if (resource.file.modifiedAt.isNotEmpty)
+          _resourceChip(resource.file.modifiedAt, cs, muted: true),
+      ],
+    );
+  }
+
+  Widget _resourceChip(
+    String label,
+    ShadColorScheme cs, {
+    bool muted = false,
+    bool accent = false,
+  }) {
+    final Color bg;
+    final Color fg;
+    if (accent) {
+      bg = cs.primary.withValues(alpha: 0.12);
+      fg = cs.primary;
+    } else if (muted) {
+      bg = Colors.transparent;
+      fg = cs.mutedForeground;
+    } else {
+      bg = cs.muted;
+      fg = cs.foreground;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+        border: muted ? null : Border.all(color: cs.border.withValues(alpha: 0.6)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: accent ? FontWeight.w600 : FontWeight.w500,
+          color: fg,
         ),
       ),
     );
