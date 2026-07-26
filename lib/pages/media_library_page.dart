@@ -4274,6 +4274,19 @@ class _MediaLibraryManagementDialogState
                   onSyncToCloud: _syncScrapedDataToCloud,
                   onRestoreFromCloud: _syncScrapedDataFromCloud,
                 ),
+                const SizedBox(width: 8),
+                ShadTooltip(
+                  builder: (_) => const Text('清理所有媒体库'),
+                  child: ShadButton.destructive(
+                    size: ShadButtonSize.sm,
+                    onPressed:
+                        _backupBusy || state.hasActiveScans || state.libraries.isEmpty
+                            ? null
+                            : _clearAllLibraries,
+                    leading: const Icon(Icons.delete_sweep_rounded, size: 16),
+                    child: const Text('清理'),
+                  ),
+                ),
                 Expanded(
                   child: Align(
                     alignment: Alignment.centerRight,
@@ -4320,6 +4333,7 @@ class _MediaLibraryManagementDialogState
                                 library,
                               ),
                           onDelete: () => _deleteLibrary(library),
+                          onClear: () => _clearLibrary(library),
                         );
                       },
                     ),
@@ -4361,8 +4375,54 @@ class _MediaLibraryManagementDialogState
       confirmText: '删除',
     );
     if (!confirmed || !mounted) return;
+    setState(() => _backupBusy = true);
     AppLogger.info('Media', '[媒体库页面-删除媒体库] 确认删除「${library.name}」，ID=${library.id}');
-    await ref.read(mediaLibraryProvider.notifier).deleteLibrary(library.id);
+    try {
+      await ref.read(mediaLibraryProvider.notifier).deleteLibrary(library.id);
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _clearLibrary(MediaLibraryDefinition library) async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: '清空媒体库',
+      content: '将清空「${library.name}」的所有影视记录和刮削数据，媒体库目录配置保留。之后可重新扫描。',
+      confirmText: '清空',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() => _backupBusy = true);
+    AppLogger.info('Media', '[媒体库页面-清空媒体库] 确认清空「${library.name}」，ID=${library.id}');
+    try {
+      await ref.read(mediaLibraryProvider.notifier).clearLibrary(library.id);
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _clearAllLibraries() async {
+    final libs = ref.read(mediaLibraryProvider).libraries;
+    final count = libs.length;
+    if (count == 0) return;
+    final confirmed = await showConfirmDialog(
+      context,
+      title: '清理所有媒体库',
+      content: '将清空全部 $count 个媒体库的所有影视记录和刮削数据，'
+          '媒体库目录配置保留。之后可重新扫描。',
+      confirmText: '全部清空',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() => _backupBusy = true);
+    AppLogger.info('Media', '[媒体库页面-清空所有] 确认清空 $count 个媒体库');
+    try {
+      for (final library in libs) {
+        if (!mounted) return;
+        await ref.read(mediaLibraryProvider.notifier).clearLibrary(library.id);
+      }
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
   }
 
   Future<void> _exportScrapedData() async {
@@ -4476,6 +4536,7 @@ class _ManagementLibraryRow extends ConsumerWidget {
   final VoidCallback onSelect;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback onClear;
 
   const _ManagementLibraryRow({
     required this.library,
@@ -4485,6 +4546,7 @@ class _ManagementLibraryRow extends ConsumerWidget {
     required this.onSelect,
     required this.onEdit,
     required this.onDelete,
+    required this.onClear,
   });
 
   @override
@@ -4585,6 +4647,14 @@ class _ManagementLibraryRow extends ConsumerWidget {
                 size: ShadButtonSize.sm,
                 onPressed: disabled ? null : onEdit,
                 child: const Icon(Icons.edit_outlined, size: 16),
+              ),
+            ),
+            ShadTooltip(
+              builder: (_) => const Text('清空媒体库'),
+              child: ShadButton.ghost(
+                size: ShadButtonSize.sm,
+                onPressed: disabled ? null : onClear,
+                child: const Icon(Icons.cleaning_services_rounded, size: 16),
               ),
             ),
             ShadTooltip(

@@ -762,6 +762,39 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
   }
 
+  Future<void> clearLibrary(String id) async {
+    if (state.isLibraryScanning(id)) {
+      state = state.copyWith(
+        statusMessage: '请先停止该媒体库的扫描任务，再清空',
+        clearError: true,
+      );
+      return;
+    }
+    final removedItems = (await _loadAllItems())
+        .where((item) => item.libraryID == id)
+        .toList(growable: false);
+    if (removedItems.isEmpty) {
+      state = state.copyWith(statusMessage: '媒体库已是空的');
+      return;
+    }
+    await _store.deleteItems(removedItems);
+    final allItems = await _loadAllItems();
+    final selectedItems = state.selectedLibraryID == id
+        ? const <MediaLibraryItem>[]
+        : allItems
+              .where((item) => item.libraryID == state.selectedLibraryID)
+              .toList(growable: false);
+    final statistics = await _store.statistics();
+    state = state.copyWith(
+      items: selectedItems,
+      allItems: allItems,
+      libraryStatistics: statistics.libraries,
+      storedGlobalStatistics: statistics.global,
+      statusMessage: '已清空「${state.libraries.firstWhere((l) => l.id == id).name}」的 ${removedItems.length} 条记录',
+    );
+    AppLogger.info('Media', '清空媒体库 $id：${removedItems.length} 条记录');
+  }
+
   Future<int> removeMediaRecords(Iterable<MediaLibraryItem> values) {
     final requested = values.toList(growable: false);
     if (requested.isEmpty) return Future.value(0);
