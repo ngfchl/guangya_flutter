@@ -6,9 +6,11 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 import '../providers/theme_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../providers/auth_provider.dart';
 import '../widgets/app_log_dialog.dart';
 import '../core/http/dio_client.dart';
 import '../core/storage/storage_manager.dart';
+import '../models/cloud_file.dart';
 import '../pages/app_upgrade_page.dart';
 import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
@@ -36,6 +38,8 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   final _mediaLibraryPageSizeController = TextEditingController();
   final _mediaHomePreviewCountController = TextEditingController();
   var _doubanAutoRecognitionEnabled = false;
+  List<String> _globalScanExcludedFolders = [];
+  List<String> _globalScanExcludedKeywords = [];
 
   @override
   void initState() {
@@ -72,6 +76,14 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     );
     _doubanAutoRecognitionEnabled =
         doubanEnabled == true || doubanEnabled?.toString() == 'true';
+    _globalScanExcludedFolders =
+        StorageManager.get<List>(StorageKeys.globalScanExcludedFolders)
+                ?.cast<String>() ??
+            [];
+    _globalScanExcludedKeywords =
+        StorageManager.get<List>(StorageKeys.globalScanExcludedKeywords)
+                ?.cast<String>() ??
+            [];
   }
 
   @override
@@ -218,6 +230,42 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                       child: _numberInput(
                         _globalScanMinimumSizeController,
                         placeholder: '500',
+                      ),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.folder_off_rounded,
+                      label: '刮削排除文件夹',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ShadBadge.outline(
+                            child: Text('${_globalScanExcludedFolders.length} 个'),
+                          ),
+                          const SizedBox(width: 6),
+                          ShadButton.ghost(
+                            size: ShadButtonSize.sm,
+                            onPressed: _showExcludedFoldersEditor,
+                            leading: const Icon(Icons.edit_outlined, size: 16),
+                          ),
+                        ],
+                      ),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.filter_list_off_rounded,
+                      label: '刮削排除关键词',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ShadBadge.outline(
+                            child: Text('${_globalScanExcludedKeywords.length} 个'),
+                          ),
+                          const SizedBox(width: 6),
+                          ShadButton.ghost(
+                            size: ShadButtonSize.sm,
+                            onPressed: _showExcludedKeywordsEditor,
+                            leading: const Icon(Icons.edit_outlined, size: 16),
+                          ),
+                        ],
                       ),
                     ),
                     _SettingsRow(
@@ -450,6 +498,14 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         StorageKeys.mediaHomePreviewCount,
         _mediaHomePreviewCountController.text.trim(),
       ),
+      StorageManager.set(
+        StorageKeys.globalScanExcludedFolders,
+        _globalScanExcludedFolders,
+      ),
+      StorageManager.set(
+        StorageKeys.globalScanExcludedKeywords,
+        _globalScanExcludedKeywords,
+      ),
     ]);
     DioClient.updateNetworkProxy();
     ref.read(mediaLibraryProvider.notifier).updateCloudIndexRefreshSchedule();
@@ -478,6 +534,66 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         ),
       );
       setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _showExcludedFoldersEditor() async {
+    final result = await showDialog<Set<String>>(
+      context: context,
+      builder: (ctx) => Consumer(
+        builder: (ctx, ref, _) => _ExcludedFoldersTreeDialog(
+          initiallySelected: _globalScanExcludedFolders.toSet(),
+        ),
+      ),
+    );
+    if (result != null && mounted) {
+      setState(() => _globalScanExcludedFolders = result.toList());
+    }
+  }
+
+  Future<void> _showExcludedKeywordsEditor() async {
+    final controller = TextEditingController();
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return ShadDialog(
+            title: const Text('刮削排除关键词'),
+            description: const Text('文件名或路径包含这些关键词的文件将被跳过，每行一个'),
+            actions: [
+              ShadButton.outline(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('取消'),
+              ),
+              ShadButton(
+                onPressed: () => Navigator.of(ctx).pop(
+                  controller.text
+                      .split('\n')
+                      .map((e) => e.trim())
+                      .where((e) => e.isNotEmpty)
+                      .toList(),
+                ),
+                child: const Text('确定'),
+              ),
+            ],
+            child: Material(
+              type: MaterialType.transparency,
+              child: TextField(
+                controller: controller
+                  ..text = _globalScanExcludedKeywords.join('\n'),
+                maxLines: 8,
+                decoration: const InputDecoration(
+                  hintText: 'BDMV\nVIDEO_TS\nexample_keyword',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    if (result != null && mounted) {
+      setState(() => _globalScanExcludedKeywords = result);
     }
   }
 
@@ -597,4 +713,279 @@ class _SettingsRow extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ExcludedFoldersTreeDialog extends ConsumerStatefulWidget {
+  final Set<String> initiallySelected;
+
+  const _ExcludedFoldersTreeDialog({required this.initiallySelected});
+
+  @override
+  ConsumerState<_ExcludedFoldersTreeDialog> createState() =>
+      _ExcludedFoldersTreeDialogState();
+}
+
+class _ExcludedFoldersTreeDialogState
+    extends ConsumerState<_ExcludedFoldersTreeDialog> {
+  late final Set<String> _selected;
+  bool _loading = true;
+  String? _error;
+  List<_FolderNode> _roots = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = Set<String>.from(widget.initiallySelected);
+    _loadRootFolders();
+  }
+
+  Future<void> _loadRootFolders() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final api = ref.read(authProvider.notifier).api;
+      final response = await api.fsFiles(parentID: null, pageSize: 200);
+      if (!mounted) return;
+      final folders = _parseFolders(response);
+      setState(() {
+        _roots = folders.map((f) => _FolderNode(folder: f)).toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<List<CloudFile>> _loadChildFolders(String parentID) async {
+    final api = ref.read(authProvider.notifier).api;
+    final response = await api.fsFiles(parentID: parentID, pageSize: 200);
+    return _parseFolders(response);
+  }
+
+  List<CloudFile> _parseFolders(Map<String, dynamic> response) {
+    final files = <CloudFile>{};
+    void visit(dynamic value) {
+      if (value is Map) {
+        try {
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+          if (file.isDirectory) files.add(file);
+        } catch (_) {}
+        for (final child in value.values) {
+          visit(child);
+        }
+      } else if (value is Iterable && value is! String) {
+        for (final child in value) {
+          visit(child);
+        }
+      }
+    }
+    visit(response);
+    return files.toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
+
+  bool _allDescendantsSelected(_FolderNode node) {
+    if (node.children.isEmpty) return _selected.contains(node.folder.id);
+    return node.children.every(_allDescendantsSelected);
+  }
+
+  void _toggleNode(_FolderNode node) {
+    final id = node.folder.id;
+    if (_selected.contains(id)) {
+      _selected.remove(id);
+      for (final child in node.children) {
+        _removeRecursive(child);
+      }
+    } else {
+      _selected.add(id);
+      for (final child in node.children) {
+        _addRecursive(child);
+      }
+    }
+    setState(() {});
+  }
+
+  void _removeRecursive(_FolderNode node) {
+    _selected.remove(node.folder.id);
+    for (final child in node.children) {
+      _removeRecursive(child);
+    }
+  }
+
+  void _addRecursive(_FolderNode node) {
+    _selected.add(node.folder.id);
+    for (final child in node.children) {
+      _addRecursive(child);
+    }
+  }
+
+  Future<void> _expandNode(_FolderNode node) async {
+    if (node.children.isNotEmpty || node.loading) return;
+    setState(() => node.loading = true);
+    try {
+      final children = await _loadChildFolders(node.folder.id);
+      setState(() {
+        node.children = children.map((f) => _FolderNode(folder: f)).toList();
+        node.loading = false;
+        node.expanded = true;
+      });
+    } catch (e) {
+      setState(() => node.loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ShadDialog(
+      title: const Text('刮削排除文件夹'),
+      description: const Text('勾选需要在全局刮削时跳过的文件夹'),
+      actions: [
+        ShadButton.outline(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        ShadButton(
+          onPressed: () => Navigator.of(context).pop(_selected),
+          child: const Text('确定'),
+        ),
+      ],
+      child: SizedBox(
+        height: 400,
+        width: 350,
+        child: Material(
+          type: MaterialType.transparency,
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('加载失败：$_error',
+                              style: TextStyle(color: cs.destructive)),
+                          const SizedBox(height: 8),
+                          ShadButton.outline(
+                            onPressed: _loadRootFolders,
+                            child: const Text('重试'),
+                          ),
+                        ],
+                      ),
+                    )
+                  : _roots.isEmpty
+                      ? const Center(child: Text('没有可用的文件夹'))
+                      : ListView.builder(
+                          itemCount: _roots.length,
+                          itemBuilder: (context, index) =>
+                              _buildTreeTile(_roots[index], 0),
+                        ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTreeTile(_FolderNode node, int depth) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final checked = _allDescendantsSelected(node);
+    // 始终允许展开文件夹（子文件夹可能尚未加载）
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(
+              left: depth * 20.0, right: 8, top: 4, bottom: 4),
+          child: Row(
+            children: [
+              // 展开/收起箭头（文件夹始终可展开）
+              InkWell(
+                onTap: () {
+                  if (!node.expanded && node.children.isEmpty) {
+                    _expandNode(node);
+                  } else {
+                    setState(() => node.expanded = !node.expanded);
+                  }
+                },
+                child: node.loading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : Icon(
+                        node.expanded
+                            ? Icons.keyboard_arrow_down_rounded
+                            : Icons.keyboard_arrow_right_rounded,
+                        size: 18,
+                        color: cs.mutedForeground,
+                      ),
+              ),
+              const SizedBox(width: 4),
+              // 文件夹图标 + 名称（点击勾选/取消）
+              Expanded(
+                child: InkWell(
+                  onTap: () => _toggleNode(node),
+                  child: Row(
+                    children: [
+                      Icon(
+                        checked ? Icons.folder_open : Icons.folder_outlined,
+                        size: 18,
+                        color: checked ? cs.primary : cs.mutedForeground,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          node.folder.name,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: checked ? cs.primary : cs.foreground,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // 勾选框（点击勾选/取消）
+              InkWell(
+                onTap: () => _toggleNode(node),
+                child: Icon(
+                  checked
+                      ? Icons.check_box
+                      : Icons.check_box_outline_blank,
+                  size: 18,
+                  color: checked ? cs.primary : cs.mutedForeground,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (node.expanded)
+          for (final child in node.children)
+            _buildTreeTile(child, depth + 1),
+      ],
+    );
+  }
+}
+
+class _FolderNode {
+  final CloudFile folder;
+  List<_FolderNode> children;
+  bool expanded;
+  bool loading;
+
+  _FolderNode({
+    required this.folder,
+    List<_FolderNode>? children,
+    bool? expanded,
+    bool? loading,
+  })  : children = children ?? [],
+        expanded = expanded ?? false,
+        loading = loading ?? false;
 }
