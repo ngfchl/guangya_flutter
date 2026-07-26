@@ -556,6 +556,8 @@ class MediaLibraryScanProgress {
   final int total;
   final int pending;
   final int scanned;
+  final int matched;
+  final int unmatched;
 
   const MediaLibraryScanProgress({
     this.phase = '',
@@ -563,18 +565,24 @@ class MediaLibraryScanProgress {
     this.total = 0,
     this.pending = 0,
     this.scanned = 0,
+    this.matched = 0,
+    this.unmatched = 0,
   });
 }
 
-enum MediaLibraryScanMode { unrecognizedOnly, forceAll }
+enum MediaLibraryScanMode { unrecognizedOnly, unindexedOnly, forceAll }
 
 extension MediaLibraryScanModeBehavior on MediaLibraryScanMode {
   bool get refreshesFileIndex => this == MediaLibraryScanMode.forceAll;
+
+  bool get scansSource => this != MediaLibraryScanMode.unrecognizedOnly;
 
   String get title {
     switch (this) {
       case MediaLibraryScanMode.unrecognizedOnly:
         return '扫描未识别';
+      case MediaLibraryScanMode.unindexedOnly:
+        return '扫描未入库';
       case MediaLibraryScanMode.forceAll:
         return '强制重新扫描';
     }
@@ -911,7 +919,7 @@ class ParsedMediaName {
     String? first(String pattern) =>
         RegExp(pattern, caseSensitive: false).firstMatch(normalized)?.group(0);
     final yearMatches = RegExp(
-      r'\b(19\d{2}|20\d{2})\b',
+      r'(?<![\u4e00-\u9fff])(19\d{2}|20\d{2})\b',
     ).allMatches(normalized).toList();
     final repairedYear = _repairSpacedYear(normalized);
     // Some release names carry an upload year before the real title and
@@ -920,7 +928,7 @@ class ParsedMediaName {
         ? yearMatches.last
         : yearMatches.firstOrNull;
     final boundary = RegExp(
-      r'(?:\b(?:19\d{2}|20\d{2}|S\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,4}|\d{1,2}x\d{1,4}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|(?:cd|disc|disk)[ ._-]*0?\d{1,2}|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b|[\[(（]\s*\d[\d\s]{2,4}\s*[\])）]|第\s*\d{1,4}\s*[集话期])',
+      r'(?:\b(?:(?<![\u4e00-\u9fff])(?:19\d{2}|20\d{2})|S\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,4}|\d{1,2}x\d{1,4}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|(?:cd|disc|disk)[ ._-]*0?\d{1,2}|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b|[\[(（]\s*\d[\d\s]{2,4}\s*[\])）]|第\s*\d{1,4}\s*[集话期])',
       caseSensitive: false,
     );
     final boundaryMatches = boundary.allMatches(normalized).toList();
@@ -983,6 +991,10 @@ class ParsedMediaName {
           '',
         )
         .replaceFirst(RegExp(r'(?:\s|[._-])+第\s*[一二三四五六七八九十两\d]+\s*季$'), '')
+        .replaceFirst(
+          RegExp(r'(?:\s|[._-])+\d{1,2}(?:st|nd|rd|th)\s+[Ss]eason\s*$', caseSensitive: false),
+          '',
+        )
         .trim();
     ParsedMediaName? parent;
     int? directoryEditionYear;
@@ -1044,12 +1056,34 @@ class ParsedMediaName {
         inheritedTitleFromParent = true;
       }
     }
+    if (season == null &&
+        episode == null &&
+        parent == null &&
+        title.isNotEmpty &&
+        directoryPath?.trim().isNotEmpty == true) {
+      final ancestorCtx = _bestParentContext(directoryName, directoryPath);
+      if (ancestorCtx != null &&
+          ancestorCtx.title.isNotEmpty &&
+          ancestorCtx.season != null &&
+          ancestorCtx.title != title) {
+        parent = ancestorCtx;
+        title = ancestorCtx.title;
+        inheritedTitleFromParent = true;
+      }
+    }
     final seasonOnly = RegExp(
       r'\b(?:Season|S)\s*0?(\d{1,2})\b',
       caseSensitive: false,
     ).firstMatch(normalized);
     if (season == null && seasonOnly != null) {
       season = int.tryParse(seasonOnly.group(1)!);
+    }
+    final ordinalSeason = RegExp(
+      r'\b(\d{1,2})(?:st|nd|rd|th)\s+[Ss]eason\b',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    if (season == null && ordinalSeason != null) {
+      season = int.tryParse(ordinalSeason.group(1)!);
     }
     final chineseSeasonOnly = RegExp(
       r'第\s*([一二三四五六七八九十两\d]{1,3})\s*季',
@@ -1323,6 +1357,26 @@ class ParsedMediaName {
       RegExp(r'^\s*(?:BBC|PBS|NHK)[ ._-]+(?=[A-Za-z])', caseSensitive: false),
       '',
     );
+
+    // Country/region codes (US, U.S, UK, U.K, CH, JP, etc.) are release
+    // metadata that pollute TMDB search queries. Strip them when they appear
+    // as standalone words between title and release info. Also handle split
+    // forms like "U S" (from "U.S" after dot-to-space normalization).
+    title = title.replaceAll(
+      RegExp(
+        r'(?<=\s|^)(?:U[\s.]S[\s.]?(?:A[\s.]?)?|U[\s.]K\.?|CH|JP|KR|CN|TW|HK|DE|FR|ES|RU|BR|AU|PL|PT|MX|TH|VN|PH|MY|ID|SG)\b\.?\s*',
+      ),
+      '',
+    );
+    title = title.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+
+    // Version labels in parentheses such as (美版), (日版), (导演版),
+    // (加长版), (剧场版), (重制版) are not part of the searchable title.
+    title = title.replaceAll(
+      RegExp(r'[\[【（(]\s*[\u4e00-\u9fff]{1,6}版\s*[\]】）)]\s*'),
+      '',
+    );
+    title = title.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
 
     // Some folders are named as `2008见龙卸甲` (or `2008 见龙卸甲`) while
     // the file itself contains only the year. The year remains available to
