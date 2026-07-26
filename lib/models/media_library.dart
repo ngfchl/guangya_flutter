@@ -1557,6 +1557,132 @@ DateTime? _parseDate(dynamic value) {
   return DateTime.tryParse(value.toString());
 }
 
+/// TMDB 影视作品数据，存储在独立表中
+class TMDBWork {
+  final int id;
+  final int tmdbID;
+  final String title;
+  final String originalTitle;
+  final TMDBMediaKind mediaKind;
+  final String releaseDate;
+  final String overview;
+  final String? posterPath;
+  final String? backdropPath;
+  final double? rating;
+  final String? imdbID;
+  final DateTime createdAt;
+
+  const TMDBWork({
+    required this.id,
+    required this.tmdbID,
+    required this.title,
+    this.originalTitle = '',
+    this.mediaKind = TMDBMediaKind.automatic,
+    this.releaseDate = '',
+    this.overview = '',
+    this.posterPath,
+    this.backdropPath,
+    this.rating,
+    this.imdbID,
+    required this.createdAt,
+  });
+
+  factory TMDBWork.fromJson(Map<String, dynamic> json) {
+    return TMDBWork(
+      id: json['id'] as int? ?? 0,
+      tmdbID: json['tmdb_id'] as int? ?? 0,
+      title: json['title']?.toString() ?? '',
+      originalTitle: json['original_title']?.toString() ?? '',
+      mediaKind: _parseMediaKind(json['media_kind']),
+      releaseDate: json['release_date']?.toString() ?? '',
+      overview: json['overview']?.toString() ?? '',
+      posterPath: json['poster_path']?.toString(),
+      backdropPath: json['backdrop_path']?.toString(),
+      rating: _toDouble(json['rating']),
+      imdbID: json['imdb_id']?.toString(),
+      createdAt: _parseDate(json['created_at']) ?? DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'tmdb_id': tmdbID,
+    'title': title,
+    'original_title': originalTitle,
+    'media_kind': mediaKind.name,
+    'release_date': releaseDate,
+    'overview': overview,
+    'poster_path': posterPath,
+    'backdrop_path': backdropPath,
+    'rating': rating,
+    'imdb_id': imdbID,
+    'created_at': createdAt.toIso8601String(),
+  };
+}
+
+/// 豆瓣影视作品数据，存储在独立表中
+class DoubanWork {
+  final int id;
+  final String doubanID;
+  final String title;
+  final String originalTitle;
+  final TMDBMediaKind mediaKind;
+  final String releaseDate;
+  final String overview;
+  final String? posterPath;
+  final double? rating;
+  final DateTime createdAt;
+
+  const DoubanWork({
+    required this.id,
+    required this.doubanID,
+    required this.title,
+    this.originalTitle = '',
+    this.mediaKind = TMDBMediaKind.automatic,
+    this.releaseDate = '',
+    this.overview = '',
+    this.posterPath,
+    this.rating,
+    required this.createdAt,
+  });
+
+  factory DoubanWork.fromJson(Map<String, dynamic> json) {
+    return DoubanWork(
+      id: json['id'] as int? ?? 0,
+      doubanID: json['douban_id']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      originalTitle: json['original_title']?.toString() ?? '',
+      mediaKind: _parseMediaKind(json['media_kind']),
+      releaseDate: json['release_date']?.toString() ?? '',
+      overview: json['overview']?.toString() ?? '',
+      posterPath: json['poster_path']?.toString(),
+      rating: _toDouble(json['rating']),
+      createdAt: _parseDate(json['created_at']) ?? DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'douban_id': doubanID,
+    'title': title,
+    'original_title': originalTitle,
+    'media_kind': mediaKind.name,
+    'release_date': releaseDate,
+    'overview': overview,
+    'poster_path': posterPath,
+    'rating': rating,
+    'created_at': createdAt.toIso8601String(),
+  };
+}
+
+TMDBMediaKind _parseMediaKind(dynamic value) {
+  final str = value?.toString() ?? '';
+  return TMDBMediaKind.values.firstWhere(
+    (e) => e.name == str,
+    orElse: () => TMDBMediaKind.automatic,
+  );
+}
+
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }

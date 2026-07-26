@@ -56,6 +56,10 @@ class MediaLibraryStore {
           '已迁移 ${migration.rows} 条刮削记录，移除 ${FormatBytes.format(migration.artworkBytes)} 图片二进制缓存',
         );
       }
+      final tmdbMigrated = await migrateTMDBDoubanData();
+      if (tmdbMigrated > 0) {
+        AppLogger.info('Storage', '已迁移 $tmdbMigrated 条 TMDB/豆瓣数据到独立表');
+      }
       await _vacuumIfFragmented(_database!);
     } catch (error, stackTrace) {
       AppLogger.error(
@@ -1434,6 +1438,44 @@ class MediaLibraryStore {
         children_json TEXT NOT NULL
       )
     ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS tmdb_works (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tmdb_id INTEGER UNIQUE NOT NULL,
+        title TEXT NOT NULL,
+        original_title TEXT DEFAULT '',
+        media_kind TEXT DEFAULT 'automatic',
+        release_date TEXT DEFAULT '',
+        overview TEXT DEFAULT '',
+        poster_path TEXT,
+        backdrop_path TEXT,
+        rating REAL,
+        imdb_id TEXT,
+        created_at REAL NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_tmdb_works_tmdb_id '
+      'ON tmdb_works(tmdb_id)',
+    );
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS douban_works (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        douban_id TEXT UNIQUE NOT NULL,
+        title TEXT NOT NULL,
+        original_title TEXT DEFAULT '',
+        media_kind TEXT DEFAULT 'automatic',
+        release_date TEXT DEFAULT '',
+        overview TEXT DEFAULT '',
+        poster_path TEXT,
+        rating REAL,
+        created_at REAL NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_douban_works_douban_id '
+      'ON douban_works(douban_id)',
+    );
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_library_title '
       'ON media_items(library_id, title COLLATE NOCASE)',
@@ -1742,6 +1784,157 @@ class MediaLibraryStore {
         .map((row) => row['name']?.toString())
         .whereType<String>()
         .toSet();
+  }
+
+  // ── TMDB Works ──
+
+  Future<TMDBWork?> tmdbWork(int tmdbID) async {
+    final rows = await (await _db).query(
+      'tmdb_works',
+      where: 'tmdb_id = ?',
+      whereArgs: [tmdbID],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return TMDBWork.fromJson(rows.first);
+  }
+
+  Future<void> upsertTMDBWork(TMDBWork work) async {
+    final db = await _db;
+    await db.rawInsert('''
+      INSERT OR REPLACE INTO tmdb_works
+        (tmdb_id, title, original_title, media_kind, release_date,
+         overview, poster_path, backdrop_path, rating, imdb_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', [
+      work.tmdbID,
+      work.title,
+      work.originalTitle,
+      work.mediaKind.name,
+      work.releaseDate,
+      work.overview,
+      work.posterPath,
+      work.backdropPath,
+      work.rating,
+      work.imdbID,
+      work.createdAt.millisecondsSinceEpoch / 1000.0,
+    ]);
+  }
+
+  Future<List<TMDBWork>> allTMDBWorks() async {
+    final rows = await (await _db).query('tmdb_works', orderBy: 'title');
+    return rows.map((row) => TMDBWork.fromJson(row)).toList();
+  }
+
+  // ── Douban Works ──
+
+  Future<DoubanWork?> doubanWork(String doubanID) async {
+    final rows = await (await _db).query(
+      'douban_works',
+      where: 'douban_id = ?',
+      whereArgs: [doubanID],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return DoubanWork.fromJson(rows.first);
+  }
+
+  Future<void> upsertDoubanWork(DoubanWork work) async {
+    final db = await _db;
+    await db.rawInsert('''
+      INSERT OR REPLACE INTO douban_works
+        (douban_id, title, original_title, media_kind, release_date,
+         overview, poster_path, rating, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', [
+      work.doubanID,
+      work.title,
+      work.originalTitle,
+      work.mediaKind.name,
+      work.releaseDate,
+      work.overview,
+      work.posterPath,
+      work.rating,
+      work.createdAt.millisecondsSinceEpoch / 1000.0,
+    ]);
+  }
+
+  Future<List<DoubanWork>> allDoubanWorks() async {
+    final rows = await (await _db).query('douban_works', orderBy: 'title');
+    return rows.map((row) => DoubanWork.fromJson(row)).toList();
+  }
+
+  // ── Migration: 将 media_items 中的 TMDB/豆瓣数据迁移到独立表 ──
+
+  Future<int> migrateTMDBDoubanData() async {
+    final db = await _db;
+    var migrated = 0;
+
+    // 迁移 TMDB 数据
+    final tmdbRows = await db.rawQuery('''
+      SELECT DISTINCT tmdb_id, title, original_title, media_kind,
+             release_date, overview, poster_path, backdrop_path,
+             tmdb_rating, imdb_id
+      FROM media_items
+      WHERE tmdb_id IS NOT NULL AND tmdb_id != 0
+    ''');
+    for (final row in tmdbRows) {
+      final tmdbID = row['tmdb_id'] as int? ?? 0;
+      if (tmdbID == 0) continue;
+      final existing = await tmdbWork(tmdbID);
+      if (existing != null) continue;
+      await upsertTMDBWork(TMDBWork(
+        id: 0,
+        tmdbID: tmdbID,
+        title: row['title']?.toString() ?? '',
+        originalTitle: row['original_title']?.toString() ?? '',
+        mediaKind: _parseMediaKindStr(row['media_kind']?.toString()),
+        releaseDate: row['release_date']?.toString() ?? '',
+        overview: row['overview']?.toString() ?? '',
+        posterPath: row['poster_path']?.toString(),
+        backdropPath: row['backdrop_path']?.toString(),
+        rating: row['tmdb_rating'] as double?,
+        imdbID: row['imdb_id']?.toString(),
+        createdAt: DateTime.now(),
+      ));
+      migrated += 1;
+    }
+
+    // 迁移豆瓣数据
+    final doubanRows = await db.rawQuery('''
+      SELECT DISTINCT douban_id, title, original_title, media_kind,
+             release_date, overview, poster_path, douban_rating
+      FROM media_items
+      WHERE douban_id IS NOT NULL AND douban_id != ''
+    ''');
+    for (final row in doubanRows) {
+      final doubanID = row['douban_id']?.toString() ?? '';
+      if (doubanID.isEmpty) continue;
+      final existing = await doubanWork(doubanID);
+      if (existing != null) continue;
+      await upsertDoubanWork(DoubanWork(
+        id: 0,
+        doubanID: doubanID,
+        title: row['title']?.toString() ?? '',
+        originalTitle: row['original_title']?.toString() ?? '',
+        mediaKind: _parseMediaKindStr(row['media_kind']?.toString()),
+        releaseDate: row['release_date']?.toString() ?? '',
+        overview: row['overview']?.toString() ?? '',
+        posterPath: row['poster_path']?.toString(),
+        rating: row['douban_rating'] as double?,
+        createdAt: DateTime.now(),
+      ));
+      migrated += 1;
+    }
+
+    return migrated;
+  }
+
+  TMDBMediaKind _parseMediaKindStr(String? value) {
+    return TMDBMediaKind.values.firstWhere(
+      (e) => e.name == value,
+      orElse: () => TMDBMediaKind.automatic,
+    );
   }
 
   Future<void> _ensureColumn(
