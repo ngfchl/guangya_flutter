@@ -71,6 +71,8 @@ class MediaTMDBCandidateResolver {
       return TMDBCandidateResolution(candidates, const []);
     }
     final evidence = titleEvidence.toList(growable: false);
+    final evidenceText = evidence.join(' ');
+    final detectedCountry = _detectCountryHint(evidenceText);
     final diagnostics = <String>[];
     final ranked =
         <({int score, int titleScore, Map<String, dynamic> value})>[];
@@ -99,6 +101,19 @@ class MediaTMDBCandidateResolver {
           score += 20;
         } else {
           score -= 40;
+        }
+      }
+      if (detectedCountry != null) {
+        final originCountries = (merged['origin_country'] as List?)
+                ?.map((e) => e?.toString() ?? '')
+                .where((e) => e.isNotEmpty)
+                .toSet() ??
+            const {};
+        if (originCountries.contains(detectedCountry)) {
+          score += 30;
+          diagnostics.add(
+            'id=$id 国家匹配 +30：检测到 $detectedCountry，候选=$originCountries',
+          );
         }
       }
       ranked.add((score: score, titleScore: titleScore, value: merged));
@@ -135,5 +150,24 @@ class MediaTMDBCandidateResolver {
   static int? _releaseYear(String date) {
     if (date.length < 4) return null;
     return int.tryParse(date.substring(0, 4));
+  }
+
+  static final _countryPatterns = <RegExp, String>{
+    RegExp(r'\b(?:美版|美剧|美区)\b'): 'US',
+    RegExp(r'\b(?:英版|英剧|英区)\b'): 'GB',
+    RegExp(r'\b(?:日版|日剧|日区)\b'): 'JP',
+    RegExp(r'\b(?:韩版|韩剧|韩区)\b'): 'KR',
+    RegExp(r'\b(?:国版|国产|国剧|大陆)\b'): 'CN',
+    RegExp(r'\b(?:台版|台剧|台区)\b'): 'TW',
+    RegExp(r'\b(?:港版|港剧|港区)\b'): 'HK',
+    RegExp(r'\bU\.?S\.?(?:A\.?)?\b'): 'US',
+    RegExp(r'\bU\.?K\.?\b'): 'GB',
+  };
+
+  static String? _detectCountryHint(String text) {
+    for (final entry in _countryPatterns.entries) {
+      if (entry.key.hasMatch(text)) return entry.value;
+    }
+    return null;
   }
 }
