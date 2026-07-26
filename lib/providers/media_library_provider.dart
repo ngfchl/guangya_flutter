@@ -2396,7 +2396,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
   }
 
-  Future<void> scanGlobalLibrary({bool forceAll = true}) async {
+  Future<void> scanGlobalLibrary({MediaLibraryScanMode mode = MediaLibraryScanMode.forceAll}) async {
     if (_api == null ||
         state.isLoading ||
         state.isLibraryScanning(globalMediaLibraryID)) {
@@ -2404,7 +2404,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       return;
     }
     const libraryID = globalMediaLibraryID;
-    final modeLabel = forceAll ? '全局强制刮削' : '全局扫描未识别';
+    final modeLabel = mode.title;
     AppLogger.info('Media', '开始$modeLabel');
 
     // Ensure global library definition exists
@@ -2429,9 +2429,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       id: taskID,
       libraryID: libraryID,
       libraryName: globalMediaLibraryName,
-      mode: forceAll
-          ? MediaLibraryScanMode.forceAll
-          : MediaLibraryScanMode.unrecognizedOnly,
+      mode: mode,
       status: MediaLibraryScanTaskStatus.queued,
       progress: const MediaLibraryScanProgress(phase: '等待开始'),
       logs: [
@@ -2447,7 +2445,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     unawaited(_persistScanTaskHistory());
 
     final run = runZoned(
-      () => _runGlobalScan(taskID: task.id, forceAll: forceAll),
+      () => _runGlobalScan(taskID: task.id, mode: mode),
       zoneValues: {_mediaScanTaskZoneKey: task.id},
     );
     _scanRuns[libraryID] = run;
@@ -2457,10 +2455,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> _runGlobalScan({
     required String taskID,
-    required bool forceAll,
+    required MediaLibraryScanMode mode,
   }) async {
     const libraryID = globalMediaLibraryID;
-    final modeLabel = forceAll ? '全局强制刮削' : '全局扫描未识别';
+    final modeLabel = mode.title;
+    final forceAll = mode.refreshesFileIndex;
     final minimumSizeMB = _globalMediaScanMinimumSizeMB;
     final minimumSizeBytes = minimumSizeMB * 1024 * 1024;
     final tmdbApiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
@@ -2546,6 +2545,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             unmatchedCount += 1;
           }
           if (completed % 5 == 0) {
+            if (completed % 10 == 0) {
+              final refreshedItems = await _loadItems(libraryID);
+              state = state.copyWith(items: refreshedItems);
+            }
             _setScanProgress(
               libraryID,
               MediaLibraryScanProgress(
@@ -2554,6 +2557,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 total: insertedCount,
                 scanned: scannedFiles,
                 pending: (insertedCount - nextRecognize).clamp(0, insertedCount),
+                matched: recognizedCount,
+                unmatched: unmatchedCount,
               ),
             );
           }
@@ -2839,8 +2844,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<_CloudIndexRefreshResult> _rebuildGlobalCloudIndex() async {
     try {
+      AppLogger.info('CloudIndex', '开始全盘分页索引（全量）');
       final files = await _allGlobalRemoteFiles();
+      AppLogger.info('CloudIndex', '全盘分页索引完成：获取 ${files.length} 项（文件+目录）');
       final snapshots = <String?, List<CloudFile>>{null: <CloudFile>[]};
+      var fileCount = 0;
+      var dirCount = 0;
       for (final file in files) {
         final rawParentID = file.parentID?.trim();
         final parentID = rawParentID == null || rawParentID.isEmpty
@@ -2849,44 +2858,34 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         (snapshots[parentID] ??= []).add(file);
         if (file.isDirectory) {
           snapshots.putIfAbsent(file.id, () => <CloudFile>[]);
+          dirCount++;
+        } else {
+          fileCount++;
         }
       }
+      AppLogger.info('CloudIndex', '全盘分页索引分类：文件 $fileCount 个，目录 $dirCount 个，缓存 ${snapshots.length} 个文件夹');
       await FileMetadataCache.cacheFolderChildrenBatch(snapshots);
       return _CloudIndexRefreshResult(
         checkedFolders: snapshots.length,
         updatedFolders: snapshots.length,
         updatedEntries: files.length,
       );
-    } catch (error) {
-      AppLogger.warning('CloudIndex', '全盘分页接口刷新失败，回退到目录遍历：$error');
-      return _rebuildGlobalCloudIndexByFolder();
+    } catch (error, stackTrace) {
+      AppLogger.warning('CloudIndex', '全盘分页接口刷新失败：$error');
+      AppLogger.warning('CloudIndex', '堆栈：$stackTrace');
+      return _CloudIndexRefreshResult(
+        checkedFolders: 0,
+        updatedFolders: 0,
+        updatedEntries: 0,
+      );
     }
   }
 
   Future<List<CloudFile>> _allGlobalRemoteFiles() async {
     final concurrency = _cloudIndexConcurrency;
-    late final List<List<CloudFile>> batches;
-    if (concurrency == 1) {
-      batches = [
-        await _allGlobalRemoteFilesByType(concurrency: 1),
-        await _allGlobalRemoteFilesByType(resType: 2, concurrency: 1),
-      ];
-    } else {
-      final fileConcurrency = (concurrency + 1) ~/ 2;
-      final directoryConcurrency = (concurrency - fileConcurrency).clamp(1, 20);
-      batches = await Future.wait([
-        _allGlobalRemoteFilesByType(concurrency: fileConcurrency),
-        _allGlobalRemoteFilesByType(
-          resType: 2,
-          concurrency: directoryConcurrency,
-        ),
-      ]);
-    }
-    final unique = <String, CloudFile>{};
-    for (final file in batches.expand((batch) => batch)) {
-      unique[file.id] = file;
-    }
-    return unique.values.toList(growable: false);
+    final files = await _allGlobalRemoteFilesByType(concurrency: concurrency);
+    AppLogger.info('CloudIndex', '_allGlobalRemoteFiles 结果：共 ${files.length} 项');
+    return files;
   }
 
   Future<List<CloudFile>> _allGlobalRemoteFilesByType({
@@ -2899,6 +2898,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final typeLabel = resType == 2 ? '目录' : '文件';
     var nextPage = 0;
     var reachedEnd = false;
+    var apiTotal = 0;
 
     while (!reachedEnd) {
       final pages = List.generate(concurrency, (index) => nextPage + index);
@@ -2917,20 +2917,34 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           );
         },
       );
+      var allNewEmpty = true;
       for (var index = 0; index < responses.length; index++) {
         final page = pages[index];
+        final respData = responses[index]['data'];
+        if (respData is Map) {
+          final t = respData['total'];
+          if (t is int && t > apiTotal) apiTotal = t;
+        }
         final batch = _extractFiles(responses[index]);
         final added = batch.where((file) => seenIDs.add(file.id)).toList();
         values.addAll(added);
         AppLogger.info(
           'CloudIndex',
           '全盘$typeLabel索引第 ${page + 1} 页完成，获取 ${batch.length} 项，'
-              '新增 ${added.length} 项，累计 ${values.length} 项',
+              '新增 ${added.length} 项，累计 ${values.length} 项 / $apiTotal',
         );
-        if (batch.length < pageSize || added.isEmpty) {
+        if (added.isNotEmpty) allNewEmpty = false;
+        if (apiTotal > 0 && values.length >= apiTotal) {
           reachedEnd = true;
           break;
         }
+        if (batch.isEmpty) {
+          reachedEnd = true;
+          break;
+        }
+      }
+      if (!reachedEnd && allNewEmpty && responses.length < concurrency) {
+        reachedEnd = true;
       }
       nextPage += pages.length;
     }
@@ -7412,7 +7426,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           try {
             final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
             if (seen.add(file.id)) result.add(file);
-          } catch (_) {}
+          } catch (_) {
+            final id = value['fileId']?.toString() ?? value['id']?.toString() ?? '';
+            final name = value['fileName']?.toString() ?? value['name']?.toString() ?? '';
+            if (id.isNotEmpty && seen.add(id)) {
+              result.add(CloudFile(id: id, name: name, isDirectory: value['isDir'] == true || value['resType'] == 2));
+            }
+          }
         }
       }
     }
@@ -7436,7 +7456,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         try {
           final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
           if (seen.add(file.id)) result.add(file);
-        } catch (_) {}
+        } catch (_) {
+          final map = Map<String, dynamic>.from(value);
+          final id = map['fileId']?.toString() ?? map['file_id']?.toString() ?? map['id']?.toString() ?? map['dirId']?.toString() ?? '';
+          final name = map['fileName']?.toString() ?? map['dirName']?.toString() ?? map['name']?.toString() ?? '';
+          if (id.isNotEmpty && seen.add(id)) {
+            result.add(CloudFile(id: id, name: name, isDirectory: map['resType'] == 2 || map['isDir'] == true));
+          }
+        }
         for (final child in value.values) {
           visit(child);
         }
