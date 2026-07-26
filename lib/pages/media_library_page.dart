@@ -940,6 +940,7 @@ class MediaScanMenu extends StatefulWidget {
   final bool iconOnly;
   final bool disabled;
   final VoidCallback onScanUnrecognized;
+  final VoidCallback onScanUnindexed;
   final VoidCallback onForceAll;
   final ShadPopoverController? controller;
 
@@ -949,6 +950,7 @@ class MediaScanMenu extends StatefulWidget {
     this.iconOnly = false,
     required this.disabled,
     required this.onScanUnrecognized,
+    required this.onScanUnindexed,
     required this.onForceAll,
     this.controller,
   });
@@ -1014,6 +1016,13 @@ class MediaScanMenuState extends State<MediaScanMenu> {
                 title: '仅扫描未识别',
                 description: '不刷新目录，只识别媒体库中尚未匹配的资源',
                 onPressed: widget.disabled ? null : widget.onScanUnrecognized,
+              ),
+              const SizedBox(height: 3),
+              _option(
+                icon: Icons.library_add_outlined,
+                title: '扫描未入库',
+                description: '扫描数据源，仅识别新增的文件/文件夹',
+                onPressed: widget.disabled ? null : widget.onScanUnindexed,
               ),
               const SizedBox(height: 3),
               _option(
@@ -1189,6 +1198,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
 
   Future<void> _removeMediaRecords(List<MediaLibraryItem> records) async {
     if (records.isEmpty) return;
+    AppLogger.info('Media', '[媒体库页面-移除记录] 请求移除 ${records.length} 条记录');
     try {
       await _mediaNotifier.removeMediaRecords(records);
     } catch (_) {
@@ -1228,7 +1238,12 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       for (final record in records) record.file.id: record.file,
     }.values.toList(growable: false);
     if (files.isEmpty) return false;
+    AppLogger.info('Media', '[媒体库页面-删除文件] 请求删除 ${files.length} 个云盘文件，对应 ${records.length} 条媒体记录');
+    for (final f in files) {
+      AppLogger.info('Media', '[媒体库页面-删除文件] 待删除文件：${f.name}，路径=${f.cloudPath}，ID=${f.id}');
+    }
     final deleted = await ref.read(fileProvider.notifier).deleteFiles(files);
+    AppLogger.info('Media', '[媒体库页面-删除文件] 云盘文件删除结果：$deleted');
     if (!deleted) return false;
 
     final fileIDs = files.map((file) => file.id).toSet();
@@ -2018,6 +2033,11 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                   .read(mediaLibraryProvider.notifier)
                   .rescanSelectedLibrary(
                     mode: MediaLibraryScanMode.unrecognizedOnly,
+                  ),
+              onScanUnindexed: () => ref
+                  .read(mediaLibraryProvider.notifier)
+                  .rescanSelectedLibrary(
+                    mode: MediaLibraryScanMode.unindexedOnly,
                   ),
               onForceAll: () => ref
                   .read(mediaLibraryProvider.notifier)
@@ -3594,7 +3614,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     void close([Map<String, dynamic>? value]) {
       if (!completer.isCompleted) completer.complete(value);
       controller.removeListener(onVisibilityChanged);
-      controller.dispose();
+      Future.microtask(() => controller.dispose());
       entry.remove();
     }
 
@@ -3796,6 +3816,8 @@ class _MediaLibraryScanTaskDialogState
         task.status == MediaLibraryScanTaskStatus.failed;
     final fraction = total == null || total == 0
         ? (isTerminal ? 0.0 : null)
+        : task.progress.completed >= total
+        ? 1.0
         : (task.progress.completed / total).clamp(0.0, 1.0);
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -3857,21 +3879,32 @@ class _MediaLibraryScanTaskDialogState
               if (total != null && total > 0) ...[
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '已扫描 ${task.progress.scanned} 个文件',
+                        task.progress.completed > 0
+                            ? '已完成 ${task.progress.completed}/$total · 匹配 ${task.progress.matched} · 未识别 ${task.progress.unmatched}'
+                            : '扫描 ${task.progress.scanned} 个文件 · 入库 $total · 待识别 ${task.progress.pending}',
                         style: TextStyle(
                           fontSize: 11,
                           color: cs.mutedForeground,
                           fontFeatures: const [FontFeature.tabularFigures()],
                         ),
                       ),
+                    ],
+                  ),
+                ),
+              ] else if (task.progress.scanned > 0 || task.progress.completed > 0) ...[
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        task.progress.pending > 0
-                            ? '队列 ${task.progress.pending} · 已完成 ${task.progress.completed}/$total'
-                            : '已完成 ${task.progress.completed}/$total',
+                        task.progress.completed > 0
+                            ? '已完成 ${task.progress.completed} · 匹配 ${task.progress.matched} · 未识别 ${task.progress.unmatched}'
+                            : '扫描 ${task.progress.scanned} 个文件',
                         style: TextStyle(
                           fontSize: 11,
                           color: cs.mutedForeground,
@@ -4328,6 +4361,7 @@ class _MediaLibraryManagementDialogState
       confirmText: '删除',
     );
     if (!confirmed || !mounted) return;
+    AppLogger.info('Media', '[媒体库页面-删除媒体库] 确认删除「${library.name}」，ID=${library.id}');
     await ref.read(mediaLibraryProvider.notifier).deleteLibrary(library.id);
   }
 
@@ -4535,6 +4569,12 @@ class _ManagementLibraryRow extends ConsumerWidget {
               onScanUnrecognized: () => ref
                   .read(mediaLibraryProvider.notifier)
                   .scanLibrary(library.id),
+              onScanUnindexed: () => ref
+                  .read(mediaLibraryProvider.notifier)
+                  .scanLibrary(
+                    library.id,
+                    mode: MediaLibraryScanMode.unindexedOnly,
+                  ),
               onForceAll: () => ref
                   .read(mediaLibraryProvider.notifier)
                   .scanLibrary(library.id, mode: MediaLibraryScanMode.forceAll),
@@ -6469,6 +6509,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         : null;
     setState(() => _removingRecords = true);
     try {
+      AppLogger.info('Media', '[详情页-移除记录] 确认移除 ${unique.length} 条记录，标题「${widget.work.primary.title}」，媒体库ID=${unique.first.libraryID}');
+      for (final r in unique) {
+        AppLogger.info('Media', '[详情页-移除记录] 待移除：${r.file.name}，路径=${r.file.cloudPath}，ID=${r.id}');
+      }
       await widget.onRemoveRecords(unique);
     } finally {
       if (mounted) setState(() => _removingRecords = false);
@@ -6505,6 +6549,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final nextResource = _nextResourceAfterRemoving({removedKey});
     setState(() => _removingRecords = true);
     try {
+      AppLogger.info('Media', '[详情页-删除文件] 确认删除云盘文件：${resource.file.name}，路径=${resource.file.cloudPath}，ID=${resource.id}，媒体库ID=${resource.libraryID}');
       final deleted = await widget.onDeleteFiles([resource]);
       if (!deleted || !mounted) return;
       if (nextResource == null) return;
@@ -6552,11 +6597,60 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   }
 
   Widget _mediaActions() {
+    final cs = ShadTheme.of(context).colorScheme;
     final manualMatchLoading = _manualMatchLoading;
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+    final episodeResources = widget.work.resources.length > 1 &&
+            widget.work.primary.mediaKind == TMDBMediaKind.tv
+        ? _episodeRecords(_resource)
+        : const <MediaLibraryItem>[];
+    final hasMultiVersions = episodeResources.length > 1;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
+        if (hasMultiVersions) ...[
+          Text(
+            '资源版本 (${episodeResources.length})',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: cs.mutedForeground,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final r in episodeResources)
+                ShadButton.outline(
+                  size: ShadButtonSize.sm,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  backgroundColor:
+                      r.id == _resource.id ? cs.primary : null,
+                  foregroundColor:
+                      r.id == _resource.id ? cs.primaryForeground : null,
+                  onPressed: () => unawaited(_selectEpisode(r)),
+                  child: Text(
+                    r.file.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: r.id == _resource.id
+                          ? cs.primaryForeground
+                          : cs.foreground,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
         if (!_resource.file.isIso) ...[
           ShadButton(
             size: ShadButtonSize.sm,
@@ -6602,6 +6696,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           child: Text(manualMatchLoading ? '正在匹配' : '手动匹配'),
         ),
         _removeActionsPopover(),
+          ],
+        ),
       ],
     );
   }
@@ -7084,7 +7180,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       children: [
         Text(
           isSeries
-              ? '剧集 (${widget.work.resources.length} 集)'
+              ? '剧集 (${_episodeCount(widget.work.resources)} 集)'
               : widget.work.resources.length > 1
               ? '资源版本 (${widget.work.resources.length})'
               : '媒体资源',
@@ -7119,6 +7215,18 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     return episodesBySeason.keys.reduce((a, b) => a < b ? a : b);
   }
 
+  int _episodeCount(List<MediaLibraryItem> episodes) {
+    final seen = <int?>{};
+    for (final r in episodes) {
+      final parsed = ParsedMediaName.parse(
+        r.file.name,
+        directoryName: _parentDirectoryName(r.file.cloudPath),
+      );
+      seen.add(parsed.episode);
+    }
+    return seen.length;
+  }
+
   Widget _seasonPicker(
     Map<int, List<MediaLibraryItem>> episodesBySeason,
     ShadColorScheme cs,
@@ -7144,7 +7252,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                     ? cs.primaryForeground
                     : null,
                 child: Text(
-                  '第 $season 季 · ${episodesBySeason[season]!.length} 集',
+                  '第 $season 季 · ${_episodeCount(episodesBySeason[season]!)} 集',
                 ),
               ),
             ),
@@ -7154,25 +7262,57 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   }
 
   Widget _episodePicker(List<MediaLibraryItem> episodes, ShadColorScheme cs) {
+    final grouped = <int?, List<MediaLibraryItem>>{};
+    for (final resource in episodes) {
+      final parsed = ParsedMediaName.parse(
+        resource.file.name,
+        directoryName: _parentDirectoryName(resource.file.cloudPath),
+      );
+      (grouped[parsed.episode] ??= []).add(resource);
+    }
+    final entries = grouped.entries.toList()
+      ..sort((a, b) => (a.key ?? 9999).compareTo(b.key ?? 9999));
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
-        for (final resource in episodes)
+        for (final entry in entries)
           Builder(
             builder: (context) {
-              final parsed = ParsedMediaName.parse(
-                resource.file.name,
-                directoryName: _parentDirectoryName(resource.file.cloudPath),
-              );
-              final episode = parsed.episode;
-              final selected = _selectedEpisodeID == resource.id;
+              final episode = entry.key;
+              final resources = entry.value;
+              final multi = resources.length > 1;
+              final selected =
+                  resources.any((r) => r.id == _selectedEpisodeID);
               final label = episode == null
                   ? '未编号'
                   : 'E${episode.toString().padLeft(2, '0')}';
+              final current = resources.firstWhere(
+                (r) => r.id == _selectedEpisodeID,
+                orElse: () => resources.first,
+              );
               return ShadContextMenuRegion(
                 tapEnabled: false,
                 items: [
+                  if (multi)
+                    for (final resource in resources)
+                      ShadContextMenuItem.inset(
+                        leading: Icon(
+                          resource.id == _selectedEpisodeID
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_unchecked,
+                          size: 16,
+                          color: cs.foreground,
+                        ),
+                        onPressed: () =>
+                            unawaited(_selectEpisode(resource)),
+                        child: Text(
+                          resource.file.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  if (multi) const Divider(),
                   ShadContextMenuItem.inset(
                     leading: Icon(
                       LucideIcons.trash2,
@@ -7181,7 +7321,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                     ),
                     onPressed: _removalBlocked
                         ? null
-                        : () => unawaited(_removeEpisode(resource)),
+                        : () => unawaited(_removeEpisode(current)),
                     child: Text(
                       episode == null ? '移除当前剧集资源' : '移除本集',
                       style: TextStyle(color: cs.destructive),
@@ -7189,15 +7329,35 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                   ),
                 ],
                 child: ShadTooltip(
-                  builder: (_) =>
-                      Text(episode == null ? '未识别集号' : '第 $episode 集'),
+                  builder: (_) {
+                    if (!multi) {
+                      return Text(
+                        episode == null ? '未识别集号' : '第 $episode 集',
+                      );
+                    }
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('第 $episode 集 · ${resources.length} 个版本'),
+                        for (final r in resources)
+                          Text(
+                            '· ${r.file.name}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                      ],
+                    );
+                  },
                   child: ShadButton.outline(
                     size: ShadButtonSize.sm,
                     width: 58,
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     backgroundColor: selected ? cs.primary : null,
                     foregroundColor: selected ? cs.primaryForeground : null,
-                    onPressed: () => unawaited(_selectEpisode(resource)),
+                    onPressed: () =>
+                        unawaited(_selectEpisode(resources.first)),
                     child: SizedBox(
                       width: 50,
                       child: FittedBox(
