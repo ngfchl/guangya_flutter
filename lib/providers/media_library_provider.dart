@@ -289,6 +289,8 @@ class MediaLibraryState {
   final String? selectedLibraryID;
   final List<MediaLibraryItem> items;
   final List<MediaLibraryItem> allItems;
+  final List<MediaLibraryItem> moviePreviewItems;
+  final List<MediaLibraryItem> seriesPreviewItems;
   final Map<String, MediaLibraryStatistics> libraryStatistics;
   final MediaLibraryStatistics storedGlobalStatistics;
   final String? loadedLibraryID;
@@ -315,6 +317,8 @@ class MediaLibraryState {
     this.storedGlobalStatistics = const MediaLibraryStatistics(),
     this.loadedLibraryID,
     this.allItemsLoaded = false,
+    this.moviePreviewItems = const [],
+    this.seriesPreviewItems = const [],
     this.hasMoreContent = false,
     this.isLoadingMore = false,
     this.isLoading = false,
@@ -394,6 +398,8 @@ class MediaLibraryState {
     bool clearSelectedLibrary = false,
     List<MediaLibraryItem>? items,
     List<MediaLibraryItem>? allItems,
+  List<MediaLibraryItem>? moviePreviewItems,
+  List<MediaLibraryItem>? seriesPreviewItems,
     Map<String, MediaLibraryStatistics>? libraryStatistics,
     MediaLibraryStatistics? storedGlobalStatistics,
     String? loadedLibraryID,
@@ -422,6 +428,8 @@ class MediaLibraryState {
           : (selectedLibraryID ?? this.selectedLibraryID),
       items: items ?? this.items,
       allItems: allItems ?? this.allItems,
+      moviePreviewItems: moviePreviewItems ?? this.moviePreviewItems,
+      seriesPreviewItems: seriesPreviewItems ?? this.seriesPreviewItems,
       libraryStatistics: libraryStatistics ?? this.libraryStatistics,
       storedGlobalStatistics:
           storedGlobalStatistics ?? this.storedGlobalStatistics,
@@ -608,8 +616,37 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           'Media',
           '首页预览已加载：${[for (var index = 0; index < state.libraries.length; index++) '${state.libraries[index].name} ${pages[index].length} 条'].join('，')}',
         );
+        // 单独加载电影和剧集预览（按作品去重）
+        final moviePages = await Future.wait(
+          state.libraries.map(
+            (library) => _store.itemsPage(
+              libraryID: library.id,
+              mediaKind: 'movie',
+              limit: previewCount,
+              distinctWorks: true,
+            ),
+          ),
+        );
+        final seriesPages = await Future.wait(
+          state.libraries.map(
+            (library) => _store.itemsPage(
+              libraryID: library.id,
+              mediaKind: 'tv',
+              limit: previewCount,
+              distinctWorks: true,
+            ),
+          ),
+        );
+        final movieValues = moviePages.expand((page) => page).toList(growable: false);
+        final seriesValues = seriesPages.expand((page) => page).toList(growable: false);
+        AppLogger.info(
+          'Media',
+          '首页预览已加载：全局 ${values.length} 条，电影 ${movieValues.length} 条，剧集 ${seriesValues.length} 条',
+        );
         state = state.copyWith(
           allItems: values,
+          moviePreviewItems: movieValues,
+          seriesPreviewItems: seriesValues,
           allItemsLoaded: false,
           hasMoreContent: false,
         );
