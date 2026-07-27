@@ -1170,7 +1170,7 @@ class ParsedMediaName {
       r'^\s*(?:19|20)\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*[日号]?[ ._-]*',
     ).firstMatch(normalized);
     final leadingYear = RegExp(
-      r'^\s*(?:[\[(（]\s*)?((?:19|20)\d{2})(?:\s*[\])）])?[ ._-]*',
+      r'^\s*(?:[\[(（]\s*)?((?:19|20)\d{2})(?!\d)(?:\s*[\])）])?[ ._-]*',
     ).firstMatch(normalized);
     var titleStart = 0;
     var titleEnd = boundaryMatches.firstOrNull?.start ?? normalized.length;
@@ -1233,6 +1233,9 @@ class ParsedMediaName {
           RegExp(r'(?:\s|[._-])*(?:E|EP|Episode|SP|Special)\s*0?\d{1,4}$', caseSensitive: false),
           '',
         )
+        // Leading compact date YYYYMMDD (e.g. "20260406") is archive metadata,
+        // not part of the searchable title. Only strip when it's 8 digits.
+        .replaceFirst(RegExp(r'^\s*(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\s+'), '')
         .trim();
     ParsedMediaName? parent;
     int? directoryEditionYear;
@@ -1289,10 +1292,15 @@ class ParsedMediaName {
       }
     }
     var inheritedTitleFromParent = false;
+    // 标题仅包含剧集标记（如"第67集 七擒孟获"、"第1期加更"）时，
+    // 应视为"episode-only"，从父目录继承剧集标题。
+    final episodeOnlyTitle = episode != null &&
+        RegExp(r'^第\s*\d{1,4}\s*[集话期]').hasMatch(title);
     final genericName =
         title.isEmpty ||
         RegExp(r'^\d+$').hasMatch(title) ||
-        RegExp(r'^S\d{1,2}E\d{1,4}$', caseSensitive: false).hasMatch(title);
+        RegExp(r'^S\d{1,2}E\d{1,4}$', caseSensitive: false).hasMatch(title) ||
+        episodeOnlyTitle;
     if (genericName &&
         ((directoryName != null && directoryName.trim().isNotEmpty) ||
             (directoryPath != null && directoryPath.trim().isNotEmpty))) {
@@ -1724,6 +1732,9 @@ class ParsedMediaName {
           '',
         )
         .replaceFirst(RegExp(r'^\s*[\[【(（]\s*\d{1,3}\s*[\]】)）][ ._-]*'), '')
+        // Leading-zero numbers (001, 003 etc.) are disc markers, not titles.
+        // Multi-digit numbers without leading zeros are kept as title prefixes.
+        .replaceFirst(RegExp(r'^\s*0+\d{1,2}[ ._-]+'), '')
         .replaceAll(RegExp(r'[\(（](?:港台|港版?|台版?|国配|国语|简繁?|中字?)[\)）]'), ' ')
         .replaceAll(
           RegExp(
@@ -1747,14 +1758,14 @@ class ParsedMediaName {
         // to avoid false positives on common English words.
         .replaceAllMapped(
           RegExp(
-            r'\b(?:II|III|IV|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV)\b',
+            r'\b(?:II|III|IV|VI|VII|VIII|IX|XI|XII|XIII|XIV|XV)\b',
             caseSensitive: false,
           ),
           (match) {
             const map = {
               'II': '2', 'III': '3', 'IV': '4',
               'VI': '6', 'VII': '7', 'VIII': '8', 'IX': '9',
-              'X': '10', 'XI': '11', 'XII': '12',
+              'XI': '11', 'XII': '12',
               'XIII': '13', 'XIV': '14', 'XV': '15',
             };
             return map[match.group(0)!.toUpperCase()] ?? match.group(0)!;
