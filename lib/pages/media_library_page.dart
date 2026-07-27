@@ -1096,18 +1096,20 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   String? _tmdbError;
   List<Map<String, dynamic>> _tmdbResults = [];
   bool _backupBusy = false;
-  bool _detailSyncing = false;
+  final Set<String> _syncingWorkKeys = {};
   final Map<String, Object> _manualMatchOperations = {};
   final Set<String> _manualMatchPreparingResourceKeys = {};
   final Set<String> _manualMatchApplyingResourceKeys = {};
   _MediaWork? _detailWork;
   var _detailSession = 0;
+  var _manualMatchSession = 0;
   late MediaLibraryBrowseFilter _wallFilter;
   late final MediaLibraryNotifier _mediaNotifier;
   void Function(MediaDetailHeader?) _setDetailHeader = (_) {};
   String? _activeCollectionKey;
   final _searchController = TextEditingController();
   final _contentScrollController = ScrollController();
+  double _savedScrollOffset = 0.0;
 
   Set<String> get _manualMatchBusyResourceKeys =>
       _manualMatchOperations.keys.toSet();
@@ -1175,9 +1177,14 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   }
 
   void _openDetail(_MediaWork work) {
+    // 保存当前滚动位置，返回时恢复
+    final currentScroll = _contentScrollController.hasClients
+        ? _contentScrollController.offset
+        : 0.0;
     setState(() {
       _detailSession += 1;
       _detailWork = work;
+      _savedScrollOffset = currentScroll;
     });
     _setDetailHeader(
       MediaDetailHeader(
@@ -1194,6 +1201,12 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       _detailWork = null;
     });
     _setDetailHeader(null);
+    // 返回列表后恢复滚动位置
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_contentScrollController.hasClients && _savedScrollOffset > 0) {
+        _contentScrollController.jumpTo(_savedScrollOffset);
+      }
+    });
   }
 
   /// Re-derive the currently open detail work from a fresh items list. Called
@@ -2320,6 +2333,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 unawaited(_refreshAndRecognizeDetail(selectedWork)),
             onManualMatch: (resource) =>
                 unawaited(_showManualTMDBMatch(selectedWork, resource)),
+            onRefreshDetail: () =>
+                unawaited(_refreshDetailData(selectedWork)),
             onRenameFile: _renameMediaFile,
             onMoveMediaResource: _moveMediaFile,
             onMoveCloudFile: _moveCloudResource,
@@ -2331,9 +2346,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             onDeleteFiles: _deleteMediaFiles,
             removalDisabled:
                 state.isScanning ||
-                _detailSyncing ||
+                _syncingWorkKeys.contains(selectedWork.key) ||
                 _workHasManualMatchOperation(selectedWork),
-            recognizing: _detailSyncing,
+            recognizing: _syncingWorkKeys.contains(selectedWork.key),
           ),
         ],
       );
@@ -2563,20 +2578,23 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ),
       ]);
     }
-    for (final section in librarySections) {
-      if (sections.isNotEmpty) {
-        sections.add(SizedBox(height: compact ? 18 : 24));
-      }
-      sections.add(
-        _homeLibrarySection(
-          context,
-          library: section.library,
-          works: section.works,
-          totalWorks: state.libraryStatistics[section.library.id]?.total ?? 0,
-          compact: compact,
-          searchActive: state.searchQuery.trim().isNotEmpty,
-        ),
-      );
+    // 电影 / 剧集分区（从所有 works 中按媒体类型过滤）
+    final movieWorks = works.where((w) => w.primary.mediaKind == TMDBMediaKind.movie).toList();
+    final seriesWorks = works
+        .where((w) =>
+            w.primary.mediaKind == TMDBMediaKind.tv ||
+            w.resources.any((r) => r.mediaKind == TMDBMediaKind.tv))
+        .toList();
+    final hasMovieSection = movieWorks.isNotEmpty;
+    final hasSeriesSection = seriesWorks.isNotEmpty;
+    // 电影 / 剧集分区
+    if (hasMovieSection) {
+      if (sections.isNotEmpty) sections.add(SizedBox(height: compact ? 18 : 24));
+      sections.add(_homeSectionWithIcon(context, '电影', Icons.movie_rounded, movieWorks, compact));
+    }
+    if (hasSeriesSection) {
+      if (sections.isNotEmpty) sections.add(SizedBox(height: compact ? 18 : 24));
+      sections.add(_homeSectionWithIcon(context, '剧集', Icons.live_tv_rounded, seriesWorks, compact));
     }
     return ScrollConfiguration(
       behavior: ScrollConfiguration.of(context).copyWith(
@@ -2665,6 +2683,60 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _homeSectionWithIcon(
+    BuildContext context,
+    String label,
+    IconData icon,
+    List<_MediaWork> works,
+    bool compact,
+  ) {
+    final visible = works.take(20).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
+            children: [
+              Icon(icon, size: 17),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: compact ? 16 : 17,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${works.length} 部',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        _horizontalHomeTrack(
+          context,
+          height: compact ? 252 : 272,
+          itemCount: visible.length,
+          itemBuilder: (_, index) {
+            final work = visible[index];
+            return SizedBox(
+              width: compact ? 132 : 142,
+              child: _MediaPosterTile(
+                work: work,
+                onOpen: () => _openDetail(work),
+                onDownload: () => ref.read(fileProvider.notifier).downloadFile(work.primary.file),
+                onRecognize: () => unawaited(_refreshAndRecognizeDetail(work)),
+                onManualMatch: () => unawaited(_showManualTMDBMatch(work, work.primary)),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 
@@ -3507,9 +3579,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   }
 
   Future<void> _refreshAndRecognizeDetail(_MediaWork selected) async {
-    if (_detailSyncing) return;
+    if (!_syncingWorkKeys.add(selected.key)) return;
     final detailSession = _detailSession;
-    setState(() => _detailSyncing = true);
+    setState(() {});
     try {
       final notifier = ref.read(mediaLibraryProvider.notifier);
       final resources = _recognitionResources(selected);
@@ -3617,7 +3689,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         _closeDetail();
       }
     } finally {
-      if (mounted) setState(() => _detailSyncing = false);
+      if (mounted) {
+        setState(() => _syncingWorkKeys.remove(selected.key));
+      }
     }
   }
 
@@ -3643,6 +3717,26 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     }.values.toList();
   }
 
+  Future<void> _refreshDetailData(_MediaWork work) async {
+    if (_detailWork == null) return;
+    // 从 provider 重新读取最新数据
+    final refreshedWorks = _MediaWork.fromItems(
+      ref.read(mediaLibraryProvider).allItems,
+    );
+    final matched = refreshedWorks
+        .where(
+          (w) =>
+              w.key == work.key ||
+              w.resources.any(
+                (r) => work.resources.any((wr) => wr.id == r.id),
+              ),
+        )
+        .firstOrNull;
+    if (matched != null && mounted) {
+      setState(() => _detailWork = matched);
+    }
+  }
+
   Future<void> _showManualTMDBMatch(
     _MediaWork work,
     MediaLibraryItem target,
@@ -3651,6 +3745,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     if (_manualMatchOperations.containsKey(targetKey)) return;
     final operation = Object();
     final detailSession = _detailSession;
+    final matchSession = ++_manualMatchSession;
     final notifier = ref.read(mediaLibraryProvider.notifier);
     setState(() {
       _manualMatchOperations[targetKey] = operation;
@@ -3699,7 +3794,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       );
       if (candidate == null ||
           !mounted ||
-          _detailSession != detailSession) {
+          _detailSession != detailSession ||
+          matchSession != _manualMatchSession) {
         AppLogger.info('Media', '[手动匹配] 用户取消：${target.file.name}');
         return;
       }
@@ -3731,7 +3827,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           );
         }
       }
-      if (!mounted || _detailSession != detailSession) {
+      if (!mounted ||
+          _detailSession != detailSession ||
+          matchSession != _manualMatchSession) {
         return;
       }
       // Only update the open detail page if one is actually open; when invoked
@@ -6105,6 +6203,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final Future<void> Function(_MediaMetadataSource) onClearMetadata;
   final VoidCallback onRecognize;
   final ValueChanged<MediaLibraryItem> onManualMatch;
+  final VoidCallback onRefreshDetail;
   final Future<void> Function(List<MediaLibraryItem>) onRemoveRecords;
   final Future<bool> Function(List<MediaLibraryItem>) onDeleteFiles;
   final Set<String> manualMatchBusyResourceKeys;
@@ -6124,6 +6223,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onClearMetadata,
     required this.onRecognize,
     required this.onManualMatch,
+    required this.onRefreshDetail,
     required this.onRemoveRecords,
     required this.onDeleteFiles,
     this.manualMatchBusyResourceKeys = const {},
@@ -6153,6 +6253,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   final _removeMenuController = ShadPopoverController();
   Timer? _backdropTimer;
   var _backdropIndex = 0;
+  // 剧集单集详情缓存，key = "$seriesID:$season:$episode"
+  final _episodeDetailsCache = <String, Map<String, dynamic>>{};
 
   @override
   void initState() {
@@ -6224,7 +6326,13 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       return;
     }
     final requestSerial = ++_tmdbDetailRequestSerial;
-    setState(() => _loadingTMDBDetails = true);
+    // 如果条目已有 TMDB 基础信息（posterPath），识别已完成，
+    // 详情页不应显示 loading，而是在后台静默加载额外富数据（演职员、海报等）
+    final itemHasBasicData = item.posterPath?.isNotEmpty == true ||
+        item.overview?.isNotEmpty == true;
+    if (!itemHasBasicData) {
+      setState(() => _loadingTMDBDetails = true);
+    }
     try {
       final details = await ref
           .read(authProvider.notifier)
@@ -6276,6 +6384,18 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       return;
     }
     setState(() => _loadingEpisodeDetails = true);
+    // 检查缓存
+    final cacheKey = '$tmdbID:$season:$episode';
+    final cached = _episodeDetailsCache[cacheKey];
+    if (cached != null) {
+      if (mounted && _selectedEpisodeID == resource.id) {
+        setState(() {
+          _episodeDetails = cached;
+          _loadingEpisodeDetails = false;
+        });
+      }
+      return;
+    }
     try {
       final details = await ref
           .read(authProvider.notifier)
@@ -6291,6 +6411,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                 StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
           );
       if (mounted && _selectedEpisodeID == resource.id) {
+        _episodeDetailsCache[cacheKey] = details;
         setState(() => _episodeDetails = details);
       }
     } catch (_) {
@@ -6485,10 +6606,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                         height: compact ? 12 : 0,
                       ),
                       Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
                             SelectableText(
                               item.title,
                               style: TextStyle(
@@ -6541,6 +6663,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                             _mediaActions(),
                           ],
                         ),
+                      ),
                       ),
                     ],
                   ),
@@ -6930,60 +7053,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   }
 
   Widget _mediaActions() {
-    final cs = ShadTheme.of(context).colorScheme;
     final manualMatchLoading = _manualMatchLoading;
-    final episodeResources = widget.work.resources.length > 1 &&
-            widget.work.primary.mediaKind == TMDBMediaKind.tv
-        ? _episodeRecords(_resource)
-        : const <MediaLibraryItem>[];
-    final hasMultiVersions = episodeResources.length > 1;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
       children: [
-        if (hasMultiVersions) ...[
-          Text(
-            '资源版本 (${episodeResources.length})',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: cs.mutedForeground,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: [
-              for (final r in episodeResources)
-                ShadButton.outline(
-                  size: ShadButtonSize.sm,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  backgroundColor:
-                      r.id == _resource.id ? cs.primary : null,
-                  foregroundColor:
-                      r.id == _resource.id ? cs.primaryForeground : null,
-                  onPressed: () => unawaited(_selectEpisode(r)),
-                  child: Text(
-                    r.file.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: r.id == _resource.id
-                          ? cs.primaryForeground
-                          : cs.foreground,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-        ],
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
         if (!_resource.file.isIso) ...[
           ShadButton(
             size: ShadButtonSize.sm,
@@ -7028,7 +7102,58 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               : const Icon(Icons.manage_search_rounded, size: 16),
           child: Text(manualMatchLoading ? '正在匹配' : '手动匹配'),
         ),
+        ShadButton.outline(
+          size: ShadButtonSize.sm,
+          onPressed: widget.onRefreshDetail,
+          leading: const Icon(Icons.refresh_rounded, size: 16),
+          child: const Text('刷新'),
+        ),
         _removeActionsPopover(),
+      ],
+    );
+  }
+
+  Widget _episodeVersionSwitcher(ShadColorScheme cs) {
+    final episodeResources = _episodeRecords(_resource);
+    if (episodeResources.length <= 1) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '资源版本 (${episodeResources.length})',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: cs.mutedForeground,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            for (final r in episodeResources)
+              ShadButton.outline(
+                size: ShadButtonSize.sm,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                backgroundColor:
+                    r.id == _resource.id ? cs.primary : null,
+                foregroundColor:
+                    r.id == _resource.id ? cs.primaryForeground : null,
+                onPressed: () => unawaited(_selectEpisode(r)),
+                child: Text(
+                  r.file.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: r.id == _resource.id
+                        ? cs.primaryForeground
+                        : cs.foreground,
+                  ),
+                ),
+              ),
           ],
         ),
       ],
@@ -7860,6 +7985,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                       child: const Text('播放本集'),
                     ),
                   ),
+                // 同集多版本切换，放在"播放本集"按钮下方
+                if (widget.work.resources.length > 1 &&
+                    widget.work.primary.mediaKind == TMDBMediaKind.tv) ...[
+                  const SizedBox(height: 10),
+                  _episodeVersionSwitcher(cs),
+                ],
               ],
             ),
           ),
