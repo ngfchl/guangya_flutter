@@ -2578,13 +2578,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ),
       ]);
     }
-    // 电影 / 剧集分区（从所有 works 中按媒体类型过滤）
-    final movieWorks = works.where((w) => w.primary.mediaKind == TMDBMediaKind.movie).toList();
-    final seriesWorks = works
-        .where((w) =>
-            w.primary.mediaKind == TMDBMediaKind.tv ||
-            w.resources.any((r) => r.mediaKind == TMDBMediaKind.tv))
-        .toList();
+    // 电影 / 剧集分区（使用各自独立加载的预览数据）
+    final movieWorks = _MediaWork.fromItems(state.moviePreviewItems);
+    final seriesWorks = _MediaWork.fromItems(state.seriesPreviewItems);
     final hasMovieSection = movieWorks.isNotEmpty;
     final hasSeriesSection = seriesWorks.isNotEmpty;
     // 电影 / 剧集分区
@@ -2693,7 +2689,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     List<_MediaWork> works,
     bool compact,
   ) {
-    final visible = works.take(20).toList();
+    final maxItems = StorageManager.configuredMediaHomePreviewCount;
+    final visible = works.take(maxItems).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2721,8 +2718,31 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         _horizontalHomeTrack(
           context,
           height: compact ? 252 : 272,
-          itemCount: visible.length,
+          itemCount: visible.length + 1,
           itemBuilder: (_, index) {
+            if (index == visible.length) {
+              final filter = label == '电影'
+                  ? MediaLibraryBrowseFilter.movies
+                  : MediaLibraryBrowseFilter.series;
+              return SizedBox(
+                width: compact ? 132 : 142,
+                child: _HomeSectionEntryTile(
+                  label: '查看全部',
+                  count: works.length,
+                  icon: icon,
+                  compact: compact,
+                  onTap: () {
+                    setState(() => _wallFilter = filter);
+                    unawaited(_mediaNotifier.loadContent(
+                      home: false,
+                      filter: filter,
+                      reset: true,
+                      force: true,
+                    ));
+                  },
+                ),
+              );
+            }
             final work = visible[index];
             return SizedBox(
               width: compact ? 132 : 142,
@@ -5923,6 +5943,64 @@ class _ContinueWatchingTile extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeSectionEntryTile extends StatelessWidget {
+  final String label;
+  final int count;
+  final IconData icon;
+  final bool compact;
+  final VoidCallback onTap;
+
+  const _HomeSectionEntryTile({
+    required this.label,
+    required this.count,
+    required this.icon,
+    required this.compact,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final width = compact ? 132.0 : 142.0;
+    return Semantics(
+      button: true,
+      label: '$label，共 $count 部',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: width,
+          decoration: BoxDecoration(
+            color: cs.muted.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: cs.border),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 28, color: cs.mutedForeground),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: cs.mutedForeground,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '共 $count 部',
+                style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+              ),
+            ],
           ),
         ),
       ),
