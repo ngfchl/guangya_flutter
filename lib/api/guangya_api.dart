@@ -939,17 +939,22 @@ class GuangyaAPI {
     String proxyHost = '',
     String proxyPort = '',
     int? year,
+    String? country,
   }) async {
     final endpoint = mediaKind == 'movie'
         ? 'movie'
         : (mediaKind == 'tv' ? 'tv' : 'multi');
-    final params = {
+    final params = <String, dynamic>{
       'api_key': apiKey,
       'query': query,
       'language': 'zh-CN',
-      'region': 'CN',
       'include_adult': 'false',
     };
+    // 只有明确指定了国家/地区参数，才携带 region
+    // country 已在 ParsedMediaName.parse 中通过 countryMap 映射为 TMDB region 码
+    if (country != null && country.isNotEmpty) {
+      params['region'] = country;
+    }
     if (year != null) {
       if (mediaKind == 'movie') {
         params['primary_release_year'] = year.toString();
