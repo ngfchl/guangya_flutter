@@ -15,6 +15,7 @@ class _RecognitionAPI extends GuangyaAPI {
     String proxyHost = '',
     String proxyPort = '',
     int? year,
+    String? country,
   }) async {
     calls.add((query: query, mediaKind: mediaKind, year: year));
     if (query == '你好1983') {
