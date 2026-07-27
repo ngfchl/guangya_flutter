@@ -4830,6 +4830,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     required String apiKey,
     required String proxyHost,
     required String proxyPort,
+    required String? country,
   }) async {
     if (_api == null || variants.isEmpty) {
       return const _TMDBRecognitionSearchResult(candidates: [], attempts: []);
@@ -4841,14 +4842,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final years = year == null ? <int?>[null] : <int?>[year, null];
       for (final attemptYear in years) {
         Map<String, dynamic> result;
+        // 1. 先不带国家参数查询（获取原始发行时间）
+        Map<String, dynamic>? originalResult;
         try {
-          result = await _api!.tmdbSearch(
+          originalResult = await _api!.tmdbSearch(
             variant.value,
             apiKey: apiKey,
             mediaKind: mediaKind,
             proxyHost: proxyHost,
             proxyPort: proxyPort,
             year: attemptYear,
+            // country: null,
           );
         } catch (error) {
           attempts.add(
@@ -4857,7 +4861,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           );
           continue;
         }
-        final values = result['results'];
+
+        // 2. 检查返回结果是否年份匹配
+        final values = originalResult['results'];
         if (values is! List) {
           attempts.add(
             '${variant.source}="${variant.value}"，'
@@ -4866,8 +4872,71 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           continue;
         }
 
-        final typedCandidates = <Map<String, dynamic>>[];
+        // 检查是否有年份匹配的候选
         final yearCompatibleCandidates = <Map<String, dynamic>>[];
+        for (final value in values) {
+          if (value is! Map) continue;
+          final candidate = Map<String, dynamic>.from(value);
+          final releaseDate =
+              (candidate['release_date'] ?? candidate['first_air_date'])?.toString() ??
+              '';
+          if (releaseDate.isEmpty || releaseDate.startsWith('$attemptYear')) {
+            yearCompatibleCandidates.add(candidate);
+          }
+        }
+
+        // 3. 如果没有匹配的候选，尝试用国家参数查询
+        if (yearCompatibleCandidates.isEmpty && country != null && country != 'CN' && attemptYear != null) {
+          try {
+            final countryResult = await _api!.tmdbSearch(
+              variant.value,
+              apiKey: apiKey,
+              mediaKind: mediaKind,
+              proxyHost: proxyHost,
+              proxyPort: proxyPort,
+              year: attemptYear,
+              country: country,
+            );
+
+            // 检查国家参数查询结果是否有匹配的候选
+            final countryValues = countryResult['results'];
+            if (countryValues is! List) continue;
+
+            for (final value in countryValues) {
+              if (value is! Map) continue;
+              final candidate = Map<String, dynamic>.from(value);
+              final releaseDate =
+                  (candidate['release_date'] ?? candidate['first_air_date'])?.toString() ??
+                  '';
+              if (releaseDate.isEmpty || releaseDate.startsWith('$attemptYear')) {
+                yearCompatibleCandidates.add(candidate);
+              }
+            }
+
+            // 如果国家参数查询找到了年份匹配的候选，用国家查询结果替换原始结果
+            if (yearCompatibleCandidates.isNotEmpty) {
+              originalResult = countryResult;
+            }
+          } catch (retryError) {
+            attempts.add(
+              '${variant.source}="${variant.value}"，'
+              '年份=$attemptYear，国家=$country -> 重试失败：$retryError',
+            );
+          }
+        }
+
+        // 4. 使用匹配的候选，如果没有则使用原始结果
+        if (yearCompatibleCandidates.isNotEmpty) {
+          result = originalResult!;
+        } else {
+          attempts.add(
+            '${variant.source}="${variant.value}"，'
+            '${attemptYear == null ? '不带年份' : '年份=$attemptYear'} -> 无匹配结果',
+          );
+        }
+
+        final typedCandidates = <Map<String, dynamic>>[];
+        final yearCompatibleTypedCandidates = <Map<String, dynamic>>[];
         for (final value in values) {
           if (value is! Map) continue;
           final candidate = Map<String, dynamic>.from(value);
@@ -4884,7 +4953,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                     ?.toString() ??
                 '';
             if (releaseDate.isEmpty || releaseDate.startsWith('$attemptYear')) {
-              yearCompatibleCandidates.add(candidate);
+              yearCompatibleTypedCandidates.add(candidate);
             }
           }
         }
@@ -4935,8 +5004,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               titleMatch.score == 0 &&
               attemptYear != null &&
               expectedYearMatches &&
-              yearCompatibleCandidates.length == 1 &&
-              yearCompatibleCandidates.single['id']?.toString() ==
+              yearCompatibleTypedCandidates.length == 1 &&
+              yearCompatibleTypedCandidates.single['id']?.toString() ==
                   candidate['id']?.toString();
           final uniqueSpecificQueryFallback =
               titleMatch.score == 0 &&
@@ -5280,6 +5349,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               proxyHost: proxyHost,
               proxyPort: proxyPort,
               year: parsed.year,
+              country: parsed.country,
             );
             attemptLog = tmdbResult.attempts;
           } else {
@@ -5928,6 +5998,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       proxyHost: proxyHost,
       proxyPort: proxyPort,
       year: parsed.year,
+      country: parsed.country,
     );
     final values = searchResult.candidates;
     if (values.isEmpty) {
@@ -5966,9 +6037,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               ?.toString() ??
           '';
       final recognitionYear = _toInt(candidate['_recognitionYear']);
-      if (recognitionYear != null &&
+      final yearMismatch = recognitionYear != null &&
           releaseDate.isNotEmpty &&
-          !releaseDate.startsWith('$recognitionYear')) {
+          !releaseDate.startsWith('$recognitionYear');
+      if (yearMismatch &&
+          values.length > 1) {
         diagnostics.add('${describe(candidate, type)} -> 跳过：年份不匹配');
         continue;
       }
@@ -6086,6 +6159,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   bool _hasExplicitEpisodeMarker(String value) {
     return RegExp(
           r'\bS\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,4}\b',
+          caseSensitive: false,
+        ).hasMatch(value) ||
+        RegExp(
+          r'\b(?:E|EP|Episode|SP|Special)\s*0?\d{1,4}\b',
           caseSensitive: false,
         ).hasMatch(value) ||
         RegExp(r'第\s*\d{1,4}\s*[集话話]').hasMatch(value);
@@ -6842,6 +6919,22 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         '';
     final source = candidate['_source']?.toString();
     final isDouban = source == 'douban';
+    // Douban release_date is typically the China theatrical date, which may be
+    // later than the TMDB (worldwide/US) date.  When both are available, keep
+    // the earlier year so the displayed year matches the earliest known release
+    // rather than a later local release.
+    String effectiveReleaseDate = releaseDate;
+    if (isDouban && fallback.releaseDate.isNotEmpty && releaseDate.isNotEmpty) {
+      final fallbackYear = _releaseYearFromDate(fallback.releaseDate);
+      final candidateYear = _releaseYearFromDate(releaseDate);
+      if (fallbackYear != null &&
+          candidateYear != null &&
+          fallbackYear < candidateYear) {
+        effectiveReleaseDate = fallback.releaseDate;
+      }
+    } else if (isDouban && fallback.releaseDate.isNotEmpty) {
+      effectiveReleaseDate = fallback.releaseDate;
+    }
     // TMDB and Douban ids co-exist on a single item: matching one source must
     // not clear the other. A Douban candidate keeps any existing TMDB id/rating
     // (and vice versa), so a resource can carry both scores and both links.
@@ -6865,7 +6958,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           : type == 'movie'
           ? TMDBMediaKind.movie
           : fallback.mediaKind,
-      releaseDate: releaseDate.isNotEmpty ? releaseDate : fallback.releaseDate,
+      releaseDate: effectiveReleaseDate.isNotEmpty ? effectiveReleaseDate : fallback.releaseDate,
       overview: candidate['overview']?.toString().trim().isNotEmpty == true
           ? candidate['overview'].toString()
           : fallback.overview,
