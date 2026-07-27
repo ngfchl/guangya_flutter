@@ -933,6 +933,7 @@ class ParsedMediaName {
   final String? videoCodec;
   final String? audio;
   final String? dynamicRange;
+  final String? country;
 
   const ParsedMediaName({
     required this.title,
@@ -945,6 +946,7 @@ class ParsedMediaName {
     this.videoCodec,
     this.audio,
     this.dynamicRange,
+    this.country,
   });
 
   factory ParsedMediaName.parse(
@@ -990,7 +992,7 @@ class ParsedMediaName {
     }
     final episodeOnly = season == null
         ? RegExp(
-            r'\b(?:E|EP|Episode)[ ._-]*(\d{1,4})\b|第\s*(\d{1,4})\s*[集话期]',
+            r'\b(?:E|EP|Episode|SP|Special)[ ._-]*(\d{1,4})\b|第\s*(\d{1,4})\s*[集话期]',
             caseSensitive: false,
           ).firstMatch(normalized)
         : null;
@@ -1014,19 +1016,153 @@ class ParsedMediaName {
         episode = (phase - 1) * 2 + (varietyPart.group(1) == '下' ? 2 : 1);
       }
     }
+
+    // 提取国家标识（如 JAPANESE、USA、UK、CN、HK、TW 等）
+    String? country = 'CN'; // 默认中国大陆
+    final countryPatterns = [
+      r'\b(JAPAN|JAPANESE|JP)\b',
+      r'\b(USA|USA\.)\b',
+      r'\b(US|United States)\b',
+      r'\b(UK|United Kingdom|UK\.)\b',
+      r'\b(CN|China|CHINA|中国)\b',
+      r'\b(HK|Hong Kong|香港)\b',
+      r'\b(TW|Taiwan|台灣)\b',
+      r'\b(KR|Korea|KOREA|韩国)\b',
+      r'\b(EU|Europe|EUROPE)\b',
+      r'\b(FR|France|FRANCE)\b',
+      r'\b(DE|Germany|GERMANY)\b',
+      r'\b(CA|Canada|CANADA)\b',
+      r'\b(AU|Australia|AUSTRALIA)\b',
+      r'\b(MX|Mexico|MEXICO)\b',
+      r'\b(ES|Spain|SPAIN)\b',
+      r'\b(IT|Italy|ITALY)\b',
+      r'\b(NL|Netherlands|NETHERLANDS)\b',
+      r'\b(BR|Brazil|BRAZIL)\b',
+      r'\b(RU|Russia|RUSSIA)\b',
+    ];
+
+    for (final pattern in countryPatterns) {
+      final match = RegExp(pattern, caseSensitive: false).firstMatch(stem);
+      if (match != null) {
+        final countryCode = match.group(1)!.toUpperCase();
+        // 映射常见国家代码
+        final countryMap = {
+          'JAPAN': 'JP',
+          'JAPANESE': 'JP',
+          'USA': 'US',
+          'US': 'US',
+          'UNITED STATES': 'US',
+          'UK': 'GB',
+          'UNITED KINGDOM': 'GB',
+          'CN': 'CN',
+          'CHINA': 'CN',
+          '中国': 'CN',
+          'HK': 'HK',
+          'HONG KONG': 'HK',
+          'TW': 'TW',
+          'TAIWAN': 'TW',
+          'KR': 'KR',
+          'KOREA': 'KR',
+          'KOREAN': 'KR',
+          'EU': 'EU',
+          'FR': 'FR',
+          'FRANCE': 'FR',
+          'DE': 'DE',
+          'GERMANY': 'DE',
+          'CA': 'CA',
+          'CANADA': 'CA',
+          'AU': 'AU',
+          'AUSTRALIA': 'AU',
+          'MX': 'MX',
+          'MEXICO': 'MX',
+          'ES': 'ES',
+          'SPAIN': 'ES',
+          'IT': 'IT',
+          'ITALY': 'IT',
+          'NL': 'NL',
+          'NETHERLANDS': 'NL',
+          'BR': 'BR',
+          'BRAZIL': 'BR',
+          'RU': 'RU',
+          'RUSSIA': 'RU',
+        };
+        country = countryMap[countryCode] ?? 'CN';
+        break;
+      }
+    }
+
+    // 如果文件名中未检测到国家标记（仍为默认'CN'），从目录名继承国家信息
+    // 例如文件名"蓝光.1932..."无JAPANESE标记，但父目录"100.Yen.Love.2014.JAPANESE..."有
+    if (country == 'CN' && directoryName?.trim().isNotEmpty == true) {
+      for (final pattern in countryPatterns) {
+        final dirMatch =
+            RegExp(pattern, caseSensitive: false).firstMatch(directoryName!);
+        if (dirMatch != null) {
+          final dirCountryCode = dirMatch.group(1)!.toUpperCase();
+          final dirCountry = {
+            'JAPAN': 'JP',
+            'JAPANESE': 'JP',
+            'USA': 'US',
+            'US': 'US',
+            'UNITED STATES': 'US',
+            'UK': 'GB',
+            'UNITED KINGDOM': 'GB',
+            'CN': 'CN',
+            'CHINA': 'CN',
+            '中国': 'CN',
+            'HK': 'HK',
+            'HONG KONG': 'HK',
+            'TW': 'TW',
+            'TAIWAN': 'TW',
+            'KR': 'KR',
+            'KOREA': 'KR',
+            'KOREAN': 'KR',
+            'EU': 'EU',
+            'FR': 'FR',
+            'FRANCE': 'FR',
+            'DE': 'DE',
+            'GERMANY': 'DE',
+            'CA': 'CA',
+            'CANADA': 'CA',
+            'AU': 'AU',
+            'AUSTRALIA': 'AU',
+            'MX': 'MX',
+            'MEXICO': 'MX',
+            'ES': 'ES',
+            'SPAIN': 'ES',
+            'IT': 'IT',
+            'ITALY': 'IT',
+            'NL': 'NL',
+            'NETHERLANDS': 'NL',
+            'BR': 'BR',
+            'BRAZIL': 'BR',
+            'RU': 'RU',
+            'RUSSIA': 'RU',
+          }[dirCountryCode] ??
+              'CN';
+          if (dirCountry != 'CN') {
+            country = dirCountry;
+          }
+          break;
+        }
+      }
+    }
+
     String? first(String pattern) =>
         RegExp(pattern, caseSensitive: false).firstMatch(normalized)?.group(0);
     final yearMatches = RegExp(
       r'(?<![\u4e00-\u9fff])(19\d{2}|20\d{2})\b',
     ).allMatches(normalized).toList();
     final repairedYear = _repairSpacedYear(normalized);
-    // Some release names carry an upload year before the real title and
-    // release year. Prefer the later year in that specific form.
-    final yearMatch = yearMatches.length > 1 && yearMatches.first.start == 0
+    // Some release names carry a historical year before the actual release
+    // year (e.g. D-Day.Normandy.1944.2014). When multiple years appear, the
+    // last one is almost always the TMDB release year; earlier years are
+    // typically part of the title or historical context.
+    final yearMatch = yearMatches.length > 1
         ? yearMatches.last
         : yearMatches.firstOrNull;
     final boundary = RegExp(
-      r'(?:\b(?:(?<![\u4e00-\u9fff])(?:19\d{2}|20\d{2})|S\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,4}|\d{1,2}x\d{1,4}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|4k|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|(?:cd|disc|disk)[ ._-]*0?\d{1,2}|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b|[\[(（]\s*\d[\d\s]{2,4}\s*[\])）]|第\s*\d{1,4}\s*[集话期])',
+      r'(?:\b(?:(?<![\u4e00-\u9fff])(?:19\d{2}|20\d{2})|S\s*0?\d{1,2}[ ._-]*E\s*0?\d{1,4}|\d{1,2}x\d{1,4}|\d{3,4}x\d{3,4}|2160p|1080p|720p|480p|web[- ]?(?:dl|rip)?|bluray|bdrip|remux|hdtv|dvd|bd|(?:cd|disc|disk)[ ._-]*0?\d{1,2}|x26[45]|h\.?26[45]|hevc|av1|aac|ac3|eac3|flac|truehd|dts|ddp|atmos|hdr|dv|国语|粤语|国粤(?:双语)?|中(?:英|日|韩)?(?:双语|字幕)|中文字幕|简繁(?:字幕)?)\b|[\[(（]\s*\d[\d\s]{2,4}\s*[\])）]|\d+\.)',
       caseSensitive: false,
     );
     final boundaryMatches = boundary.allMatches(normalized).toList();
@@ -1093,6 +1229,10 @@ class ParsedMediaName {
           RegExp(r'(?:\s|[._-])+\d{1,2}(?:st|nd|rd|th)\s+[Ss]eason\s*$', caseSensitive: false),
           '',
         )
+        .replaceFirst(
+          RegExp(r'(?:\s|[._-])*(?:E|EP|Episode|SP|Special)\s*0?\d{1,4}$', caseSensitive: false),
+          '',
+        )
         .trim();
     ParsedMediaName? parent;
     int? directoryEditionYear;
@@ -1118,6 +1258,12 @@ class ParsedMediaName {
           RegExp(r'(?<=[\u4e00-\u9fff])(?:19|20)?\d{2}$'),
           '',
         );
+        // Also try stripping numeric range suffixes like 01-14, 01-24 etc.
+        // which indicate a multi-episode directory (common in Asian drama releases).
+        final directoryTitleWithoutRange = directory.title.replaceFirst(
+          RegExp(r'[\s._-]*\d{1,4}[\s._-]*[-–]\s*\d{1,4}$'),
+          '',
+        );
         final editionMatch = RegExp(
           r'(?<=[\u4e00-\u9fff])(\d{2})$',
         ).firstMatch(directory.title);
@@ -1126,7 +1272,9 @@ class ParsedMediaName {
             (_titleComparisonKey(candidateTitle) ==
                     _titleComparisonKey(directory.title) ||
                 _titleComparisonKey(candidateTitle) ==
-                    _titleComparisonKey(directoryTitleWithoutEdition))) {
+                    _titleComparisonKey(directoryTitleWithoutEdition) ||
+                _titleComparisonKey(candidateTitle) ==
+                    _titleComparisonKey(directoryTitleWithoutRange))) {
           title = candidateTitle;
           episode = candidateEpisode;
           season ??= directory.season;
@@ -1271,6 +1419,7 @@ class ParsedMediaName {
       videoCodec: videoCodec,
       audio: audio,
       dynamicRange: dynamicRange,
+      country: country,
     );
   }
 
@@ -1416,6 +1565,13 @@ class ParsedMediaName {
       '',
     );
 
+    // Broadcaster/channel prefixes (e.g. CCTV8HD, CCTV5) are station metadata
+    // that should not leak into the TMDB search title.
+    title = title.replaceFirst(
+      RegExp(r'^\s*CCTV\d{1,2}[A-Z]*\s+'),
+      '',
+    );
+
     // Download sites and uploader labels are transport metadata even when
     // their bracket contains Chinese text. Preserve ordinary localized title
     // brackets, but remove URL/domain/upload prefixes.
@@ -1468,6 +1624,13 @@ class ParsedMediaName {
     );
     title = title.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
 
+    // Resolution and format labels that appear inline (e.g. 4K between title
+    // words) are release metadata, not part of the TMDB search title.
+    title = title.replaceAll(
+      RegExp(r'(?<=\s|^)4K(?=\s|$)', caseSensitive: false),
+      ' ',
+    );
+
     // Version labels in parentheses such as (美版), (日版), (导演版),
     // (加长版), (剧场版), (重制版) are not part of the searchable title.
     title = title.replaceAll(
@@ -1481,6 +1644,14 @@ class ParsedMediaName {
     // the parser, but it must not become part of the TMDB search title.
     title = title.replaceFirst(
       RegExp(r'^\s*(?:19|20)\d{2}(?=[ ._-]*(?!年)[\u4e00-\u9fff])[ ._-]*'),
+      '',
+    );
+
+    // Leading numbering prefix + year separator, e.g. `04-1988-中华英雄`,
+    // `03-1995-Title`, `1-2000-Title`. The number is a sort/sequence label,
+    // not part of the searchable title.
+    title = title.replaceFirst(
+      RegExp(r'^\s*\d{1,3}[-–]\s*(?:19|20)\d{2}[-–]\s*'),
       '',
     );
 
@@ -1524,7 +1695,7 @@ class ParsedMediaName {
     // A few release tags are written without brackets. They are never part of
     // a searchable title and should terminate the human-readable name.
     final releaseBoundary = RegExp(
-      r'(?:\b(?:ULTRA[ .-]?HD|UHD|Blu[- ]?ray|BDRip|REMUX|BDJ|BDMV|DVD|(?:CD|DISC|DISK)[ ._-]*0?\d{1,2})\b|蓝光(?:原盘)?|原盘|DIY|菜单|音轨|国语|国配|字幕|次时代|SGNB|CHDBits)',
+      r'(?:\b(?:ULTRA[ .-]?HD|UHD|Blu[- ]?ray|BDRip|REMUX|BDJ|BDMV|DVD|DOCU|(?:CD|DISC|DISK)[ ._-]*0?\d{1,2})\b|蓝光(?:原盘)?|原盘|DIY|菜单|音轨|国语|国配|字幕|次时代|SGNB|CHDBits)',
       caseSensitive: false,
     ).firstMatch(title);
     if (releaseBoundary != null) {
@@ -1553,7 +1724,6 @@ class ParsedMediaName {
           '',
         )
         .replaceFirst(RegExp(r'^\s*[\[【(（]\s*\d{1,3}\s*[\]】)）][ ._-]*'), '')
-        .replaceFirst(RegExp(r'^\s*\d{1,3}[ ._-]+'), '')
         .replaceAll(RegExp(r'[\(（](?:港台|港版?|台版?|国配|国语|简繁?|中字?)[\)）]'), ' ')
         .replaceAll(
           RegExp(
@@ -1572,6 +1742,24 @@ class ParsedMediaName {
         .replaceAll(RegExp(r'[\[\]【】{}()（）]'), ' ')
         .replaceFirst(RegExp(r'^\s*[A-Za-z]\s+(?=[\u4e00-\u9fff])'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
+        // Convert standalone Roman numerals (Part II → Part 2, Rocky III → Rocky 3)
+        // to improve TMDB search matching. Skip single-letter ones (I, V, X)
+        // to avoid false positives on common English words.
+        .replaceAllMapped(
+          RegExp(
+            r'\b(?:II|III|IV|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV)\b',
+            caseSensitive: false,
+          ),
+          (match) {
+            const map = {
+              'II': '2', 'III': '3', 'IV': '4',
+              'VI': '6', 'VII': '7', 'VIII': '8', 'IX': '9',
+              'X': '10', 'XI': '11', 'XII': '12',
+              'XIII': '13', 'XIV': '14', 'XV': '15',
+            };
+            return map[match.group(0)!.toUpperCase()] ?? match.group(0)!;
+          },
+        )
         .replaceFirst(RegExp(r'[\s._-]+$'), '')
         .trim();
     return title;
