@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
+import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/storage_manager.dart';
 import '../models/cloud_file.dart';
 import '../models/batch_rename.dart';
@@ -24,7 +25,17 @@ import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
 import 'media_library_page.dart';
 
-enum WorkspaceTool { scan, rename, fastTransfer, tmdb, organize, categories }
+enum WorkspaceTool {
+  scan,
+  rename,
+  fastTransfer,
+  tmdb,
+  organize,
+  categories,
+  emptyFolderScan,
+  duplicateFileScan,
+  similarFolderScan,
+}
 
 /// Sub-page label for the fast-transfer tool, shown in the tool header breadcrumb.
 final fastTransferSubPageProvider = StateProvider<String?>((ref) => null);
@@ -44,6 +55,12 @@ extension WorkspaceToolDetails on WorkspaceTool {
         return '文件整理';
       case WorkspaceTool.categories:
         return '分类管理';
+      case WorkspaceTool.emptyFolderScan:
+        return '空文件夹扫描';
+      case WorkspaceTool.duplicateFileScan:
+        return '重复文件扫描';
+      case WorkspaceTool.similarFolderScan:
+        return '相似文件夹扫描';
     }
   }
 
@@ -61,6 +78,12 @@ extension WorkspaceToolDetails on WorkspaceTool {
         return Icons.drive_file_move_rounded;
       case WorkspaceTool.categories:
         return Icons.grid_view_rounded;
+      case WorkspaceTool.emptyFolderScan:
+        return Icons.folder_off_rounded;
+      case WorkspaceTool.duplicateFileScan:
+        return Icons.content_copy_rounded;
+      case WorkspaceTool.similarFolderScan:
+        return Icons.folder_special_rounded;
     }
   }
 }
@@ -69,11 +92,7 @@ class WorkspaceToolsPage extends StatelessWidget {
   final WorkspaceTool tool;
   final VoidCallback onClose;
 
-  const WorkspaceToolsPage({
-    super.key,
-    required this.tool,
-    required this.onClose,
-  });
+  const WorkspaceToolsPage({super.key, required this.tool, required this.onClose});
 
   @override
   Widget build(BuildContext context) {
@@ -81,12 +100,12 @@ class WorkspaceToolsPage extends StatelessWidget {
       WorkspaceTool.scan => const _FileScanTool(),
       WorkspaceTool.rename => const _BatchRenameTool(),
       WorkspaceTool.fastTransfer => const _FastTransferTool(),
-      WorkspaceTool.tmdb => const MediaLibraryPage(
-        showLibrarySidebar: true,
-        showManagementToolbar: true,
-      ),
+      WorkspaceTool.tmdb => const MediaLibraryPage(showLibrarySidebar: true, showManagementToolbar: true),
       WorkspaceTool.organize => const _MediaOrganizerTool(),
       WorkspaceTool.categories => const _CategoryManagementTool(),
+      WorkspaceTool.emptyFolderScan => const _EmptyFolderScanTool(),
+      WorkspaceTool.duplicateFileScan => const _DuplicateFileScanTool(),
+      WorkspaceTool.similarFolderScan => const _SimilarFolderScanTool(),
     };
     return Column(
       children: [
@@ -106,9 +125,7 @@ class _ToolHeader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = ShadTheme.of(context).colorScheme;
-    final mediaState = tool == WorkspaceTool.tmdb
-        ? ref.watch(mediaLibraryProvider)
-        : null;
+    final mediaState = tool == WorkspaceTool.tmdb ? ref.watch(mediaLibraryProvider) : null;
     return Container(
       height: 58,
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -146,11 +163,7 @@ class _ToolHeader extends ConsumerWidget {
                       titleText,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: cs.foreground,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: TextStyle(color: cs.foreground, fontSize: 16, fontWeight: FontWeight.w700),
                     );
                   },
                 ),
@@ -161,9 +174,7 @@ class _ToolHeader extends ConsumerWidget {
                   libraries: mediaState.libraries,
                   selectedLibraryID: mediaState.selectedLibraryID,
                   compact: compact,
-                  onSelected: (libraryID) => ref
-                      .read(mediaLibraryProvider.notifier)
-                      .selectLibrary(libraryID),
+                  onSelected: (libraryID) => ref.read(mediaLibraryProvider.notifier).selectLibrary(libraryID),
                 ),
               ],
             ],
@@ -188,8 +199,7 @@ class _ToolMediaLibrarySwitcher extends StatefulWidget {
   });
 
   @override
-  State<_ToolMediaLibrarySwitcher> createState() =>
-      _ToolMediaLibrarySwitcherState();
+  State<_ToolMediaLibrarySwitcher> createState() => _ToolMediaLibrarySwitcherState();
 }
 
 class _ToolMediaLibrarySwitcherState extends State<_ToolMediaLibrarySwitcher> {
@@ -204,9 +214,7 @@ class _ToolMediaLibrarySwitcherState extends State<_ToolMediaLibrarySwitcher> {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    final selected = widget.libraries
-        .where((library) => library.id == widget.selectedLibraryID)
-        .firstOrNull;
+    final selected = widget.libraries.where((library) => library.id == widget.selectedLibraryID).firstOrNull;
     return ShadPopover(
       controller: _controller,
       popover: (_) => SizedBox(
@@ -221,11 +229,7 @@ class _ToolMediaLibrarySwitcherState extends State<_ToolMediaLibrarySwitcher> {
                 padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
                 child: Text(
                   '切换媒体库',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: cs.mutedForeground,
-                  ),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.mutedForeground),
                 ),
               ),
               for (final library in widget.libraries)
@@ -233,9 +237,7 @@ class _ToolMediaLibrarySwitcherState extends State<_ToolMediaLibrarySwitcher> {
                   width: double.infinity,
                   mainAxisAlignment: MainAxisAlignment.start,
                   leading: Icon(
-                    library.kind == MediaLibraryKind.series
-                        ? Icons.live_tv_rounded
-                        : Icons.movie_rounded,
+                    library.kind == MediaLibraryKind.series ? Icons.live_tv_rounded : Icons.movie_rounded,
                     size: 16,
                   ),
                   trailing: library.id == widget.selectedLibraryID
@@ -245,11 +247,7 @@ class _ToolMediaLibrarySwitcherState extends State<_ToolMediaLibrarySwitcher> {
                     _controller.hide();
                     widget.onSelected(library.id);
                   },
-                  child: Text(
-                    library.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  child: Text(library.name, maxLines: 1, overflow: TextOverflow.ellipsis),
                 ),
             ],
           ),
@@ -263,16 +261,8 @@ class _ToolMediaLibrarySwitcherState extends State<_ToolMediaLibrarySwitcher> {
             child: ShadButton.ghost(
               size: ShadButtonSize.sm,
               onPressed: widget.libraries.isEmpty ? null : _controller.toggle,
-              leading: Icon(
-                Icons.video_library_rounded,
-                size: 16,
-                color: cs.primary,
-              ),
-              child: Text(
-                selected?.name ?? '未选择媒体库',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              leading: Icon(Icons.video_library_rounded, size: 16, color: cs.primary),
+              child: Text(selected?.name ?? '未选择媒体库', maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
           ),
           const SizedBox(width: 2),
@@ -323,15 +313,9 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
     try {
       final empty = <CloudFile>[];
       final groups = <String, List<CloudFile>>{};
-      final queue = <CloudFile>[
-        ...state.files.where((file) => file.isDirectory),
-      ];
-      final files = <CloudFile>[
-        ...state.files.where((file) => !file.isDirectory),
-      ];
-      final folders = <CloudFile>[
-        ...state.files.where((file) => file.isDirectory),
-      ];
+      final queue = <CloudFile>[...state.files.where((file) => file.isDirectory)];
+      final files = <CloudFile>[...state.files.where((file) => !file.isDirectory)];
+      final folders = <CloudFile>[...state.files.where((file) => file.isDirectory)];
       while (queue.isNotEmpty) {
         if (_cancelRequested) break;
         final folder = queue.removeLast();
@@ -364,9 +348,7 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
       if (mounted) {
         setState(() {
           _emptyFolders = empty;
-          _duplicates = groups.values
-              .where((group) => group.length > 1)
-              .toList();
+          _duplicates = groups.values.where((group) => group.length > 1).toList();
           _similarFolders = _groupSimilarFolders(folders);
           if (_cancelRequested) _error = '扫描已取消，已保留当前结果';
         });
@@ -395,16 +377,10 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
   String _normalizedFolderName(String value) {
     var normalized = value.toLowerCase().trim();
     normalized = normalized.replaceAll(
-      RegExp(
-        r'(?:[\s._-]*(?:copy|duplicate|backup|副本|复制|拷贝|备份))(?:[\s._-]*\d+)?$',
-        caseSensitive: false,
-      ),
+      RegExp(r'(?:[\s._-]*(?:copy|duplicate|backup|副本|复制|拷贝|备份))(?:[\s._-]*\d+)?$', caseSensitive: false),
       '',
     );
-    normalized = normalized.replaceAll(
-      RegExp(r'(?:[（(\[]\s*\d{1,3}\s*[）)\]])$'),
-      '',
-    );
+    normalized = normalized.replaceAll(RegExp(r'(?:[（(\[]\s*\d{1,3}\s*[）)\]])$'), '');
     return normalized.replaceAll(RegExp(r'[\s._()\[\]{}-]+'), '');
   }
 
@@ -437,15 +413,10 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
       children: [
         _ToolSection(
           title: '当前目录扫描',
-          description: _scanning
-              ? '已扫描 $_foldersScanned 个文件夹、$_filesScanned 个文件。'
-              : '检查空文件夹、相同 GCID 的重复文件和相似名称目录。',
+          description: _scanning ? '已扫描 $_foldersScanned 个文件夹、$_filesScanned 个文件。' : '检查空文件夹、相同 GCID 的重复文件和相似名称目录。',
           trailing: ShadButton(
             onPressed: _scanning ? _cancelScan : _scan,
-            leading: Icon(
-              _scanning ? Icons.stop_circle_outlined : Icons.play_arrow_rounded,
-              size: 16,
-            ),
+            leading: Icon(_scanning ? Icons.stop_circle_outlined : Icons.play_arrow_rounded, size: 16),
             child: Text(_scanning ? '取消扫描' : '开始扫描'),
           ),
           child: _scanning
@@ -455,10 +426,7 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
                     label: '文件扫描进度：$_foldersScanned 个文件夹，$_filesScanned 个文件',
                     child: const Align(
                       alignment: Alignment.centerLeft,
-                      child: AppLoadingIndicator(
-                        size: AppLoadingSize.compact,
-                        semanticsLabel: '正在扫描当前目录',
-                      ),
+                      child: AppLoadingIndicator(size: AppLoadingSize.compact, semanticsLabel: '正在扫描当前目录'),
                     ),
                   ),
                 )
@@ -482,17 +450,9 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
           child: _duplicates.isEmpty
               ? Padding(
                   padding: const EdgeInsets.only(top: 10),
-                  child: Text(
-                    '开始扫描后显示重复项。',
-                    style: TextStyle(color: cs.mutedForeground),
-                  ),
+                  child: Text('开始扫描后显示重复项。', style: TextStyle(color: cs.mutedForeground)),
                 )
-              : Column(
-                  children: [
-                    for (final group in _duplicates)
-                      _DuplicateGroup(files: group),
-                  ],
-                ),
+              : Column(children: [for (final group in _duplicates) _DuplicateGroup(files: group)]),
         ),
         const SizedBox(height: 14),
         _ToolSection(
@@ -501,17 +461,9 @@ class _FileScanToolState extends ConsumerState<_FileScanTool> {
           child: _similarFolders.isEmpty
               ? Padding(
                   padding: const EdgeInsets.only(top: 10),
-                  child: Text(
-                    '开始扫描后显示相似名称的文件夹。',
-                    style: TextStyle(color: cs.mutedForeground),
-                  ),
+                  child: Text('开始扫描后显示相似名称的文件夹。', style: TextStyle(color: cs.mutedForeground)),
                 )
-              : Column(
-                  children: [
-                    for (final group in _similarFolders)
-                      _SimilarFolderGroup(folders: group),
-                  ],
-                ),
+              : Column(children: [for (final group in _similarFolders) _SimilarFolderGroup(folders: group)]),
         ),
       ],
     );
@@ -524,8 +476,7 @@ class _SimilarFolderGroup extends ConsumerStatefulWidget {
   const _SimilarFolderGroup({required this.folders});
 
   @override
-  ConsumerState<_SimilarFolderGroup> createState() =>
-      _SimilarFolderGroupState();
+  ConsumerState<_SimilarFolderGroup> createState() => _SimilarFolderGroupState();
 }
 
 class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
@@ -538,28 +489,17 @@ class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
   }
 
   Future<void> _confirmDelete() async {
-    final targets = widget.folders
-        .where((folder) => _selectedIDs.contains(folder.id))
-        .toList();
+    final targets = widget.folders.where((folder) => _selectedIDs.contains(folder.id)).toList();
     if (targets.isEmpty) return;
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
         title: Text('删除 ${targets.length} 个相似文件夹？'),
         actions: [
-          ShadButton.outline(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('取消'),
-          ),
-          ShadButton.destructive(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('删除'),
-          ),
+          ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('取消')),
+          ShadButton.destructive(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('删除')),
         ],
-        child: const Padding(
-          padding: EdgeInsets.only(top: 10),
-          child: Text('同组至少会保留一个文件夹。删除会移除其中的全部内容，请确认完整路径。'),
-        ),
+        child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('同组至少会保留一个文件夹。删除会移除其中的全部内容，请确认完整路径。')),
       ),
     );
     if (confirmed != true || !mounted) return;
@@ -573,20 +513,13 @@ class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: cs.muted,
-        borderRadius: BorderRadius.circular(8),
-      ),
+      decoration: BoxDecoration(color: cs.muted, borderRadius: BorderRadius.circular(8)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             '相似名称组 · ${widget.folders.length} 个文件夹',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: cs.primary,
-            ),
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.primary),
           ),
           for (final folder in widget.folders)
             Padding(
@@ -608,17 +541,8 @@ class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
                   const SizedBox(width: 8),
                   Icon(Icons.folder_rounded, size: 17, color: cs.primary),
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      folder.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  Text(
-                    folder.formattedSize,
-                    style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-                  ),
+                  Expanded(child: Text(folder.name, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  Text(folder.formattedSize, style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
                 ],
               ),
             ),
@@ -643,54 +567,30 @@ class _CleanupList extends ConsumerWidget {
 
   const _CleanupList({required this.files, required this.emptyText});
 
-  Future<void> _confirmDeleteEmpty(
-    BuildContext context,
-    WidgetRef ref,
-    CloudFile folder,
-  ) async {
+  Future<void> _confirmDeleteEmpty(BuildContext context, WidgetRef ref, CloudFile folder) async {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
         title: Text('删除空文件夹「${folder.name}」？'),
         actions: [
-          ShadButton.outline(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('取消'),
-          ),
-          ShadButton.destructive(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('复检删除'),
-          ),
+          ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('取消')),
+          ShadButton.destructive(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('复检删除')),
         ],
-        child: const Padding(
-          padding: EdgeInsets.only(top: 10),
-          child: Text('删除前会重新检查目录是否为空；已发生变化的目录将被保留。'),
-        ),
+        child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('删除前会重新检查目录是否为空；已发生变化的目录将被保留。')),
       ),
     );
     if (confirmed != true || !context.mounted) return;
 
     try {
-      final response = await ref
-          .read(authProvider.notifier)
-          .api
-          .fsFiles(parentID: folder.id, pageSize: 1);
+      final response = await ref.read(authProvider.notifier).api.fsFiles(parentID: folder.id, pageSize: 1);
       if (_hasCloudFile(response)) {
         if (!context.mounted) return;
         await showShadDialog<void>(
           context: context,
           builder: (dialogContext) => ShadDialog(
             title: const Text('已跳过删除'),
-            actions: [
-              ShadButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('知道了'),
-              ),
-            ],
-            child: const Padding(
-              padding: EdgeInsets.only(top: 10),
-              child: Text('该文件夹在扫描后已有内容，未执行删除。'),
-            ),
+            actions: [ShadButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('知道了'))],
+            child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('该文件夹在扫描后已有内容，未执行删除。')),
           ),
         );
         return;
@@ -702,16 +602,8 @@ class _CleanupList extends ConsumerWidget {
         context: context,
         builder: (dialogContext) => ShadDialog(
           title: const Text('无法校验文件夹'),
-          actions: [
-            ShadButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('关闭'),
-            ),
-          ],
-          child: const Padding(
-            padding: EdgeInsets.only(top: 10),
-            child: Text('未能重新读取目录内容，因此没有执行删除。'),
-          ),
+          actions: [ShadButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('关闭'))],
+          child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('未能重新读取目录内容，因此没有执行删除。')),
         ),
       );
     }
@@ -788,28 +680,17 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
   }
 
   Future<void> _confirmDelete() async {
-    final targets = widget.files
-        .where((file) => _selectedIDs.contains(file.id))
-        .toList();
+    final targets = widget.files.where((file) => _selectedIDs.contains(file.id)).toList();
     if (targets.isEmpty) return;
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
         title: Text('删除 ${targets.length} 个重复文件？'),
         actions: [
-          ShadButton.outline(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('取消'),
-          ),
-          ShadButton.destructive(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('删除'),
-          ),
+          ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('取消')),
+          ShadButton.destructive(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('删除')),
         ],
-        child: const Padding(
-          padding: EdgeInsets.only(top: 10),
-          child: Text('同组至少会保留一项。删除后无法恢复，请确认选中的文件。'),
-        ),
+        child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('同组至少会保留一项。删除后无法恢复，请确认选中的文件。')),
       ),
     );
     if (confirmed != true || !mounted) return;
@@ -824,21 +705,14 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: cs.muted,
-        borderRadius: BorderRadius.circular(8),
-      ),
+      decoration: BoxDecoration(color: cs.muted, borderRadius: BorderRadius.circular(8)),
       child: Column(
         children: [
           Row(
             children: [
               Text(
                 '重复组 · ${widget.files.length} 项',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: cs.primary,
-                ),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.primary),
               ),
               const Spacer(),
               ShadButton.destructive(
@@ -870,31 +744,19 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          file.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        Text(file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
                         Text(
                           file.cloudPath,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: cs.mutedForeground,
-                          ),
+                          style: TextStyle(fontSize: 11, color: cs.mutedForeground),
                         ),
                       ],
                     ),
                   ),
                   Text(
                     _selectedIDs.contains(file.id) ? '将删除' : '保留',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: _selectedIDs.contains(file.id)
-                          ? cs.destructive
-                          : cs.primary,
-                    ),
+                    style: TextStyle(fontSize: 12, color: _selectedIDs.contains(file.id) ? cs.destructive : cs.primary),
                   ),
                 ],
               ),
@@ -922,8 +784,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   int _total = 0;
   String _status = '';
   BatchRenameItemType _itemType = BatchRenameItemType.all;
-  BatchRenameConflictStrategy _conflictStrategy =
-      BatchRenameConflictStrategy.reject;
+  BatchRenameConflictStrategy _conflictStrategy = BatchRenameConflictStrategy.reject;
   final _selectedIDs = <String>{};
   late List<CloudFile> _candidates;
   late String? _sourceID;
@@ -937,19 +798,11 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
     super.initState();
     final state = ref.read(fileProvider);
     _sourceID = state.folderPath.isEmpty ? null : state.folderPath.last.id;
-    _sourceLabel = state.folderPath.isEmpty
-        ? '云盘根目录'
-        : state.folderPath.map((folder) => folder.name).join(' / ');
+    _sourceLabel = state.folderPath.isEmpty ? '云盘根目录' : state.folderPath.map((folder) => folder.name).join(' / ');
     _candidates = (state.clipboard ?? state.files)
-        .map(
-          (file) => file.copyWith(
-            cloudPath: _fullCloudPath(file.cloudPath, fallbackName: file.name),
-          ),
-        )
+        .map((file) => file.copyWith(cloudPath: _fullCloudPath(file.cloudPath, fallbackName: file.name)))
         .toList();
-    _rules = [
-      const BatchRenameRule(id: 'rule-0', kind: BatchRenameRuleKind.replace),
-    ];
+    _rules = [const BatchRenameRule(id: 'rule-0', kind: BatchRenameRuleKind.replace)];
     _selectedIDs.addAll(_candidates.map((file) => file.id));
     Future.microtask(_enrichCandidatePaths);
   }
@@ -981,9 +834,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   String _fullCloudPath(String path, {required String fallbackName}) {
     final value = path.trim().isEmpty ? fallbackName : path.trim();
     if (value.startsWith('/')) return value;
-    final source = _sourceLabel == '云盘根目录'
-        ? ''
-        : _sourceLabel.split(' / ').join('/');
+    final source = _sourceLabel == '云盘根目录' ? '' : _sourceLabel.split(' / ').join('/');
     if (source.isEmpty) return '/$value';
     if (value == source || value.startsWith('$source/')) return '/$value';
     return '/$source/$value';
@@ -993,19 +844,15 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
     final api = ref.read(authProvider.notifier).api;
     final detailCache = <String, Future<CloudFile?>>{};
 
-    Future<CloudFile?> loadFolder(String id) =>
-        detailCache.putIfAbsent(id, () async {
-          try {
-            final detail = await api.fsDetail(id);
-            final values = _extractCandidates(detail);
-            return values.cast<CloudFile?>().firstWhere(
-              (file) => file?.id == id,
-              orElse: () => null,
-            );
-          } catch (_) {
-            return null;
-          }
-        });
+    Future<CloudFile?> loadFolder(String id) => detailCache.putIfAbsent(id, () async {
+      try {
+        final detail = await api.fsDetail(id);
+        final values = _extractCandidates(detail);
+        return values.cast<CloudFile?>().firstWhere((file) => file?.id == id, orElse: () => null);
+      } catch (_) {
+        return null;
+      }
+    });
 
     Future<String?> resolvePath(CloudFile file) async {
       final names = <String>[file.name];
@@ -1024,9 +871,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
       return '/${names.join('/')}';
     }
 
-    final paths = await Future.wait(
-      _candidates.map((file) async => (file, await resolvePath(file))),
-    );
+    final paths = await Future.wait(_candidates.map((file) async => (file, await resolvePath(file))));
     if (!mounted) return;
     setState(() {
       final resolved = <String, String>{
@@ -1035,11 +880,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
       };
       if (resolved.isEmpty) return;
       _candidates = _candidates
-          .map(
-            (file) => resolved.containsKey(file.id)
-                ? file.copyWith(cloudPath: resolved[file.id])
-                : file,
-          )
+          .map((file) => resolved.containsKey(file.id) ? file.copyWith(cloudPath: resolved[file.id]) : file)
           .toList();
     });
   }
@@ -1067,33 +908,23 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
       final api = ref.read(authProvider.notifier).api;
       final result = <CloudFile>[];
       final visitedFolders = <String>{};
-      final queue = <_BatchRenameDirectoryNode>[
-        _BatchRenameDirectoryNode(_sourceID, ''),
-      ];
+      final queue = <_BatchRenameDirectoryNode>[_BatchRenameDirectoryNode(_sourceID, '')];
       while (queue.isNotEmpty) {
         final node = queue.removeLast();
         final response = await api.fsFiles(parentID: node.id, pageSize: 1000);
         final children = _extractCandidates(response);
         for (final child in children) {
-          final path = node.path.isEmpty
-              ? child.name
-              : '${node.path}/${child.name}';
-          final candidate = child.copyWith(
-            cloudPath: _fullCloudPath(path, fallbackName: child.name),
-          );
+          final path = node.path.isEmpty ? child.name : '${node.path}/${child.name}';
+          final candidate = child.copyWith(cloudPath: _fullCloudPath(path, fallbackName: child.name));
           result.add(candidate);
-          if (_recursive &&
-              candidate.isDirectory &&
-              visitedFolders.add(candidate.id)) {
+          if (_recursive && candidate.isDirectory && visitedFolders.add(candidate.id)) {
             queue.add(_BatchRenameDirectoryNode(candidate.id, path));
           }
         }
       }
       if (!mounted) return;
       setState(() {
-        _candidates = {
-          for (final file in result) file.id: file,
-        }.values.toList();
+        _candidates = {for (final file in result) file.id: file}.values.toList();
         _selectedIDs
           ..clear()
           ..addAll(_candidates.map((file) => file.id));
@@ -1128,31 +959,17 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
   }
 
   Future<void> _confirmAndApply(List<BatchRenamePreview> previews) async {
-    final changes = previews
-        .where(
-          (preview) =>
-              preview.applicable && _selectedIDs.contains(preview.file.id),
-        )
-        .toList();
+    final changes = previews.where((preview) => preview.applicable && _selectedIDs.contains(preview.file.id)).toList();
     if (changes.isEmpty || _running) return;
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
         title: Text('应用 ${changes.length} 项重命名？'),
         actions: [
-          ShadButton.outline(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('取消'),
-          ),
-          ShadButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('应用'),
-          ),
+          ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('取消')),
+          ShadButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('应用')),
         ],
-        child: const Padding(
-          padding: EdgeInsets.only(top: 10),
-          child: Text('名称修改会直接同步到云盘，请确认预览结果。'),
-        ),
+        child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('名称修改会直接同步到云盘，请确认预览结果。')),
       ),
     );
     if (confirmed == true) await _apply(changes);
@@ -1184,18 +1001,14 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
       }
       await ref.read(fileProvider.notifier).loadFiles();
       if (renamedFiles.isNotEmpty) {
-        await ref
-            .read(mediaLibraryProvider.notifier)
-            .synchronizeRenamedFiles(renamedFiles);
+        await ref.read(mediaLibraryProvider.notifier).synchronizeRenamedFiles(renamedFiles);
       }
     } finally {
       if (mounted) {
         setState(() {
           _running = false;
           _selectedIDs.clear();
-          _status = failed == 0
-              ? '已完成 $succeeded 项重命名'
-              : '已完成 $succeeded 项，失败 $failed 项';
+          _status = failed == 0 ? '已完成 $succeeded 项重命名' : '已完成 $succeeded 项，失败 $failed 项';
         });
       }
     }
@@ -1217,21 +1030,16 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
         BatchRenameItemType.files => !preview.file.isDirectory,
         BatchRenameItemType.folders => preview.file.isDirectory,
       };
-      return matchesType &&
-          (filterText.isEmpty ||
-              preview.file.name.toLowerCase().contains(filterText));
+      return matchesType && (filterText.isEmpty || preview.file.name.toLowerCase().contains(filterText));
     }).toList();
     final applicable = previews.where((preview) => preview.applicable).toList();
-    final selectedCount = applicable
-        .where((preview) => _selectedIDs.contains(preview.file.id))
-        .length;
+    final selectedCount = applicable.where((preview) => _selectedIDs.contains(preview.file.id)).length;
     return ListView(
       padding: const EdgeInsets.all(18),
       children: [
         _ToolSection(
           title: '数据源',
-          description:
-              '$_sourceLabel，已读取 ${files.length} 项；筛选后显示 ${previews.length} 项。',
+          description: '$_sourceLabel，已读取 ${files.length} 项；筛选后显示 ${previews.length} 项。',
           child: Padding(
             padding: const EdgeInsets.only(top: 12),
             child: Wrap(
@@ -1243,14 +1051,10 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                   child: ShadSelect<BatchRenameItemType>(
                     key: ValueKey(_itemType),
                     initialValue: _itemType,
-                    selectedOptionBuilder: (_, value) =>
-                        Text(_itemTypeLabel(value)),
+                    selectedOptionBuilder: (_, value) => Text(_itemTypeLabel(value)),
                     options: [
                       for (final value in BatchRenameItemType.values)
-                        ShadOption(
-                          value: value,
-                          child: Text(_itemTypeLabel(value)),
-                        ),
+                        ShadOption(value: value, child: Text(_itemTypeLabel(value))),
                     ],
                     onChanged: (value) {
                       if (value != null) setState(() => _itemType = value);
@@ -1262,14 +1066,10 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                   child: ShadSelect<BatchRenameConflictStrategy>(
                     key: ValueKey(_conflictStrategy),
                     initialValue: _conflictStrategy,
-                    selectedOptionBuilder: (_, value) =>
-                        Text(_conflictStrategyLabel(value)),
+                    selectedOptionBuilder: (_, value) => Text(_conflictStrategyLabel(value)),
                     options: [
                       for (final value in BatchRenameConflictStrategy.values)
-                        ShadOption(
-                          value: value,
-                          child: Text(_conflictStrategyLabel(value)),
-                        ),
+                        ShadOption(value: value, child: Text(_conflictStrategyLabel(value))),
                     ],
                     onChanged: (value) {
                       if (value != null) {
@@ -1289,8 +1089,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                 ShadCheckbox(
                   value: _preserveExtension,
                   label: const Text('保留后缀'),
-                  onChanged: (value) =>
-                      setState(() => _preserveExtension = value),
+                  onChanged: (value) => setState(() => _preserveExtension = value),
                 ),
                 ShadCheckbox(
                   value: _recursive,
@@ -1309,12 +1108,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                 ),
                 ShadButton.ghost(
                   onPressed: _loadingCandidates ? null : _loadCandidates,
-                  leading: Icon(
-                    _loadingCandidates
-                        ? Icons.hourglass_top_rounded
-                        : Icons.refresh_rounded,
-                    size: 16,
-                  ),
+                  leading: Icon(_loadingCandidates ? Icons.hourglass_top_rounded : Icons.refresh_rounded, size: 16),
                   child: Text(_loadingCandidates ? '读取中' : '重新读取'),
                 ),
               ],
@@ -1344,12 +1138,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                       onRemove: () => setState(() {
                         _rules.removeAt(index);
                         if (_rules.isEmpty) {
-                          _rules = const [
-                            BatchRenameRule(
-                              id: 'rule-0',
-                              kind: BatchRenameRuleKind.replace,
-                            ),
-                          ];
+                          _rules = const [BatchRenameRule(id: 'rule-0', kind: BatchRenameRuleKind.replace)];
                         }
                       }),
                     ),
@@ -1372,12 +1161,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                     ),
                     ShadButton.ghost(
                       onPressed: () => setState(() {
-                        _rules = const [
-                          BatchRenameRule(
-                            id: 'rule-0',
-                            kind: BatchRenameRuleKind.replace,
-                          ),
-                        ];
+                        _rules = const [BatchRenameRule(id: 'rule-0', kind: BatchRenameRuleKind.replace)];
                       }),
                       child: const Text('清空规则'),
                     ),
@@ -1392,13 +1176,8 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
           title: '预览',
           description: '可应用 ${applicable.length} 项，已选择 $selectedCount 项。',
           trailing: ShadButton(
-            onPressed: _running || selectedCount == 0
-                ? null
-                : () => _confirmAndApply(previews),
-            leading: Icon(
-              _running ? Icons.hourglass_top_rounded : Icons.play_arrow_rounded,
-              size: 16,
-            ),
+            onPressed: _running || selectedCount == 0 ? null : () => _confirmAndApply(previews),
+            leading: Icon(_running ? Icons.hourglass_top_rounded : Icons.play_arrow_rounded, size: 16),
             child: Text(_running ? '正在应用 $_completed / $_total' : '应用重命名'),
           ),
           child: Padding(
@@ -1417,35 +1196,22 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                             : () => setState(() {
                                 _selectedIDs
                                   ..clear()
-                                  ..addAll(
-                                    applicable.map((item) => item.file.id),
-                                  );
+                                  ..addAll(applicable.map((item) => item.file.id));
                               }),
                         child: const Text('全选'),
                       ),
                       ShadButton.ghost(
-                        onPressed: _running
-                            ? null
-                            : () => setState(_selectedIDs.clear),
+                        onPressed: _running ? null : () => setState(_selectedIDs.clear),
                         child: const Text('全不选'),
                       ),
                       if (_status.isNotEmpty)
                         SizedBox(
-                          width: constraints.maxWidth < 560
-                              ? constraints.maxWidth
-                              : 260,
+                          width: constraints.maxWidth < 560 ? constraints.maxWidth : 260,
                           child: Text(
                             _status,
-                            textAlign: constraints.maxWidth < 560
-                                ? TextAlign.left
-                                : TextAlign.right,
+                            textAlign: constraints.maxWidth < 560 ? TextAlign.left : TextAlign.right,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: ShadTheme.of(
-                                context,
-                              ).colorScheme.mutedForeground,
-                            ),
+                            style: TextStyle(fontSize: 12, color: ShadTheme.of(context).colorScheme.mutedForeground),
                           ),
                         ),
                     ],
@@ -1455,27 +1221,19 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                 Container(
                   height: 360,
                   decoration: BoxDecoration(
-                    border: Border.all(
-                      color: ShadTheme.of(context).colorScheme.border,
-                    ),
+                    border: Border.all(color: ShadTheme.of(context).colorScheme.border),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: previews.isEmpty
                       ? Center(
                           child: Text(
                             '当前筛选条件下没有项目',
-                            style: TextStyle(
-                              color: ShadTheme.of(
-                                context,
-                              ).colorScheme.mutedForeground,
-                            ),
+                            style: TextStyle(color: ShadTheme.of(context).colorScheme.mutedForeground),
                           ),
                         )
                       : LayoutBuilder(
                           builder: (context, constraints) {
-                            final tableWidth = constraints.maxWidth < 920
-                                ? 920.0
-                                : constraints.maxWidth;
+                            final tableWidth = constraints.maxWidth < 920 ? 920.0 : constraints.maxWidth;
                             return Scrollbar(
                               controller: _previewHorizontalController,
                               child: SingleChildScrollView(
@@ -1489,35 +1247,24 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
                                       const Divider(height: 1),
                                       Expanded(
                                         child: ListView.separated(
-                                          controller:
-                                              _previewVerticalController,
+                                          controller: _previewVerticalController,
                                           primary: false,
                                           itemCount: previews.length,
-                                          separatorBuilder: (_, _) =>
-                                              const Divider(height: 1),
+                                          separatorBuilder: (_, _) => const Divider(height: 1),
                                           itemBuilder: (context, index) {
                                             final preview = previews[index];
-                                            final canSelect =
-                                                preview.applicable;
+                                            final canSelect = preview.applicable;
                                             return _BatchRenamePreviewRow(
                                               preview: preview,
-                                              selected: _selectedIDs.contains(
-                                                preview.file.id,
-                                              ),
+                                              selected: _selectedIDs.contains(preview.file.id),
                                               enabled: canSelect && !_running,
-                                              onChanged: (selected) =>
-                                                  setState(() {
-                                                    if (selected == true &&
-                                                        canSelect) {
-                                                      _selectedIDs.add(
-                                                        preview.file.id,
-                                                      );
-                                                    } else {
-                                                      _selectedIDs.remove(
-                                                        preview.file.id,
-                                                      );
-                                                    }
-                                                  }),
+                                              onChanged: (selected) => setState(() {
+                                                if (selected == true && canSelect) {
+                                                  _selectedIDs.add(preview.file.id);
+                                                } else {
+                                                  _selectedIDs.remove(preview.file.id);
+                                                }
+                                              }),
                                             );
                                           },
                                         ),
@@ -1545,11 +1292,10 @@ String _itemTypeLabel(BatchRenameItemType value) => switch (value) {
   BatchRenameItemType.folders => '仅文件夹',
 };
 
-String _conflictStrategyLabel(BatchRenameConflictStrategy value) =>
-    switch (value) {
-      BatchRenameConflictStrategy.reject => '同名：阻止执行',
-      BatchRenameConflictStrategy.appendIndex => '同名：自动编号',
-    };
+String _conflictStrategyLabel(BatchRenameConflictStrategy value) => switch (value) {
+  BatchRenameConflictStrategy.reject => '同名：阻止执行',
+  BatchRenameConflictStrategy.appendIndex => '同名：自动编号',
+};
 
 String _ruleKindLabel(BatchRenameRuleKind value) => switch (value) {
   BatchRenameRuleKind.remove => '删除字符',
@@ -1585,18 +1331,13 @@ class _BatchRenameFolderPicker extends ConsumerStatefulWidget {
   final String? initialID;
   final String title;
 
-  const _BatchRenameFolderPicker({
-    required this.initialID,
-    this.title = '选择重命名目录',
-  });
+  const _BatchRenameFolderPicker({required this.initialID, this.title = '选择重命名目录'});
 
   @override
-  ConsumerState<_BatchRenameFolderPicker> createState() =>
-      _BatchRenameFolderPickerState();
+  ConsumerState<_BatchRenameFolderPicker> createState() => _BatchRenameFolderPickerState();
 }
 
-class _BatchRenameFolderPickerState
-    extends ConsumerState<_BatchRenameFolderPicker> {
+class _BatchRenameFolderPickerState extends ConsumerState<_BatchRenameFolderPicker> {
   final _path = <CloudFile>[];
   var _folders = <CloudFile>[];
   var _loading = true;
@@ -1609,8 +1350,8 @@ class _BatchRenameFolderPickerState
   }
 
   String? get _parentID => _path.isEmpty ? null : _path.last.id;
-  String get _label =>
-      _path.isEmpty ? '云盘根目录' : _path.map((folder) => folder.name).join(' / ');
+
+  String get _label => _path.isEmpty ? '云盘根目录' : _path.map((folder) => folder.name).join(' / ');
 
   Future<void> _load() async {
     setState(() {
@@ -1618,15 +1359,10 @@ class _BatchRenameFolderPickerState
       _error = null;
     });
     try {
-      final response = await ref
-          .read(authProvider.notifier)
-          .api
-          .fsFiles(parentID: _parentID, pageSize: 1000);
+      final response = await ref.read(authProvider.notifier).api.fsFiles(parentID: _parentID, pageSize: 1000);
       if (!mounted) return;
       setState(() {
-        _folders = _extractFolders(
-          response,
-        )..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        _folders = _extractFolders(response)..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       });
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
@@ -1660,109 +1396,94 @@ class _BatchRenameFolderPickerState
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    return ShadDialog(
-      title: Text(widget.title),
-      description: Text('当前：$_label'),
-      actions: [
-        ShadButton.outline(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        ShadButton(
-          onPressed: () => Navigator.of(
-            context,
-          ).pop(_BatchRenameFolderSelection(_parentID, _label)),
-          leading: const Icon(Icons.check_rounded, size: 16),
-          child: const Text('使用目录'),
-        ),
-      ],
-      child: Material(
-        type: MaterialType.transparency,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final narrow = constraints.maxWidth < 560;
-            return SizedBox(
-              width: narrow ? constraints.maxWidth : 540,
-              height: narrow ? 420 : 360,
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      ShadButton.ghost(
-                        size: ShadButtonSize.sm,
-                        onPressed: _path.isEmpty
-                            ? null
-                            : () {
-                                setState(() => _path.removeLast());
-                                _load();
-                              },
-                        leading: const Icon(Icons.arrow_back_rounded, size: 16),
-                        child: narrow
-                            ? const SizedBox.shrink()
-                            : const Text('返回上级'),
-                      ),
-                      const Spacer(),
-                      ShadTooltip(
-                        builder: (_) => const Text('刷新文件夹'),
-                        child: ShadButton.ghost(
-                          size: ShadButtonSize.sm,
-                          onPressed: _loading ? null : _load,
-                          child: const Icon(Icons.refresh_rounded, size: 16),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: _loading
-                        ? const Center(
-                            child: AppLoadingIndicator(
-                              size: AppLoadingSize.page,
-                              label: '正在读取目录',
-                            ),
-                          )
-                        : _error != null
-                        ? Center(
-                            child: Text(
-                              _error!,
-                              style: TextStyle(color: cs.destructive),
-                            ),
-                          )
-                        : _folders.isEmpty
-                        ? Center(
-                            child: Text(
-                              '没有子文件夹',
-                              style: TextStyle(color: cs.mutedForeground),
-                            ),
-                          )
-                        : ListView.separated(
-                            itemCount: _folders.length,
-                            separatorBuilder: (_, _) =>
-                                const Divider(height: 1),
-                            itemBuilder: (context, index) {
-                              final folder = _folders[index];
-                              return ListTile(
-                                leading: Icon(
-                                  Icons.folder_rounded,
-                                  color: cs.primary,
-                                ),
-                                title: Text(folder.name),
-                                trailing: const Icon(
-                                  Icons.chevron_right_rounded,
-                                ),
-                                onTap: () {
-                                  setState(() => _path.add(folder));
-                                  _load();
-                                },
-                              );
-                            },
-                          ),
-                  ),
-                ],
+    return Material(
+      type: MaterialType.transparency,
+      child: Builder(
+        builder: (ctx) {
+          return ShadDialog(
+            title: Text(widget.title),
+            description: Text('当前：$_label'),
+            actions: [
+              ShadButton.outline(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+              ShadButton(
+                onPressed: () => Navigator.of(context).pop(_BatchRenameFolderSelection(_parentID, _label)),
+                leading: const Icon(Icons.check_rounded, size: 16),
+                child: const Text('使用目录'),
               ),
-            );
-          },
-        ),
+            ],
+            child: Material(
+              type: MaterialType.transparency,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final narrow = constraints.maxWidth < 560;
+                  return SizedBox(
+                    width: narrow ? constraints.maxWidth : 540,
+                    height: narrow ? 420 : 360,
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            ShadButton.ghost(
+                              size: ShadButtonSize.sm,
+                              onPressed: _path.isEmpty
+                                  ? null
+                                  : () {
+                                      setState(() => _path.removeLast());
+                                      _load();
+                                    },
+                              leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                              child: narrow ? const SizedBox.shrink() : const Text('返回上级'),
+                            ),
+                            const Spacer(),
+                            ShadTooltip(
+                              builder: (_) => const Text('刷新文件夹'),
+                              child: ShadButton.ghost(
+                                size: ShadButtonSize.sm,
+                                onPressed: _loading ? null : _load,
+                                child: const Icon(Icons.refresh_rounded, size: 16),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: _loading
+                              ? const Center(
+                                  child: AppLoadingIndicator(size: AppLoadingSize.page, label: '正在读取目录'),
+                                )
+                              : _error != null
+                              ? Center(
+                                  child: Text(_error!, style: TextStyle(color: cs.destructive)),
+                                )
+                              : _folders.isEmpty
+                              ? Center(
+                                  child: Text('没有子文件夹', style: TextStyle(color: cs.mutedForeground)),
+                                )
+                              : ListView.separated(
+                                  itemCount: _folders.length,
+                                  separatorBuilder: (_, _) => const Divider(height: 1),
+                                  itemBuilder: (context, index) {
+                                    final folder = _folders[index];
+                                    return ListTile(
+                                      leading: Icon(Icons.folder_rounded, color: cs.primary),
+                                      title: Text(folder.name),
+                                      trailing: const Icon(Icons.chevron_right_rounded),
+                                      onTap: () {
+                                        setState(() => _path.add(folder));
+                                        _load();
+                                      },
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -1791,11 +1512,8 @@ class _BatchRenameRuleRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    final hasReplacement =
-        rule.kind == BatchRenameRuleKind.replace ||
-        rule.kind == BatchRenameRuleKind.regex;
-    final supportsCase =
-        hasReplacement || rule.kind == BatchRenameRuleKind.remove;
+    final hasReplacement = rule.kind == BatchRenameRuleKind.replace || rule.kind == BatchRenameRuleKind.regex;
+    final supportsCase = hasReplacement || rule.kind == BatchRenameRuleKind.remove;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -1843,8 +1561,7 @@ class _BatchRenameRuleRow extends StatelessWidget {
               child: ShadInput(
                 initialValue: rule.replacement,
                 placeholder: const Text('替换为'),
-                onChanged: (value) =>
-                    onChanged(rule.copyWith(replacement: value)),
+                onChanged: (value) => onChanged(rule.copyWith(replacement: value)),
               ),
             ),
           ],
@@ -1914,11 +1631,7 @@ class _BatchRenamePreviewHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    final style = TextStyle(
-      fontSize: 11,
-      fontWeight: FontWeight.w700,
-      color: cs.mutedForeground,
-    );
+    final style = TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: cs.mutedForeground);
     return Container(
       height: 34,
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1957,9 +1670,7 @@ class _BatchRenamePreviewRow extends StatelessWidget {
     final cs = ShadTheme.of(context).colorScheme;
     final changed = preview.changed;
     final rawPath = preview.file.cloudPath.trim();
-    final path = rawPath.isEmpty
-        ? preview.file.name
-        : (rawPath.startsWith('/') ? rawPath : '/$rawPath');
+    final path = rawPath.isEmpty ? preview.file.name : (rawPath.startsWith('/') ? rawPath : '/$rawPath');
     final gcid = preview.file.gcid?.trim();
     final gcidText = gcid?.isNotEmpty == true ? gcid! : '未获取';
     final status = preview.error ?? (changed ? '将修改' : '无变化');
@@ -1975,9 +1686,7 @@ class _BatchRenamePreviewRow extends StatelessWidget {
           ShadCheckbox(value: selected, onChanged: enabled ? onChanged : null),
           const SizedBox(width: 10),
           Icon(
-            preview.file.isDirectory
-                ? Icons.folder_rounded
-                : Icons.insert_drive_file_rounded,
+            preview.file.isDirectory ? Icons.folder_rounded : Icons.insert_drive_file_rounded,
             size: 18,
             color: preview.file.isDirectory ? cs.primary : cs.mutedForeground,
           ),
@@ -1998,11 +1707,7 @@ class _BatchRenamePreviewRow extends StatelessWidget {
                   '新  ${preview.newName}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: statusColor,
-                  ),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: statusColor),
                 ),
               ],
             ),
@@ -2018,18 +1723,10 @@ class _BatchRenamePreviewRow extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  Icon(
-                    Icons.folder_outlined,
-                    size: 14,
-                    color: cs.mutedForeground,
-                  ),
+                  Icon(Icons.folder_outlined, size: 14, color: cs.mutedForeground),
                   const SizedBox(width: 5),
                   Expanded(
-                    child: SelectableText(
-                      path,
-                      maxLines: 1,
-                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-                    ),
+                    child: SelectableText(path, maxLines: 1, style: TextStyle(fontSize: 11, color: cs.mutedForeground)),
                   ),
                 ],
               ),
@@ -2041,10 +1738,7 @@ class _BatchRenamePreviewRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(
-                  'GCID',
-                  style: TextStyle(fontSize: 10, color: cs.mutedForeground),
-                ),
+                Text('GCID', style: TextStyle(fontSize: 10, color: cs.mutedForeground)),
                 const SizedBox(height: 3),
                 SelectableText(
                   gcidText,
@@ -2053,9 +1747,7 @@ class _BatchRenamePreviewRow extends StatelessWidget {
                   style: TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 11,
-                    color: gcid?.isNotEmpty == true
-                        ? cs.mutedForeground
-                        : cs.destructive,
+                    color: gcid?.isNotEmpty == true ? cs.mutedForeground : cs.destructive,
                   ),
                 ),
               ],
@@ -2069,11 +1761,7 @@ class _BatchRenamePreviewRow extends StatelessWidget {
               textAlign: TextAlign.right,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: statusColor,
-              ),
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: statusColor),
             ),
           ),
         ],
@@ -2134,24 +1822,14 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   Timer? _sessionPersistTimer;
 
   /// Convert entries to the standard fast-transfer JSON format (path, size, gcid only).
-  String _entriesToJSON(
-    List<FastTransferEntry> entries, {
-    bool indent = false,
-    int? totalSize,
-    int? foldersCount,
-  }) {
+  String _entriesToJSON(List<FastTransferEntry> entries, {bool indent = false, int? totalSize, int? foldersCount}) {
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final data = {
       'totalFilesCount': entries.length,
-      if (totalSize != null) ...{
-        'totalSize': totalSize,
-        'formattedTotalSize': _formatTransferSize(totalSize),
-      },
+      if (totalSize != null) ...{'totalSize': totalSize, 'formattedTotalSize': _formatTransferSize(totalSize)},
       'generatedAt': now,
       if (foldersCount != null) 'scannedFoldersCount': foldersCount,
-      'files': entries
-          .map((e) => {'path': e.path, 'size': e.size, 'gcid': e.gcid})
-          .toList(),
+      'files': entries.map((e) => {'path': e.path, 'size': e.size, 'gcid': e.gcid}).toList(),
     };
     if (indent) {
       return const JsonEncoder.withIndent('  ').convert(data);
@@ -2163,22 +1841,13 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   void initState() {
     super.initState();
     final raw = StorageManager.get<dynamic>(StorageKeys.fastTransferSession);
-    _concurrency =
-        (int.tryParse(
-                  StorageManager.get<String>(
-                        StorageKeys.fastTransferConcurrency,
-                      ) ??
-                      '3',
-                ) ??
-                3)
-            .clamp(1, 20);
+    _concurrency = (int.tryParse(StorageManager.get<String>(StorageKeys.fastTransferConcurrency) ?? '3') ?? 3).clamp(
+      1,
+      20,
+    );
     if (raw is Map) {
-      final session = FastTransferSession.fromJson(
-        Map<String, dynamic>.from(raw),
-      );
-      _entries = session.entries
-          .where((entry) => entry.path.isNotEmpty)
-          .toList();
+      final session = FastTransferSession.fromJson(Map<String, dynamic>.from(raw));
+      _entries = session.entries.where((entry) => entry.path.isNotEmpty).toList();
       _targetID = session.targetID;
       _targetName = session.targetName;
       if (_entries.isNotEmpty) {
@@ -2209,9 +1878,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     };
     _sessionPersistence = _sessionPersistence
         .catchError((_) {})
-        .then(
-          (_) => StorageManager.set(StorageKeys.fastTransferSession, snapshot),
-        );
+        .then((_) => StorageManager.set(StorageKeys.fastTransferSession, snapshot));
     return _sessionPersistence;
   }
 
@@ -2271,10 +1938,8 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     final api = ref.read(authProvider.notifier).api;
     final parentID = _targetID;
     final pathResolver = FastTransferPathResolver(
-      listDirectory: (parentID) async =>
-          _extractFiles(await api.fsFiles(parentID: parentID, pageSize: 1000)),
-      createDirectory: (parentID, name) =>
-          _createFastTransferDirectory(api, parentID, name),
+      listDirectory: (parentID) async => _extractFiles(await api.fsFiles(parentID: parentID, pageSize: 1000)),
+      createDirectory: (parentID, name) => _createFastTransferDirectory(api, parentID, name),
     );
     final nameReservations = <String>{};
     final concurrency = _concurrency;
@@ -2287,33 +1952,19 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           if (_cancelRequested) return;
           final entry = entries[nextIndex++];
           if (_cancelledEntryIDs.remove(entry.id)) {
-            _recordTaskResult(
-              entry,
-              FastTransferResultState.cancelled,
-              '任务已取消',
-            );
+            _recordTaskResult(entry, FastTransferResultState.cancelled, '任务已取消');
             continue;
           }
           if (mounted) setState(() => _activeEntryIDs.add(entry.id));
           try {
-            final targetID = await pathResolver.resolve(
-              entry,
-              rootID: parentID,
-              createDirectories: _createDirectories,
-            );
+            final targetID = await pathResolver.resolve(entry, rootID: parentID, createDirectories: _createDirectories);
             final reservationKey = '${targetID ?? '@root'}/${entry.name}';
             if (!nameReservations.add(reservationKey)) {
               throw FormatException('同一批任务包含重复目标：${entry.path}');
             }
-            if (_skipExisting &&
-                await _hasExistingFile(api, targetID, entry.name)) {
+            if (_skipExisting && await _hasExistingFile(api, targetID, entry.name)) {
               completed += 1;
-              _recordTaskResult(
-                entry,
-                FastTransferResultState.skipped,
-                '目标目录已有同名文件',
-                targetID: targetID,
-              );
+              _recordTaskResult(entry, FastTransferResultState.skipped, '目标目录已有同名文件', targetID: targetID);
               continue;
             }
             late final Map<String, dynamic> response;
@@ -2338,17 +1989,11 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
               FastTransferResultState.imported,
               '秒传成功',
               taskID: _findString(response, const ['taskId', 'task_id']),
-              targetID:
-                  _findString(response, const ['fileId', 'file_id', 'resId']) ??
-                  targetID,
+              targetID: _findString(response, const ['fileId', 'file_id', 'resId']) ?? targetID,
             );
           } catch (error) {
             failed += 1;
-            _recordTaskResult(
-              entry,
-              FastTransferResultState.failed,
-              error.toString(),
-            );
+            _recordTaskResult(entry, FastTransferResultState.failed, error.toString());
           } finally {
             if (mounted) setState(() => _activeEntryIDs.remove(entry.id));
           }
@@ -2358,9 +2003,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       await Future.wait(List.generate(concurrency, (_) => worker()));
       if (_cancelRequested) {
         final handled = _latestTaskResults.keys.toSet();
-        for (final entry in entries.where(
-          (entry) => !handled.contains(entry.id),
-        )) {
+        for (final entry in entries.where((entry) => !handled.contains(entry.id))) {
           _recordTaskResult(entry, FastTransferResultState.cancelled, '任务已终止');
         }
       }
@@ -2472,15 +2115,14 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     }
     if (meta.generatedAt != null) {
       final dt = DateTime.fromMillisecondsSinceEpoch(meta.generatedAt! * 1000);
-      items.add('生成于 ${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}');
+      items.add(
+        '生成于 ${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}',
+      );
     }
     if (items.isEmpty) return const SizedBox.shrink();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: cs.muted.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(6),
-      ),
+      decoration: BoxDecoration(color: cs.muted.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
       child: Row(
         children: [
           Icon(Icons.info_outline_rounded, size: 14, color: cs.mutedForeground),
@@ -2528,9 +2170,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     await _generateLocalEntries(candidates);
   }
 
-  Future<void> _generateLocalEntries(
-    List<({File file, String path})> candidates,
-  ) async {
+  Future<void> _generateLocalEntries(List<({File file, String path})> candidates) async {
     if (candidates.isEmpty) {
       if (mounted) setState(() => _result = '没有找到可读取的本地文件');
       return;
@@ -2559,14 +2199,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           if (seenFolders.add(parent)) foldersCount += 1;
           final hashes = await _calculateLocalHashes(file, stat.size);
           totalSize += stat.size;
-          entries.add(
-            FastTransferEntry.create(
-              path: candidate.path,
-              size: stat.size,
-              md5: hashes.$1,
-              gcid: hashes.$2,
-            ),
-          );
+          entries.add(FastTransferEntry.create(path: candidate.path, size: stat.size, md5: hashes.$1, gcid: hashes.$2));
         } catch (_) {
           failures += 1;
         }
@@ -2579,15 +2212,8 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         _latestTaskResults.clear();
         _json.text = const JsonEncoder.withIndent(
           '  ',
-        ).convert(_entriesToJSON(
-          entries,
-          indent: true,
-          totalSize: totalSize,
-          foldersCount: foldersCount,
-        ));
-        _result = failures == 0
-            ? '已生成 ${entries.length} 个本地文件的秒传 JSON'
-            : '已生成 ${entries.length} 项，$failures 项无法读取';
+        ).convert(_entriesToJSON(entries, indent: true, totalSize: totalSize, foldersCount: foldersCount));
+        _result = failures == 0 ? '已生成 ${entries.length} 个本地文件的秒传 JSON' : '已生成 ${entries.length} 项，$failures 项无法读取';
       });
       await _persistSession();
     } finally {
@@ -2618,10 +2244,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   }
 
   Future<void> _chooseJSONFile() async {
-    final picked = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['json'],
-    );
+    final picked = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: const ['json']);
     final path = picked?.paths.whereType<String>().firstOrNull;
     if (path == null) return;
     setState(() {
@@ -2629,10 +2252,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       _result = '';
     });
     try {
-      await _replaceJSONSource(
-        await File(path).readAsString(),
-        showParsingState: false,
-      );
+      await _replaceJSONSource(await File(path).readAsString(), showParsingState: false);
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -2643,10 +2263,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     }
   }
 
-  Future<void> _replaceJSONSource(
-    String text, {
-    bool showParsingState = true,
-  }) async {
+  Future<void> _replaceJSONSource(String text, {bool showParsingState = true}) async {
     if (showParsingState) {
       setState(() {
         _importPhase = _FastTransferImportPhase.parsing;
@@ -2685,8 +2302,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
   Future<void> _chooseTargetDirectory() async {
     final selected = await showShadDialog<_BatchRenameFolderSelection>(
       context: context,
-      builder: (_) =>
-          _BatchRenameFolderPicker(initialID: _targetID, title: '选择秒传目标目录'),
+      builder: (_) => _BatchRenameFolderPicker(initialID: _targetID, title: '选择秒传目标目录'),
     );
     if (selected == null || !mounted) return;
     setState(() {
@@ -2698,10 +2314,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
 
   Future<void> _setConcurrency(int value) async {
     setState(() => _concurrency = value.clamp(1, 20));
-    await StorageManager.set(
-      StorageKeys.fastTransferConcurrency,
-      '$_concurrency',
-    );
+    await StorageManager.set(StorageKeys.fastTransferConcurrency, '$_concurrency');
   }
 
   void _cancelEntry(FastTransferEntry entry) {
@@ -2793,11 +2406,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
 
   List<FastTransferEntry> get _pendingEntries {
     return _entries
-        .where(
-          (entry) =>
-              !_latestTaskResults.containsKey(entry.id) &&
-              !_cancelledEntryIDs.contains(entry.id),
-        )
+        .where((entry) => !_latestTaskResults.containsKey(entry.id) && !_cancelledEntryIDs.contains(entry.id))
         .toList(growable: false);
   }
 
@@ -2817,13 +2426,12 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     FastTransferResultState.cancelled => Icons.cancel_outlined,
   };
 
-  Color _taskColor(ShadColorScheme cs, FastTransferResultState state) =>
-      switch (state) {
-        FastTransferResultState.imported => cs.primary,
-        FastTransferResultState.skipped => cs.mutedForeground,
-        FastTransferResultState.failed => cs.destructive,
-        FastTransferResultState.cancelled => cs.mutedForeground,
-      };
+  Color _taskColor(ShadColorScheme cs, FastTransferResultState state) => switch (state) {
+    FastTransferResultState.imported => cs.primary,
+    FastTransferResultState.skipped => cs.mutedForeground,
+    FastTransferResultState.failed => cs.destructive,
+    FastTransferResultState.cancelled => cs.mutedForeground,
+  };
 
   String _taskTitle(FastTransferResultState state) => switch (state) {
     FastTransferResultState.imported => '已秒传',
@@ -2832,36 +2440,18 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     FastTransferResultState.cancelled => '已取消',
   };
 
-  Future<String> _createFastTransferDirectory(
-    dynamic api,
-    String? parentID,
-    String name,
-  ) async {
+  Future<String> _createFastTransferDirectory(dynamic api, String? parentID, String name) async {
     final response = await api.fsCreateDir(name, parentID: parentID);
-    var createdID = _findString(response, const [
-      'fileId',
-      'file_id',
-      'id',
-      'resId',
-    ]);
+    var createdID = _findString(response, const ['fileId', 'file_id', 'id', 'resId']);
     if (createdID == null) {
-      final refreshed = _extractFiles(
-        await api.fsFiles(parentID: parentID, pageSize: 1000),
-      );
-      createdID = refreshed
-          .where((file) => file.name == name && file.isDirectory)
-          .firstOrNull
-          ?.id;
+      final refreshed = _extractFiles(await api.fsFiles(parentID: parentID, pageSize: 1000));
+      createdID = refreshed.where((file) => file.name == name && file.isDirectory).firstOrNull?.id;
     }
     if (createdID == null) throw FormatException('无法创建目录 $name');
     return createdID;
   }
 
-  Future<bool> _hasExistingFile(
-    dynamic api,
-    String? parentID,
-    String name,
-  ) async => _extractFiles(
+  Future<bool> _hasExistingFile(dynamic api, String? parentID, String name) async => _extractFiles(
     await api.fsFiles(parentID: parentID, pageSize: 1000),
   ).any((file) => !file.isDirectory && file.name == name);
 
@@ -2919,49 +2509,29 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                 mainAxisSize: MainAxisSize.min,
                 children: parsing
                     ? [
-                        const AppLoadingIndicator(
-                          size: AppLoadingSize.page,
-                          semanticsLabel: '正在分析秒传 JSON',
-                        ),
+                        const AppLoadingIndicator(size: AppLoadingSize.page, semanticsLabel: '正在分析秒传 JSON'),
                         const SizedBox(height: 18),
                         Text(
                           '正在分析 JSON',
-                          style: TextStyle(
-                            color: cs.foreground,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                          ),
+                          style: TextStyle(color: cs.foreground, fontSize: 20, fontWeight: FontWeight.w700),
                         ),
                         const SizedBox(height: 6),
-                        Text(
-                          '正在读取秒传任务和校验信息',
-                          style: TextStyle(color: cs.mutedForeground),
-                        ),
+                        Text('正在读取秒传任务和校验信息', style: TextStyle(color: cs.mutedForeground)),
                       ]
                     : [
                         Container(
                           width: 88,
                           height: 88,
                           decoration: BoxDecoration(
-                            color: const Color(
-                              0xFFFF7A1A,
-                            ).withValues(alpha: 0.1),
+                            color: const Color(0xFFFF7A1A).withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: const Icon(
-                            Icons.bolt_rounded,
-                            size: 48,
-                            color: Color(0xFFFF7A1A),
-                          ),
+                          child: const Icon(Icons.bolt_rounded, size: 48, color: Color(0xFFFF7A1A)),
                         ),
                         const SizedBox(height: 18),
                         Text(
                           '导入秒传任务',
-                          style: TextStyle(
-                            color: cs.foreground,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                          ),
+                          style: TextStyle(color: cs.foreground, fontSize: 22, fontWeight: FontWeight.w700),
                         ),
                         const SizedBox(height: 6),
                         Text(
@@ -2974,10 +2544,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                           Text(
                             _result,
                             textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: cs.destructive,
-                              fontSize: 12,
-                            ),
+                            style: TextStyle(color: cs.destructive, fontSize: 12),
                           ),
                         ],
                         const SizedBox(height: 18),
@@ -3004,19 +2571,14 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                                 title: '生成',
                                 icon: Icons.fingerprint_rounded,
                                 compact: compact,
-                                onPressed: () =>
-                                    setState(() => _generateMode = true),
+                                onPressed: () => setState(() => _generateMode = true),
                               ),
                             ];
                             if (compact) {
                               return Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  for (
-                                    var index = 0;
-                                    index < buttons.length;
-                                    index++
-                                  ) ...[
+                                  for (var index = 0; index < buttons.length; index++) ...[
                                     if (index > 0) const SizedBox(height: 8),
                                     buttons[index],
                                   ],
@@ -3026,11 +2588,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                             return Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                for (
-                                  var index = 0;
-                                  index < buttons.length;
-                                  index++
-                                ) ...[
+                                for (var index = 0; index < buttons.length; index++) ...[
                                   if (index > 0) const SizedBox(width: 14),
                                   buttons[index],
                                 ],
@@ -3075,10 +2633,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           SizedBox(width: compact ? 8 : 0, height: compact ? 0 : 12),
           Text(
             title,
-            style: TextStyle(
-              fontSize: compact ? 14 : 15,
-              fontWeight: FontWeight.w600,
-            ),
+            style: TextStyle(fontSize: compact ? 14 : 15, fontWeight: FontWeight.w600),
           ),
         ],
       ),
@@ -3100,11 +2655,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     );
   }
 
-  Widget _buildTargetDirectoryButton(
-    ShadColorScheme cs, {
-    double width = 220,
-    bool compact = false,
-  }) {
+  Widget _buildTargetDirectoryButton(ShadColorScheme cs, {double width = 220, bool compact = false}) {
     return SizedBox(
       width: width,
       child: ShadButton.outline(
@@ -3125,21 +2676,14 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
               ),
             ),
             const SizedBox(width: 4),
-            Icon(
-              Icons.arrow_drop_down_rounded,
-              size: 18,
-              color: cs.mutedForeground,
-            ),
+            Icon(Icons.arrow_drop_down_rounded, size: 18, color: cs.mutedForeground),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildImportCommandRow(
-    ShadColorScheme cs,
-    List<FastTransferEntry> pendingEntries,
-  ) {
+  Widget _buildImportCommandRow(ShadColorScheme cs, List<FastTransferEntry> pendingEntries) {
     final compact = MediaQuery.sizeOf(context).width < 600;
     final backBtn = ShadTooltip(
       builder: (_) => const Text('返回'),
@@ -3152,16 +2696,12 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     final createDirectories = ShadCheckbox(
       value: _createDirectories,
       label: const Text('创建目录'),
-      onChanged: _running
-          ? null
-          : (value) => setState(() => _createDirectories = value),
+      onChanged: _running ? null : (value) => setState(() => _createDirectories = value),
     );
     final skipExisting = ShadCheckbox(
       value: _skipExisting,
       label: const Text('跳过同名'),
-      onChanged: _running
-          ? null
-          : (value) => setState(() => _skipExisting = value),
+      onChanged: _running ? null : (value) => setState(() => _skipExisting = value),
     );
     final concurrency = SizedBox(
       width: 110,
@@ -3170,10 +2710,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         enabled: !_running,
         minWidth: 110,
         selectedOptionBuilder: (_, value) => Text('并发 $value'),
-        options: [
-          for (var value = 1; value <= 20; value++)
-            ShadOption(value: value, child: Text('并发 $value')),
-        ],
+        options: [for (var value = 1; value <= 20; value++) ShadOption(value: value, child: Text('并发 $value'))],
         onChanged: (value) {
           if (value != null) unawaited(_setConcurrency(value));
         },
@@ -3190,19 +2727,14 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     ]);
   }
 
-  Widget _buildGenerateCommandRow(
-    ShadColorScheme cs,
-    List<FastTransferEntry> pendingEntries,
-  ) {
+  Widget _buildGenerateCommandRow(ShadColorScheme cs, List<FastTransferEntry> pendingEntries) {
     final compact = MediaQuery.sizeOf(context).width < 600;
     final controls = [
       ShadTooltip(
         builder: (_) => const Text('返回'),
         child: ShadButton.ghost(
           size: ShadButtonSize.sm,
-          onPressed: _generating || _running
-              ? null
-              : () => setState(() => _generateMode = false),
+          onPressed: _generating || _running ? null : () => setState(() => _generateMode = false),
           child: const Icon(Icons.arrow_back_rounded, size: 16),
         ),
       ),
@@ -3211,26 +2743,19 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         child: ShadButton.outline(
           size: ShadButtonSize.sm,
           onPressed: _generating || _running ? null : _showGenerateSourceMenu,
-          leading: Icon(
-            _generating ? Icons.hourglass_top_rounded : Icons.folder_open_rounded,
-            size: 16,
-          ),
+          leading: Icon(_generating ? Icons.hourglass_top_rounded : Icons.folder_open_rounded, size: 16),
           child: Text(_generating ? '正在生成 JSON' : '选择文件'),
         ),
       ),
       ShadButton.outline(
         size: ShadButtonSize.sm,
-        onPressed: _generating || _json.text.trim().isEmpty
-            ? null
-            : _copyGeneratedJSON,
+        onPressed: _generating || _json.text.trim().isEmpty ? null : _copyGeneratedJSON,
         leading: const Icon(Icons.copy_rounded, size: 16),
         child: const Text('复制'),
       ),
       ShadButton(
         size: ShadButtonSize.sm,
-        onPressed: _generating || _json.text.trim().isEmpty
-            ? null
-            : _exportGeneratedJSON,
+        onPressed: _generating || _json.text.trim().isEmpty ? null : _exportGeneratedJSON,
         leading: const Icon(Icons.download_rounded, size: 16),
         child: const Text('导出'),
       ),
@@ -3239,10 +2764,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     return _buildFastTransferControlRow(controls);
   }
 
-  Widget _buildTransferRunControl(
-    List<FastTransferEntry> pendingEntries, {
-    bool compact = false,
-  }) {
+  Widget _buildTransferRunControl(List<FastTransferEntry> pendingEntries, {bool compact = false}) {
     if (_running) {
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -3250,10 +2772,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           ShadButton.outline(
             size: ShadButtonSize.sm,
             onPressed: () => setState(() => _paused = !_paused),
-            leading: Icon(
-              _paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
-              size: 16,
-            ),
+            leading: Icon(_paused ? Icons.play_arrow_rounded : Icons.pause_rounded, size: 16),
             child: Text(_paused ? '继续' : '暂停'),
           ),
           const SizedBox(width: 8),
@@ -3266,8 +2785,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         ],
       );
     }
-    final canStart =
-        _entries.isNotEmpty && pendingEntries.isNotEmpty && !_generating;
+    final canStart = _entries.isNotEmpty && pendingEntries.isNotEmpty && !_generating;
     return ShadButton(
       size: ShadButtonSize.sm,
       onPressed: canStart ? _startPending : null,
@@ -3333,18 +2851,13 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     return _ToolSection(
       title: _queueSectionTitle(_queueSection),
       description: '${sectionTasks.length} 项',
-      trailing: ShadButton.ghost(
-        onPressed: _running ? null : _clearFastTransferSession,
-        child: const Text('清空任务'),
-      ),
+      trailing: ShadButton.ghost(onPressed: _running ? null : _clearFastTransferSession, child: const Text('清空任务')),
       expandChild: true,
       child: Padding(
         padding: const EdgeInsets.only(top: 10),
         child: Column(
           children: [
-            if (issueTasks.isNotEmpty ||
-                importedTasks.isNotEmpty ||
-                skippedTasks.isNotEmpty)
+            if (issueTasks.isNotEmpty || importedTasks.isNotEmpty || skippedTasks.isNotEmpty)
               Container(
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
@@ -3382,16 +2895,14 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                       cs.mutedForeground,
                     ),
                   ],
+                ),
               ),
-            ),
             const SizedBox(height: 7),
             Row(
               children: [
                 Expanded(
                   child: Text(
-                    sectionTasks.isEmpty
-                        ? '暂无任务'
-                        : '显示 ${pageStart + 1}-$pageEnd / ${sectionTasks.length}',
+                    sectionTasks.isEmpty ? '暂无任务' : '显示 ${pageStart + 1}-$pageEnd / ${sectionTasks.length}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: cs.mutedForeground, fontSize: 11),
@@ -3403,10 +2914,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                     key: ValueKey(_queuePageSize),
                     initialValue: _queuePageSize,
                     minWidth: 104,
-                    selectedOptionBuilder: (_, value) => FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text('$value 条/页'),
-                    ),
+                    selectedOptionBuilder: (_, value) => FittedBox(fit: BoxFit.scaleDown, child: Text('$value 条/页')),
                     options: const [
                       ShadOption(value: 200, child: Text('200 条/页')),
                       ShadOption(value: 500, child: Text('500 条/页')),
@@ -3423,20 +2931,13 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                 ),
                 ShadButton.ghost(
                   size: ShadButtonSize.sm,
-                  onPressed: currentPage == 0
-                      ? null
-                      : () => setState(() => _queuePage -= 1),
+                  onPressed: currentPage == 0 ? null : () => setState(() => _queuePage -= 1),
                   child: const Icon(Icons.chevron_left_rounded, size: 17),
                 ),
-                Text(
-                  '${currentPage + 1}/$pageCount',
-                  style: TextStyle(color: cs.mutedForeground, fontSize: 11),
-                ),
+                Text('${currentPage + 1}/$pageCount', style: TextStyle(color: cs.mutedForeground, fontSize: 11)),
                 ShadButton.ghost(
                   size: ShadButtonSize.sm,
-                  onPressed: currentPage >= pageCount - 1
-                      ? null
-                      : () => setState(() => _queuePage += 1),
+                  onPressed: currentPage >= pageCount - 1 ? null : () => setState(() => _queuePage += 1),
                   child: const Icon(Icons.chevron_right_rounded, size: 17),
                 ),
               ],
@@ -3453,11 +2954,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
               ),
             ],
             if (_queueSection == _FastTransferQueueSection.issues &&
-                issueTasks.any(
-                  (entry) =>
-                      latestResults[entry.id]?.state ==
-                      FastTransferResultState.failed,
-                )) ...[
+                issueTasks.any((entry) => latestResults[entry.id]?.state == FastTransferResultState.failed)) ...[
               const SizedBox(height: 7),
               Align(
                 alignment: Alignment.centerRight,
@@ -3474,11 +2971,8 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
               child: ListView.separated(
                 itemCount: visibleTasks.length,
                 separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (context, index) => _buildQueueTaskRow(
-                  cs,
-                  visibleTasks[index],
-                  latestResults[visibleTasks[index].id],
-                ),
+                itemBuilder: (context, index) =>
+                    _buildQueueTaskRow(cs, visibleTasks[index], latestResults[visibleTasks[index].id]),
               ),
             ),
           ],
@@ -3505,25 +2999,11 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         children: [
           Row(
             children: [
-              Icon(
-                _paused
-                    ? Icons.pause_circle_outline_rounded
-                    : Icons.bar_chart_rounded,
-                size: 15,
-              ),
+              Icon(_paused ? Icons.pause_circle_outline_rounded : Icons.bar_chart_rounded, size: 15),
               const SizedBox(width: 6),
-              Text(
-                _paused ? '任务已暂停' : '任务进度',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              Text(_paused ? '任务已暂停' : '任务进度', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
               const Spacer(),
-              Text(
-                '$processed/${_entries.length}',
-                style: TextStyle(color: cs.mutedForeground, fontSize: 11),
-              ),
+              Text('$processed/${_entries.length}', style: TextStyle(color: cs.mutedForeground, fontSize: 11)),
             ],
           ),
           const SizedBox(height: 7),
@@ -3537,21 +3017,12 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           const SizedBox(height: 7),
           Row(
             children: [
-              Text(
-                '成功 ${importedTasks.length}',
-                style: const TextStyle(color: Color(0xFF22A559), fontSize: 11),
-              ),
+              Text('成功 ${importedTasks.length}', style: const TextStyle(color: Color(0xFF22A559), fontSize: 11)),
               const SizedBox(width: 14),
-              Text(
-                '已跳过 ${skippedTasks.length}',
-                style: TextStyle(color: cs.mutedForeground, fontSize: 11),
-              ),
+              Text('已跳过 ${skippedTasks.length}', style: TextStyle(color: cs.mutedForeground, fontSize: 11)),
               if (issueTasks.isNotEmpty) ...[
                 const SizedBox(width: 14),
-                Text(
-                  '出错 ${issueTasks.length}',
-                  style: TextStyle(color: cs.destructive, fontSize: 11),
-                ),
+                Text('出错 ${issueTasks.length}', style: TextStyle(color: cs.destructive, fontSize: 11)),
               ],
             ],
           ),
@@ -3560,25 +3031,16 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     );
   }
 
-  Widget _buildQueueTaskRow(
-    ShadColorScheme cs,
-    FastTransferEntry entry,
-    FastTransferResult? task,
-  ) {
+  Widget _buildQueueTaskRow(ShadColorScheme cs, FastTransferEntry entry, FastTransferResult? task) {
     final active = _activeEntryIDs.contains(entry.id);
     final cancelled = _cancelledEntryIDs.contains(entry.id);
-    final color = task == null
-        ? cs.mutedForeground
-        : _taskColor(cs, task.state);
+    final color = task == null ? cs.mutedForeground : _taskColor(cs, task.state);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
           if (active)
-            const AppLoadingIndicator(
-              size: AppLoadingSize.inline,
-              semanticsLabel: '正在秒传',
-            )
+            const AppLoadingIndicator(size: AppLoadingSize.inline, semanticsLabel: '正在秒传')
           else
             Icon(
               cancelled
@@ -3598,10 +3060,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                   entry.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                 ),
                 Text(
                   entry.path,
@@ -3613,20 +3072,14 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                   '${_formatTransferSize(entry.size)} · ${entry.md5 != null ? 'MD5 ${entry.md5}' : 'GCID ${entry.gcid ?? '-'}'}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: cs.mutedForeground.withValues(alpha: 0.75),
-                  ),
+                  style: TextStyle(fontSize: 10, color: cs.mutedForeground.withValues(alpha: 0.75)),
                 ),
                 if (task != null)
                   Text(
                     task.message,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: _taskColor(cs, task.state),
-                    ),
+                    style: TextStyle(fontSize: 10, color: _taskColor(cs, task.state)),
                   ),
               ],
             ),
@@ -3659,13 +3112,12 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     );
   }
 
-  String _queueSectionTitle(_FastTransferQueueSection section) =>
-      switch (section) {
-        _FastTransferQueueSection.pending => '主队列',
-        _FastTransferQueueSection.issues => '出错',
-        _FastTransferQueueSection.imported => '成功',
-        _FastTransferQueueSection.skipped => '已跳过',
-      };
+  String _queueSectionTitle(_FastTransferQueueSection section) => switch (section) {
+    _FastTransferQueueSection.pending => '主队列',
+    _FastTransferQueueSection.issues => '出错',
+    _FastTransferQueueSection.imported => '成功',
+    _FastTransferQueueSection.skipped => '已跳过',
+  };
 
   String _formatTransferSize(int bytes) {
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -3679,13 +3131,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     return '${value.toStringAsFixed(digits)} ${units[unit]}';
   }
 
-  Widget _queueTab(
-    ShadColorScheme cs,
-    _FastTransferQueueSection section,
-    int count,
-    IconData icon,
-    Color tint,
-  ) {
+  Widget _queueTab(ShadColorScheme cs, _FastTransferQueueSection section, int count, IconData icon, Color tint) {
     final selected = _queueSection == section;
     return Expanded(
       child: Semantics(
@@ -3710,11 +3156,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    icon,
-                    size: 14,
-                    color: selected ? tint : cs.mutedForeground,
-                  ),
+                  Icon(icon, size: 14, color: selected ? tint : cs.mutedForeground),
                   const SizedBox(width: 5),
                   Flexible(
                     child: Text(
@@ -3724,9 +3166,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                       style: TextStyle(
                         color: selected ? tint : cs.mutedForeground,
                         fontSize: 12,
-                        fontWeight: selected
-                            ? FontWeight.w600
-                            : FontWeight.w400,
+                        fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                       ),
                     ),
                   ),
@@ -3745,8 +3185,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
     // Update breadcrumb sub-page label after the current frame finishes building.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        ref.read(fastTransferSubPageProvider.notifier).state =
-            _generateMode ? '生成秒传' : '秒传任务';
+        ref.read(fastTransferSubPageProvider.notifier).state = _generateMode ? '生成秒传' : '秒传任务';
       }
     });
     if (!_generateMode && _importPhase != _FastTransferImportPhase.ready) {
@@ -3777,15 +3216,9 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
       _FastTransferQueueSection.imported => importedTasks,
       _FastTransferQueueSection.skipped => skippedTasks,
     };
-    final pageCount =
-        ((sectionTasks.length + _queuePageSize - 1) / _queuePageSize)
-            .floor()
-            .clamp(1, 1 << 31);
+    final pageCount = ((sectionTasks.length + _queuePageSize - 1) / _queuePageSize).floor().clamp(1, 1 << 31);
     final currentPage = _queuePage.clamp(0, pageCount - 1);
-    final pageStart = (currentPage * _queuePageSize).clamp(
-      0,
-      sectionTasks.length,
-    );
+    final pageStart = (currentPage * _queuePageSize).clamp(0, sectionTasks.length);
     final pageEnd = (pageStart + _queuePageSize).clamp(0, sectionTasks.length);
     final visibleTasks = sectionTasks.sublist(pageStart, pageEnd);
     final processed = _latestTaskResults.length.clamp(0, _entries.length);
@@ -3802,10 +3235,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
             const SizedBox(height: 8),
             const Align(
               alignment: Alignment.centerLeft,
-              child: AppLoadingIndicator(
-                size: AppLoadingSize.compact,
-                label: '正在执行秒传任务',
-              ),
+              child: AppLoadingIndicator(size: AppLoadingSize.compact, label: '正在执行秒传任务'),
             ),
           ],
           if (_result.isNotEmpty) ...[
@@ -3828,19 +3258,13 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const AppLoadingIndicator(
-                              size: AppLoadingSize.compact,
-                              semanticsLabel: '正在计算本地文件校验值',
-                            ),
+                            const AppLoadingIndicator(size: AppLoadingSize.compact, semanticsLabel: '正在计算本地文件校验值'),
                             const SizedBox(height: 6),
                             Text(
                               '$_generated / $_generationTotal ${_generationName.isEmpty ? '' : _generationName}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: cs.mutedForeground,
-                              ),
+                              style: TextStyle(fontSize: 12, color: cs.mutedForeground),
                             ),
                           ],
                         ),
@@ -3896,10 +3320,7 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(child: buildGenerateLeftColumn()),
-            if (_entries.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Expanded(child: buildQueueColumn()),
-            ],
+            if (_entries.isNotEmpty) ...[const SizedBox(height: 12), Expanded(child: buildQueueColumn())],
           ],
         ),
       );
@@ -3912,14 +3333,8 @@ class _FastTransferToolState extends ConsumerState<_FastTransferTool> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildImportCommandRow(cs, pendingEntries),
-          if (_meta != null && !_meta!.isEmpty) ...[
-            const SizedBox(height: 8),
-            _buildMetaInfoBar(cs),
-          ],
-          if (_entries.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Expanded(child: buildQueueColumn()),
-          ],
+          if (_meta != null && !_meta!.isEmpty) ...[const SizedBox(height: 8), _buildMetaInfoBar(cs)],
+          if (_entries.isNotEmpty) ...[const SizedBox(height: 12), Expanded(child: buildQueueColumn())],
         ],
       ),
     );
@@ -3962,16 +3377,10 @@ class _ToolSection extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: cs.foreground,
-                      ),
+                      style: TextStyle(fontWeight: FontWeight.w700, color: cs.foreground),
                     ),
                     const SizedBox(height: 3),
-                    Text(
-                      description,
-                      style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-                    ),
+                    Text(description, style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
                   ],
                 ),
               ),
@@ -4003,8 +3412,7 @@ class _MediaOrganizerTool extends ConsumerStatefulWidget {
   const _MediaOrganizerTool();
 
   @override
-  ConsumerState<_MediaOrganizerTool> createState() =>
-      _MediaOrganizerToolState();
+  ConsumerState<_MediaOrganizerTool> createState() => _MediaOrganizerToolState();
 }
 
 class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
@@ -4035,18 +3443,11 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
     if (raw is! List) return MediaCategoryRule.presets();
     return raw
         .whereType<Map>()
-        .map(
-          (value) =>
-              MediaCategoryRule.fromJson(Map<String, dynamic>.from(value)),
-        )
+        .map((value) => MediaCategoryRule.fromJson(Map<String, dynamic>.from(value)))
         .toList(growable: false);
   }
 
-  String _categoryFor(
-    TMDBMediaKind kind,
-    String language,
-    List<MediaCategoryRule> rules,
-  ) {
+  String _categoryFor(TMDBMediaKind kind, String language, List<MediaCategoryRule> rules) {
     final sameKind = rules.where((rule) => rule.mediaKind == kind).toList();
     final normalized = language.trim().toLowerCase();
     final explicit = sameKind
@@ -4062,9 +3463,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
     if (_loading || _running) return;
     final state = ref.read(mediaLibraryProvider);
     final libraryID = _selectedLibraryID ?? state.selectedLibraryID;
-    final library = state.libraries
-        .where((candidate) => candidate.id == libraryID)
-        .firstOrNull;
+    final library = state.libraries.where((candidate) => candidate.id == libraryID).firstOrNull;
     if (library == null) {
       setState(() => _status = '请先选择一个媒体库');
       return;
@@ -4081,17 +3480,13 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
       final items = libraryItems
           .where(
             (item) =>
-                item.tmdbID != null &&
-                (item.mediaKind == TMDBMediaKind.movie ||
-                    item.mediaKind == TMDBMediaKind.tv),
+                item.tmdbID != null && (item.mediaKind == TMDBMediaKind.movie || item.mediaKind == TMDBMediaKind.tv),
           )
           .toList(growable: false);
       final api = ref.read(authProvider.notifier).api;
       final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
-      final proxyHost =
-          StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
-      final proxyPort =
-          StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
+      final proxyHost = StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
+      final proxyPort = StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
       final details = <String, Map<String, dynamic>>{
         for (final entry in _tmdbDetailsCache.entries) entry.key: entry.value,
       };
@@ -4101,10 +3496,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
             '${item.mediaKind!.name}:${item.tmdbID}': item,
       }.values.toList(growable: false);
       for (var start = 0; start < prototypes.length; start += 4) {
-        final batch = prototypes.sublist(
-          start,
-          (start + 4).clamp(0, prototypes.length),
-        );
+        final batch = prototypes.sublist(start, (start + 4).clamp(0, prototypes.length));
         final values = await Future.wait(
           batch.map((item) async {
             if (apiKey.isEmpty) {
@@ -4140,14 +3532,10 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
           continue;
         }
         final detail = details['${item.mediaKind!.name}:${item.tmdbID}'];
-        final language =
-            (detail?['original_language'] ?? detail?['originalLanguage'] ?? '')
-                .toString();
+        final language = (detail?['original_language'] ?? detail?['originalLanguage'] ?? '').toString();
         final category = _categoryFor(item.mediaKind!, language, rules);
         final year = item.year.isEmpty ? '0000' : item.year;
-        final workName = safeMediaCloudName(
-          '${item.title} ($year) {tmdb-${item.tmdbID}}',
-        );
+        final workName = safeMediaCloudName('${item.title} ($year) {tmdb-${item.tmdbID}}');
         final parsed = ParsedMediaName.parse(
           item.file.name,
           directoryName: item.file.cloudPath
@@ -4168,18 +3556,8 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
           if (item.mediaKind == TMDBMediaKind.tv && parsed.season != null)
             'Season ${parsed.season!.toString().padLeft(2, '0')}',
         ];
-        final targetPath = [
-          if (source.path.isNotEmpty) _normalizeCloudPath(source.path),
-          ...folders,
-        ].join('/');
-        entries.add(
-          _MediaOrganizerEntry(
-            item: item,
-            rootID: source.rootID,
-            folders: folders,
-            targetPath: targetPath,
-          ),
-        );
+        final targetPath = [if (source.path.isNotEmpty) _normalizeCloudPath(source.path), ...folders].join('/');
+        entries.add(_MediaOrganizerEntry(item: item, rootID: source.rootID, folders: folders, targetPath: targetPath));
       }
       if (!mounted) return;
       setState(() {
@@ -4187,9 +3565,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
         _selectedLibraryID = library.id;
         _libraryName = library.name;
         _resourceCount = libraryItems.length;
-        _directoryCount = libraryItems
-            .where((item) => item.file.isDirectory)
-            .length;
+        _directoryCount = libraryItems.where((item) => item.file.isDirectory).length;
         _unmatchedCount = libraryItems.length - items.length;
         _outsideSourceCount = outsideSourceCount;
         _failures.clear();
@@ -4211,30 +3587,18 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
     }
   }
 
-  MediaLibrarySource? _sourceForItem(
-    MediaLibraryItem item,
-    MediaLibraryDefinition library,
-  ) {
+  MediaLibrarySource? _sourceForItem(MediaLibraryItem item, MediaLibraryDefinition library) {
     final itemPath = _normalizeCloudPath(item.file.cloudPath);
-    final matches =
-        library.sources.where((source) {
-          final sourcePath = _normalizeCloudPath(source.path);
-          return source.rootID == item.file.parentID ||
-              (sourcePath.isNotEmpty &&
-                  (itemPath == sourcePath ||
-                      itemPath.startsWith('$sourcePath/')));
-        }).toList()..sort(
-          (a, b) => _normalizeCloudPath(
-            b.path,
-          ).length.compareTo(_normalizeCloudPath(a.path).length),
-        );
+    final matches = library.sources.where((source) {
+      final sourcePath = _normalizeCloudPath(source.path);
+      return source.rootID == item.file.parentID ||
+          (sourcePath.isNotEmpty && (itemPath == sourcePath || itemPath.startsWith('$sourcePath/')));
+    }).toList()..sort((a, b) => _normalizeCloudPath(b.path).length.compareTo(_normalizeCloudPath(a.path).length));
     return matches.firstOrNull;
   }
 
-  String _normalizeCloudPath(String path) => path
-      .replaceAll(RegExp(r'\\+'), '/')
-      .replaceAll(RegExp(r'/+'), '/')
-      .replaceFirst(RegExp(r'/$'), '');
+  String _normalizeCloudPath(String path) =>
+      path.replaceAll(RegExp(r'\\+'), '/').replaceAll(RegExp(r'/+'), '/').replaceFirst(RegExp(r'/$'), '');
 
   Future<void> _selectLibrary(String libraryID) async {
     if (_running || _loading) return;
@@ -4303,22 +3667,16 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
     if (cached != null) return cached;
     final api = ref.read(authProvider.notifier).api;
     final response = await api.fsFiles(parentID: parentID, pageSize: 1000);
-    final existing = _extractFiles(
-      response,
-    ).where((file) => file.isDirectory && file.name == name).firstOrNull;
+    final existing = _extractFiles(response).where((file) => file.isDirectory && file.name == name).firstOrNull;
     if (existing != null) {
       _folderIDs[cacheKey] = existing.id;
       return existing.id;
     }
     final created = await api.fsCreateDir(name, parentID: parentID);
-    var id = _extractFiles(
-      created,
-    ).where((file) => file.isDirectory && file.name == name).firstOrNull?.id;
+    var id = _extractFiles(created).where((file) => file.isDirectory && file.name == name).firstOrNull?.id;
     if (id == null || id.isEmpty) {
       final refreshed = await api.fsFiles(parentID: parentID, pageSize: 1000);
-      id = _extractFiles(
-        refreshed,
-      ).where((file) => file.isDirectory && file.name == name).firstOrNull?.id;
+      id = _extractFiles(refreshed).where((file) => file.isDirectory && file.name == name).firstOrNull?.id;
     }
     id ??= _findID(created);
     if (id == null || id.isEmpty) throw Exception('无法获取目录 ID：$name');
@@ -4327,9 +3685,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
   }
 
   Future<void> _confirmRun() async {
-    final selected = _entries
-        .where((entry) => _selectedKeys.contains(_key(entry.item)))
-        .toList(growable: false);
+    final selected = _entries.where((entry) => _selectedKeys.contains(_key(entry.item))).toList(growable: false);
     if (selected.isEmpty || _running) return;
     final confirmed = await showShadDialog<bool>(
       context: context,
@@ -4337,14 +3693,8 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
         title: const Text('确认整理文件'),
         description: Text('将移动 ${selected.length} 个媒体文件，原文件路径会发生变化。'),
         actions: [
-          ShadButton.outline(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('取消'),
-          ),
-          ShadButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('开始整理'),
-          ),
+          ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('取消')),
+          ShadButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('开始整理')),
         ],
       ),
     );
@@ -4376,14 +3726,8 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
         final destinationKey = parentID ?? '@root';
         var filesByName = _destinationFiles[destinationKey];
         if (filesByName == null) {
-          final response = await api.fsFiles(
-            parentID: parentID,
-            pageSize: 1000,
-          );
-          filesByName = {
-            for (final file in _extractFiles(response))
-              file.name.toLowerCase(): file.id,
-          };
+          final response = await api.fsFiles(parentID: parentID, pageSize: 1000);
+          filesByName = {for (final file in _extractFiles(response)) file.name.toLowerCase(): file.id};
           _destinationFiles[destinationKey] = filesByName;
         }
         final existingID = filesByName[entry.item.file.name.toLowerCase()];
@@ -4395,34 +3739,25 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
         }
         filesByName[entry.item.file.name.toLowerCase()] = entry.item.id;
         final targetPath = '${entry.targetPath}/${entry.item.file.name}';
-        movedFiles.add(
-          entry.item.file.copyWith(parentID: parentID, cloudPath: targetPath),
-        );
+        movedFiles.add(entry.item.file.copyWith(parentID: parentID, cloudPath: targetPath));
         movedKeys.add(_key(entry.item));
         if (mounted) setState(() => _completed += 1);
       } catch (error) {
         if (mounted) {
           setState(() {
             _failed += 1;
-            _failures[_key(entry.item)] = error.toString().replaceFirst(
-              'Exception: ',
-              '',
-            );
+            _failures[_key(entry.item)] = error.toString().replaceFirst('Exception: ', '');
           });
         }
       }
     }
     if (movedFiles.isNotEmpty) {
-      await ref
-          .read(mediaLibraryProvider.notifier)
-          .synchronizeRenamedFiles(movedFiles);
+      await ref.read(mediaLibraryProvider.notifier).synchronizeRenamedFiles(movedFiles);
     }
     if (!mounted) return;
     setState(() {
       _running = false;
-      _entries = _entries
-          .where((entry) => !movedKeys.contains(_key(entry.item)))
-          .toList(growable: false);
+      _entries = _entries.where((entry) => !movedKeys.contains(_key(entry.item))).toList(growable: false);
       _selectedKeys
         ..clear()
         ..addAll(_failures.keys);
@@ -4439,8 +3774,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final mediaState = ref.watch(mediaLibraryProvider);
-    final selectedLibraryID =
-        mediaState.libraries.any((library) => library.id == _selectedLibraryID)
+    final selectedLibraryID = mediaState.libraries.any((library) => library.id == _selectedLibraryID)
         ? _selectedLibraryID
         : mediaState.selectedLibraryID;
     final selectedCount = _selectedKeys.length;
@@ -4453,9 +3787,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
             children: [
               _ToolSection(
                 title: '媒体库整理',
-                description: _status.isEmpty
-                    ? '选择一个媒体库，预览并整理该库全部已识别文件和文件夹。'
-                    : _status,
+                description: _status.isEmpty ? '选择一个媒体库，预览并整理该库全部已识别文件和文件夹。' : _status,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -4465,29 +3797,14 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          _OrganizerMetric(
-                            icon: Icons.video_library_outlined,
-                            label: _libraryName!,
-                          ),
-                          _OrganizerMetric(
-                            icon: Icons.inventory_2_outlined,
-                            label: '$_resourceCount 个资源',
-                          ),
+                          _OrganizerMetric(icon: Icons.video_library_outlined, label: _libraryName!),
+                          _OrganizerMetric(icon: Icons.inventory_2_outlined, label: '$_resourceCount 个资源'),
                           if (_directoryCount > 0)
-                            _OrganizerMetric(
-                              icon: Icons.folder_outlined,
-                              label: '$_directoryCount 个文件夹',
-                            ),
+                            _OrganizerMetric(icon: Icons.folder_outlined, label: '$_directoryCount 个文件夹'),
                           if (_unmatchedCount > 0)
-                            _OrganizerMetric(
-                              icon: Icons.help_outline_rounded,
-                              label: '$_unmatchedCount 个未识别',
-                            ),
+                            _OrganizerMetric(icon: Icons.help_outline_rounded, label: '$_unmatchedCount 个未识别'),
                           if (_outsideSourceCount > 0)
-                            _OrganizerMetric(
-                              icon: Icons.warning_amber_rounded,
-                              label: '$_outsideSourceCount 个来源不明确',
-                            ),
+                            _OrganizerMetric(icon: Icons.warning_amber_rounded, label: '$_outsideSourceCount 个来源不明确'),
                         ],
                       ),
                     ],
@@ -4500,25 +3817,15 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                         ShadSelect<String>(
                           key: ValueKey(selectedLibraryID),
                           initialValue: selectedLibraryID,
-                          enabled:
-                              !_loading &&
-                              !_running &&
-                              mediaState.libraries.isNotEmpty,
+                          enabled: !_loading && !_running && mediaState.libraries.isNotEmpty,
                           minWidth: compact ? 190 : 240,
                           placeholder: const Text('选择媒体库'),
                           selectedOptionBuilder: (context, value) => Text(
-                            mediaState.libraries
-                                    .where((library) => library.id == value)
-                                    .firstOrNull
-                                    ?.name ??
-                                '选择媒体库',
+                            mediaState.libraries.where((library) => library.id == value).firstOrNull?.name ?? '选择媒体库',
                           ),
                           options: [
                             for (final library in mediaState.libraries)
-                              ShadOption(
-                                value: library.id,
-                                child: Text(library.name),
-                              ),
+                              ShadOption(value: library.id, child: Text(library.name)),
                           ],
                           onChanged: (value) {
                             if (value != null) unawaited(_selectLibrary(value));
@@ -4527,27 +3834,19 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                         if (selectedLibraryID != null)
                           ShadButton.outline(
                             onPressed: _loading || _running ? null : _prepare,
-                            leading: const Icon(
-                              Icons.refresh_rounded,
-                              size: 16,
-                            ),
+                            leading: const Icon(Icons.refresh_rounded, size: 16),
                             child: Text(_entries.isEmpty ? '生成预览' : '刷新预览'),
                           ),
                         if (_running)
                           ShadButton.outline(
-                            onPressed: _stopRequested
-                                ? null
-                                : () => setState(() => _stopRequested = true),
+                            onPressed: _stopRequested ? null : () => setState(() => _stopRequested = true),
                             leading: const Icon(Icons.stop_rounded, size: 16),
                             child: const Text('停止'),
                           )
                         else
                           ShadButton(
                             onPressed: selectedCount == 0 ? null : _confirmRun,
-                            leading: const Icon(
-                              Icons.drive_file_move_rounded,
-                              size: 16,
-                            ),
+                            leading: const Icon(Icons.drive_file_move_rounded, size: 16),
                             child: Text('整理 $selectedCount'),
                           ),
                       ],
@@ -4565,17 +3864,13 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                         : () => setState(() {
                             _selectedKeys
                               ..clear()
-                              ..addAll(
-                                _entries.map((entry) => _key(entry.item)),
-                              );
+                              ..addAll(_entries.map((entry) => _key(entry.item)));
                           }),
                     child: const Text('全选'),
                   ),
                   ShadButton.ghost(
                     size: ShadButtonSize.sm,
-                    onPressed: _running
-                        ? null
-                        : () => setState(_selectedKeys.clear),
+                    onPressed: _running ? null : () => setState(_selectedKeys.clear),
                     child: const Text('全不选'),
                   ),
                   const Spacer(),
@@ -4595,10 +3890,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                   ),
                   child: _loading
                       ? const Center(
-                          child: AppLoadingIndicator(
-                            size: AppLoadingSize.page,
-                            label: '正在生成整理预览',
-                          ),
+                          child: AppLoadingIndicator(size: AppLoadingSize.page, label: '正在生成整理预览'),
                         )
                       : _entries.isEmpty
                       ? Center(
@@ -4614,9 +3906,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                               ),
                               const SizedBox(height: 10),
                               Text(
-                                selectedLibraryID == null
-                                    ? '选择一个媒体库开始预览'
-                                    : '当前媒体库没有待整理的已识别资源',
+                                selectedLibraryID == null ? '选择一个媒体库开始预览' : '当前媒体库没有待整理的已识别资源',
                                 style: TextStyle(color: cs.mutedForeground),
                               ),
                             ],
@@ -4624,8 +3914,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                         )
                       : ListView.separated(
                           itemCount: _entries.length,
-                          separatorBuilder: (_, _) =>
-                              Divider(height: 1, color: cs.border),
+                          separatorBuilder: (_, _) => Divider(height: 1, color: cs.border),
                           itemBuilder: (context, index) {
                             final entry = _entries[index];
                             final key = _key(entry.item);
@@ -4640,19 +3929,11 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                                   _selectedKeys.remove(key);
                                 }
                               }),
-                              title: Text(
-                                entry.item.file.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                              title: Text(entry.item.file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
                               subtitle: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    entry.targetPath,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
+                                  Text(entry.targetPath, maxLines: 2, overflow: TextOverflow.ellipsis),
                                   if (failure != null)
                                     Text(
                                       failure,
@@ -4665,8 +3946,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
                               secondary: Icon(
                                 entry.item.file.isDirectory
                                     ? Icons.folder_rounded
-                                    : entry.item.mediaKind ==
-                                          TMDBMediaKind.movie
+                                    : entry.item.mediaKind == TMDBMediaKind.movie
                                     ? Icons.movie_rounded
                                     : Icons.tv_rounded,
                                 color: cs.primary,
@@ -4719,8 +3999,7 @@ class _CategoryManagementTool extends StatefulWidget {
   const _CategoryManagementTool();
 
   @override
-  State<_CategoryManagementTool> createState() =>
-      _CategoryManagementToolState();
+  State<_CategoryManagementTool> createState() => _CategoryManagementToolState();
 }
 
 class _CategoryManagementToolState extends State<_CategoryManagementTool> {
@@ -4731,22 +4010,13 @@ class _CategoryManagementToolState extends State<_CategoryManagementTool> {
     super.initState();
     final raw = StorageManager.get<dynamic>(StorageKeys.mediaCategoryRules);
     _rules = raw is List
-        ? raw
-              .whereType<Map>()
-              .map(
-                (value) => MediaCategoryRule.fromJson(
-                  Map<String, dynamic>.from(value),
-                ),
-              )
-              .toList()
+        ? raw.whereType<Map>().map((value) => MediaCategoryRule.fromJson(Map<String, dynamic>.from(value))).toList()
         : MediaCategoryRule.presets();
     if (raw is! List) _save();
   }
 
-  Future<void> _save() => StorageManager.set(
-    StorageKeys.mediaCategoryRules,
-    _rules.map((rule) => rule.toJson()).toList(),
-  );
+  Future<void> _save() =>
+      StorageManager.set(StorageKeys.mediaCategoryRules, _rules.map((rule) => rule.toJson()).toList());
 
   Future<void> _restorePresets() async {
     setState(() => _rules = MediaCategoryRule.presets());
@@ -4814,19 +4084,9 @@ class _CategoryManagementToolState extends State<_CategoryManagementTool> {
           child: const SizedBox.shrink(),
         ),
         const SizedBox(height: 16),
-        _ruleGroup(
-          title: '电影分类',
-          icon: Icons.movie_rounded,
-          kind: TMDBMediaKind.movie,
-          color: cs.primary,
-        ),
+        _ruleGroup(title: '电影分类', icon: Icons.movie_rounded, kind: TMDBMediaKind.movie, color: cs.primary),
         const SizedBox(height: 16),
-        _ruleGroup(
-          title: '剧集分类',
-          icon: Icons.tv_rounded,
-          kind: TMDBMediaKind.tv,
-          color: cs.foreground,
-        ),
+        _ruleGroup(title: '剧集分类', icon: Icons.tv_rounded, kind: TMDBMediaKind.tv, color: cs.foreground),
       ],
     );
   }
@@ -4847,9 +4107,7 @@ class _CategoryManagementToolState extends State<_CategoryManagementTool> {
             ? const SizedBox.shrink()
             : Container(
                 decoration: BoxDecoration(
-                  border: Border.all(
-                    color: ShadTheme.of(context).colorScheme.border,
-                  ),
+                  border: Border.all(color: ShadTheme.of(context).colorScheme.border),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Column(
@@ -4903,9 +4161,7 @@ class _CategoryRuleRow extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: cs.border.withValues(alpha: 0.7)),
-        ),
+        border: Border(bottom: BorderSide(color: cs.border.withValues(alpha: 0.7))),
       ),
       child: Row(
         children: [
@@ -4917,16 +4173,11 @@ class _CategoryRuleRow extends StatelessWidget {
               children: [
                 Text(
                   rule.name,
-                  style: TextStyle(
-                    color: cs.foreground,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: TextStyle(color: cs.foreground, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  rule.isFallback
-                      ? '未设置原始语言的默认分类'
-                      : '语言 ${rule.languages.join(', ')}',
+                  rule.isFallback ? '未设置原始语言的默认分类' : '语言 ${rule.languages.join(', ')}',
                   style: TextStyle(fontSize: 12, color: cs.mutedForeground),
                 ),
               ],
@@ -4934,21 +4185,13 @@ class _CategoryRuleRow extends StatelessWidget {
           ),
           if (rule.isFallback) const ShadBadge(child: Text('默认')),
           const SizedBox(width: 6),
-          _CategoryIconButton(
-            tooltip: '上移',
-            icon: Icons.arrow_upward_rounded,
-            onPressed: canMoveUp ? onMoveUp : null,
-          ),
+          _CategoryIconButton(tooltip: '上移', icon: Icons.arrow_upward_rounded, onPressed: canMoveUp ? onMoveUp : null),
           _CategoryIconButton(
             tooltip: '下移',
             icon: Icons.arrow_downward_rounded,
             onPressed: canMoveDown ? onMoveDown : null,
           ),
-          _CategoryIconButton(
-            tooltip: '编辑',
-            icon: Icons.edit_outlined,
-            onPressed: onEdit,
-          ),
+          _CategoryIconButton(tooltip: '编辑', icon: Icons.edit_outlined, onPressed: onEdit),
           _CategoryIconButton(
             tooltip: '删除',
             icon: Icons.delete_outline_rounded,
@@ -4982,11 +4225,7 @@ class _CategoryIconButton extends StatelessWidget {
       child: ShadButton.ghost(
         size: ShadButtonSize.sm,
         onPressed: onPressed,
-        child: Icon(
-          icon,
-          size: 16,
-          color: destructive ? cs.destructive : cs.mutedForeground,
-        ),
+        child: Icon(icon, size: 16, color: destructive ? cs.destructive : cs.mutedForeground),
       ),
     );
   }
@@ -5035,9 +4274,7 @@ class _CategoryRuleDialogState extends State<_CategoryRuleDialog> {
         .toList();
     Navigator.of(context).pop(
       MediaCategoryRule(
-        id:
-            widget.initialRule?.id ??
-            DateTime.now().microsecondsSinceEpoch.toString(),
+        id: widget.initialRule?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
         name: name,
         mediaKind: _kind,
         languages: languages,
@@ -5048,51 +4285,585 @@ class _CategoryRuleDialogState extends State<_CategoryRuleDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return ShadDialog(
-      title: Text(widget.initialRule == null ? '新增分类' : '编辑分类'),
-      actions: [
-        ShadButton.outline(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        ShadButton(onPressed: _save, child: const Text('保存')),
-      ],
-      child: SizedBox(
-        width: 400,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ShadInput(controller: _name, placeholder: const Text('分类名称')),
-            const SizedBox(height: 10),
-            ShadSelect<TMDBMediaKind>(
-              initialValue: _kind,
-              selectedOptionBuilder: (context, value) => Text(value.title),
-              options: const [
-                ShadOption(value: TMDBMediaKind.movie, child: Text('电影')),
-                ShadOption(value: TMDBMediaKind.tv, child: Text('剧集')),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => _kind = value);
-              },
-            ),
-            const SizedBox(height: 10),
-            ShadInput(
-              controller: _languages,
-              enabled: !_isFallback,
-              placeholder: const Text('原始语言代码，以英文逗号分隔，例如 zh, en'),
-            ),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: ShadCheckbox(
-                value: _isFallback,
-                label: const Text('默认分类'),
-                sublabel: const Text('在其它分类均未匹配时使用'),
-                onChanged: (value) => setState(() => _isFallback = value),
+    return Material(
+      type: MaterialType.transparency,
+      child: ShadDialog(
+        title: Text(widget.initialRule == null ? '新增分类' : '编辑分类'),
+        actions: [
+          ShadButton.outline(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+          ShadButton(onPressed: _save, child: const Text('保存')),
+        ],
+        child: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ShadInput(controller: _name, placeholder: const Text('分类名称')),
+              const SizedBox(height: 10),
+              ShadSelect<TMDBMediaKind>(
+                initialValue: _kind,
+                selectedOptionBuilder: (context, value) => Text(value.title),
+                options: const [
+                  ShadOption(value: TMDBMediaKind.movie, child: Text('电影')),
+                  ShadOption(value: TMDBMediaKind.tv, child: Text('剧集')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setState(() => _kind = value);
+                },
               ),
-            ),
-          ],
+              const SizedBox(height: 10),
+              ShadInput(
+                controller: _languages,
+                enabled: !_isFallback,
+                placeholder: const Text('原始语言代码，以英文逗号分隔，例如 zh, en'),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: ShadCheckbox(
+                  value: _isFallback,
+                  label: const Text('默认分类'),
+                  sublabel: const Text('在其它分类均未匹配时使用'),
+                  onChanged: (value) => setState(() => _isFallback = value),
+                ),
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+/// 扫描结果数据结构
+class _ScanFolderInfo {
+  final CloudFile file;
+  final bool isEmptyAfterCandidates;
+
+  const _ScanFolderInfo({required this.file, required this.isEmptyAfterCandidates});
+}
+
+/// 重复文件分组
+class _DuplicateFileGroup {
+  final String gcid;
+  final List<CloudFile> files;
+
+  const _DuplicateFileGroup({required this.gcid, required this.files});
+}
+
+/// 相似文件夹分组
+class _ScanSimilarFolderGroup {
+  final String key;
+  final List<CloudFile> folders;
+
+  const _ScanSimilarFolderGroup({required this.key, required this.folders});
+}
+
+/// 通用云盘目录选择弹窗
+class _CloudFolderPicker extends ConsumerStatefulWidget {
+  final String? initialID;
+  final String title;
+
+  const _CloudFolderPicker({this.initialID, this.title = '选择云盘目录'});
+
+  @override
+  ConsumerState<_CloudFolderPicker> createState() => _CloudFolderPickerState();
+}
+
+class _CloudFolderPickerState extends ConsumerState<_CloudFolderPicker> {
+  final _path = <CloudFile>[];
+  var _folders = <CloudFile>[];
+  var _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  String? get _parentID => _path.isEmpty ? null : _path.last.id;
+
+  String get _label => _path.isEmpty ? '云盘根目录' : _path.map((f) => f.name).join(' / ');
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final response = await ref.read(authProvider.notifier).api.fsFiles(parentID: _parentID, pageSize: 1000);
+      if (!mounted) return;
+      final folders = <CloudFile>[];
+      void visit(dynamic node) {
+        if (node is Map) {
+          try {
+            final file = CloudFile.fromJson(Map<String, dynamic>.from(node));
+            if (file.isDirectory) folders.add(file);
+          } catch (_) {}
+          for (final child in node.values) visit(child);
+        } else if (node is List) {
+          for (final child in node) visit(child);
+        }
+      }
+
+      visit(response);
+      setState(
+        () =>
+            _folders = {for (final f in folders) f.id: f}.values.toList()
+              ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())),
+      );
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Material(
+      type: MaterialType.transparency,
+      child: Builder(
+        builder: (ctx) {
+          return ShadDialog(
+            title: Text(widget.title),
+            description: Text('当前：$_label'),
+            actions: [
+              ShadButton.outline(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+              ShadButton(
+                onPressed: _loading ? null : () => Navigator.of(context).pop('$_label|${_parentID ?? ''}'),
+                leading: const Icon(Icons.check_rounded, size: 16),
+                child: const Text('使用此目录'),
+              ),
+            ],
+            child: SizedBox(
+              width: 480,
+              height: 320,
+              child: _loading
+                  ? const Center(child: AppLoadingIndicator(size: AppLoadingSize.compact))
+                  : _error != null
+                  ? Center(
+                      child: Text('加载失败：$_error', style: TextStyle(color: cs.destructive, fontSize: 12)),
+                    )
+                  : Column(
+                      children: [
+                        Row(
+                          children: [
+                            ShadButton.ghost(
+                              size: ShadButtonSize.sm,
+                              onPressed: _path.isEmpty
+                                  ? null
+                                  : () {
+                                      setState(() => _path.removeLast());
+                                      _load();
+                                    },
+                              leading: const Icon(Icons.arrow_back_rounded, size: 16),
+                              child: const Text('返回上级'),
+                            ),
+                            const Spacer(),
+                            if (_path.isNotEmpty) ...[
+                              ShadButton.ghost(
+                                size: ShadButtonSize.sm,
+                                onPressed: () {
+                                  _path.clear();
+                                  _load();
+                                },
+                                leading: const Icon(Icons.home_rounded, size: 14),
+                                child: const Text('根目录'),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const Divider(height: 1),
+                        Expanded(
+                          child: _folders.isEmpty
+                              ? Center(
+                                  child: Text('此目录下没有子文件夹', style: TextStyle(color: cs.mutedForeground, fontSize: 12)),
+                                )
+                              : ListView.builder(
+                                  itemCount: _folders.length,
+                                  itemBuilder: (_, i) => ListTile(
+                                    dense: true,
+                                    leading: Icon(Icons.folder_rounded, size: 18, color: cs.foreground),
+                                    title: Text(_folders[i].name, style: const TextStyle(fontSize: 13)),
+                                    trailing: const Icon(Icons.chevron_right_rounded, size: 16),
+                                    onTap: () {
+                                      _path.add(_folders[i]);
+                                      _load();
+                                    },
+                                  ),
+                                ),
+                        ),
+                      ],
+                    ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// 空文件夹扫描工具
+class _EmptyFolderScanTool extends ConsumerStatefulWidget {
+  const _EmptyFolderScanTool();
+
+  @override
+  ConsumerState<_EmptyFolderScanTool> createState() => _EmptyFolderScanToolState();
+}
+
+class _EmptyFolderScanToolState extends ConsumerState<_EmptyFolderScanTool> {
+  String? _selectedPath;
+  bool _scanning = false;
+  bool _scanningFailed = false;
+  int _foldersScanned = 0;
+  int _filesScanned = 0;
+  List<CloudFile> _emptyFolders = [];
+  String _scope = 'wholeDrive'; // wholeDrive, currentFolder, customFolder
+
+  String get _pathLabel {
+    if (_selectedPath != null) return _selectedPath!;
+    final fileState = ref.read(fileProvider);
+    return fileState.folderPath.isEmpty ? '云盘根目录' : '/${fileState.folderPath.map((f) => f.name).join('/')}';
+  }
+
+  Future<void> _startScan() async {
+    if (_scanning) return;
+    setState(() { _scanning = true; _scanningFailed = false; _foldersScanned = 0; _filesScanned = 0; _emptyFolders = []; });
+    try {
+      final api = ref.read(authProvider.notifier).api;
+      final fileState = ref.read(fileProvider);
+      final startID = _scope == 'currentFolder' && fileState.folderPath.isNotEmpty ? fileState.folderPath.last.id : null;
+      final queue = <CloudFile>[];
+      // 初始目录
+      if (startID != null) {
+        final response = await api.fsFiles(parentID: startID, page: 0, pageSize: 5000);
+        final children = _extractFiles(response);
+        for (final child in children.where((c) => c.isDirectory)) queue.add(child);
+      } else {
+        final response = await api.fsFiles(parentID: null, page: 0, pageSize: 5000);
+        final children = _extractFiles(response);
+        setState(() { _foldersScanned += 1; });
+        for (final child in children.where((c) => c.isDirectory)) queue.add(child);
+      }
+      while (queue.isNotEmpty) {
+        if (!mounted) return;
+        final folder = queue.removeLast();
+        final response = await api.fsFiles(parentID: folder.id, page: 0, pageSize: 5000);
+        final children = _extractFiles(response);
+        setState(() { _foldersScanned += 1; _filesScanned += children.where((c) => !c.isDirectory).length; });
+        if (children.isEmpty) {
+          setState(() => _emptyFolders = [..._emptyFolders, folder]);
+        } else {
+          for (final child in children.where((c) => c.isDirectory)) queue.add(child);
+        }
+      }
+      setState(() => _scanning = false);
+    } catch (e) {
+      setState(() { _scanning = false; _scanningFailed = true; });
+    }
+  }
+
+  List<CloudFile> _extractFiles(Map<String, dynamic> value) {
+    final files = <CloudFile>[];
+    void visit(dynamic node) {
+      if (node is Map) {
+        try { files.add(CloudFile.fromJson(Map<String, dynamic>.from(node))); } catch (_) {}
+        for (final child in node.values) visit(child);
+      } else if (node is List) { for (final child in node) visit(child); }
+    }
+    visit(value);
+    return {for (final f in files) f.id: f}.values.toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ToolSection(
+            title: '空文件夹扫描',
+            description: '扫描指定目录中不包含任何文件的空文件夹。',
+            trailing: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ShadButton(
+                  onPressed: _scanning ? null : _startScan,
+                  leading: _scanning
+                      ? const AppLoadingIndicator(size: AppLoadingSize.inline)
+                      : const Icon(Icons.search_rounded, size: 16),
+                  child: Text(_scanning ? '扫描中…' : '开始扫描'),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 8),
+                Text('扫描范围: $_pathLabel', style: TextStyle(fontSize: 12)),
+                if (_scanning || _foldersScanned > 0) ...[
+                  const SizedBox(height: 8),
+                  Text('已扫描 $_foldersScanned 个文件夹, $_filesScanned 个文件', style: TextStyle(fontSize: 12)),
+                ],
+                if (_emptyFolders.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text('发现 ${_emptyFolders.length} 个空文件夹', style: TextStyle(fontSize: 12)),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: _emptyFolders.length,
+                      itemBuilder: (_, i) => ListTile(
+                        leading: const Icon(Icons.folder_off_rounded, size: 16),
+                        title: Text(_emptyFolders[i].name, style: const TextStyle(fontSize: 13)),
+                        subtitle: _emptyFolders[i].cloudPath.isNotEmpty
+                            ? Text(_emptyFolders[i].cloudPath, style: TextStyle(fontSize: 11))
+                            : null,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 重复文件扫描工具
+class _DuplicateFileScanTool extends ConsumerStatefulWidget {
+  const _DuplicateFileScanTool();
+
+  @override
+  ConsumerState<_DuplicateFileScanTool> createState() => _DuplicateFileScanToolState();
+}
+
+class _DuplicateFileScanToolState extends ConsumerState<_DuplicateFileScanTool> {
+  String? _selectedPath;
+  bool _scanning = false;
+  int _filesScanned = 0;
+  List<List<CloudFile>> _duplicates = [];
+
+  String get _pathLabel {
+    if (_selectedPath != null) return _selectedPath!;
+    final fileState = ref.read(fileProvider);
+    return fileState.folderPath.isEmpty ? '云盘根目录' : '/${fileState.folderPath.map((f) => f.name).join('/')}';
+  }
+
+  List<CloudFile> _extractFiles(Map<String, dynamic> value) {
+    final files = <CloudFile>[];
+    void visit(dynamic node) {
+      if (node is Map) {
+        try { files.add(CloudFile.fromJson(Map<String, dynamic>.from(node))); } catch (_) {}
+        for (final child in node.values) visit(child);
+      } else if (node is List) { for (final child in node) visit(child); }
+    }
+    visit(value);
+    return {for (final f in files) f.id: f}.values.toList();
+  }
+
+  Future<void> _startScan() async {
+    if (_scanning) return;
+    setState(() { _scanning = true; _filesScanned = 0; _duplicates = []; });
+    try {
+      final all = await FileMetadataCache.allCachedFolderChildren();
+      setState(() => _filesScanned = all.length);
+      final byGcid = <String, List<CloudFile>>{};
+      for (final f in all) {
+        if (f.gcid != null && f.gcid!.isNotEmpty) {
+          byGcid.putIfAbsent(f.gcid!, () => []).add(f);
+        }
+      }
+      final dupes = byGcid.values
+          .where((g) => g.length > 1)
+          .map((g) => g..sort((a, b) => a.cloudPath.compareTo(b.cloudPath)))
+          .toList();
+      setState(() { _duplicates = dupes; _scanning = false; });
+    } catch (e) {
+      setState(() { _scanning = false; });
+    }
+  }
+
+  Future<void> _pickDirectory() async {
+    final theme = ShadTheme.of(context);
+    final selection = await showShadDialog<String>(
+      context: context,
+      builder: (_) => Material(
+        type: MaterialType.transparency,
+        child: _CloudFolderPicker(title: '选择重复文件扫描目录'),
+      ),
+    );
+    if (selection != null && mounted) {
+      final parts = selection.split('|');
+      setState(() => _selectedPath = parts[0]);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ToolSection(
+            title: '重复文件扫描',
+            description: '扫描指定目录中名称和大小相同的重复文件。',
+            trailing: Row(
+              children: [
+                ShadButton.outline(
+                  onPressed: _pickDirectory,
+                  leading: const Icon(Icons.folder_open_rounded, size: 16),
+                  child: Text(_selectedPath ?? '选择目录'),
+                ),
+                const SizedBox(width: 8),
+                ShadButton(
+                  onPressed: _selectedPath == null || _scanning ? null : _startScan,
+                  leading: _scanning
+                      ? const AppLoadingIndicator(size: AppLoadingSize.inline)
+                      : const Icon(Icons.search_rounded, size: 16),
+                  child: Text(_scanning ? '扫描中…' : '开始扫描'),
+                ),
+              ],
+            ),
+            child: const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 相似文件夹扫描工具
+class _SimilarFolderScanTool extends ConsumerStatefulWidget {
+  const _SimilarFolderScanTool();
+
+  @override
+  ConsumerState<_SimilarFolderScanTool> createState() => _SimilarFolderScanToolState();
+}
+
+class _SimilarFolderScanToolState extends ConsumerState<_SimilarFolderScanTool> {
+  String? _selectedPath;
+  bool _scanning = false;
+  int _foldersScanned = 0;
+  List<List<CloudFile>> _similarGroups = [];
+
+  String get _pathLabel {
+    if (_selectedPath != null) return _selectedPath!;
+    final fileState = ref.read(fileProvider);
+    return fileState.folderPath.isEmpty ? '云盘根目录' : '/${fileState.folderPath.map((f) => f.name).join('/')}';
+  }
+
+  List<CloudFile> _extractFiles(Map<String, dynamic> value) {
+    final files = <CloudFile>[];
+    void visit(dynamic node) {
+      if (node is Map) {
+        try { files.add(CloudFile.fromJson(Map<String, dynamic>.from(node))); } catch (_) {}
+        for (final child in node.values) visit(child);
+      } else if (node is List) { for (final child in node) visit(child); }
+    }
+    visit(value);
+    return {for (final f in files) f.id: f}.values.toList();
+  }
+
+  String _normalizedFolderName(String value) {
+    var n = value.toLowerCase().trim();
+    n = n.replaceAll(RegExp(r'(?:[\s._-]*(?:copy|duplicate|backup|副本|复制|拷贝|备份))(?:[\s._-]*\d+)?$', caseSensitive: false), '');
+    n = n.replaceAll(RegExp(r'(?:[（(\[]\s*\d{1,3}\s*[）)\]])$'), '');
+    return n.replaceAll(RegExp(r'[\s._()\[\]{}-]+'), '');
+  }
+
+  Future<void> _startScan() async {
+    if (_scanning) return;
+    setState(() { _scanning = true; _foldersScanned = 0; _similarGroups = []; });
+    try {
+      final api = ref.read(authProvider.notifier).api;
+      final allDirs = <CloudFile>[];
+      final queue = <CloudFile>[];
+      final rootResp = await api.fsFiles(parentID: null, page: 0, pageSize: 5000);
+      for (final child in _extractFiles(rootResp).where((c) => c.isDirectory)) queue.add(child);
+      while (queue.isNotEmpty) {
+        if (!mounted) return;
+        final folder = queue.removeLast();
+        allDirs.add(folder);
+        setState(() => _foldersScanned += 1);
+        final resp = await api.fsFiles(parentID: folder.id, page: 0, pageSize: 5000);
+        for (final child in _extractFiles(resp).where((c) => c.isDirectory)) queue.add(child);
+      }
+      final byKey = <String, List<CloudFile>>{};
+      for (final d in allDirs) {
+        final key = _normalizedFolderName(d.name);
+        if (key.isNotEmpty) byKey.putIfAbsent(key, () => []).add(d);
+      }
+      setState(() { _similarGroups = byKey.values.where((g) => g.length > 1).toList(); _scanning = false; });
+    } catch (e) {
+      setState(() { _scanning = false; });
+    }
+  }
+
+  Future<void> _pickDirectory() async {
+    final selection = await showShadDialog<String>(
+      context: context,
+      builder: (_) => const _CloudFolderPicker(title: '选择相似文件夹扫描目录'),
+    );
+    if (selection != null && mounted) {
+      final parts = selection.split('|');
+      setState(() => _selectedPath = parts[0]);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ToolSection(
+            title: '相似文件夹扫描',
+            description: '扫描指定目录中名称相似的文件夹（可能需合并）。',
+            trailing: Row(children: [
+              ShadButton.outline(
+                onPressed: _pickDirectory,
+                leading: const Icon(Icons.folder_open_rounded, size: 16),
+                child: Text(_selectedPath ?? '选择目录'),
+              ),
+              const SizedBox(width: 8),
+              ShadButton(
+                onPressed: _selectedPath == null || _scanning ? null : _startScan,
+                leading: _scanning
+                    ? const AppLoadingIndicator(size: AppLoadingSize.inline)
+                    : const Icon(Icons.search_rounded, size: 16),
+                child: Text(_scanning ? '扫描中…' : '开始扫描'),
+              ),
+            ]),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const SizedBox(height: 8),
+              Text('扫描范围: $_pathLabel', style: TextStyle(fontSize: 12)),
+              if (_scanning || _foldersScanned > 0) ...[
+                const SizedBox(height: 8),
+                Text('已扫描 $_foldersScanned 个文件夹', style: TextStyle(fontSize: 12)),
+              ],
+              if (_similarGroups.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('发现 ${_similarGroups.length} 组相似文件夹', style: TextStyle(fontSize: 12)),
+                Expanded(child: ListView.builder(
+                  itemCount: _similarGroups.length,
+                  itemBuilder: (_, i) => ListTile(
+                    leading: const Icon(Icons.folder_special_rounded, size: 16),
+                    title: Text('第 ${i + 1} 组 (${_similarGroups[i].length} 个)', style: const TextStyle(fontSize: 13)),
+                  ),
+                )),
+              ],
+            ]),
+          ),
+        ],
       ),
     );
   }
