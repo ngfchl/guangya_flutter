@@ -2724,10 +2724,22 @@ class _CloudSidebar extends StatelessWidget {
                           ),
                         const Divider(height: 24),
                         _SidebarTile(
-                          icon: Icons.manage_search_rounded,
-                          label: '文件扫描与清理',
-                          selected: activeTool == WorkspaceTool.scan,
-                          onTap: () => onTool(WorkspaceTool.scan),
+                          icon: Icons.folder_off_rounded,
+                          label: '空文件夹扫描',
+                          selected: activeTool == WorkspaceTool.emptyFolderScan,
+                          onTap: () => onTool(WorkspaceTool.emptyFolderScan),
+                        ),
+                        _SidebarTile(
+                          icon: Icons.content_copy_rounded,
+                          label: '重复文件扫描',
+                          selected: activeTool == WorkspaceTool.duplicateFileScan,
+                          onTap: () => onTool(WorkspaceTool.duplicateFileScan),
+                        ),
+                        _SidebarTile(
+                          icon: Icons.folder_special_rounded,
+                          label: '相似文件夹扫描',
+                          selected: activeTool == WorkspaceTool.similarFolderScan,
+                          onTap: () => onTool(WorkspaceTool.similarFolderScan),
                         ),
                         _SidebarTile(
                           icon: Icons.text_fields_rounded,
