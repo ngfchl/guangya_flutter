@@ -1123,6 +1123,14 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
           },
           child: Focus(
             autofocus: true,
+            onKeyEvent: (node, event) {
+              if (event.logicalKey == LogicalKeyboardKey.enter ||
+                  event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                widget.onRequestExit();
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
             child: GestureDetector(
               behavior: HitTestBehavior.translucent,
               onDoubleTap: widget.onToggleFullscreen,
@@ -1293,9 +1301,20 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                                         widget.onToggleFullscreen,
                                       ),
                                       if (widget.isDesktop)
-                                        _controlButton(
-                                          Icons.close_rounded,
-                                          widget.onRequestExit,
+                                        Focus(
+                                          autofocus: true,
+                                          onKeyEvent: (node, event) {
+                                            if (event.logicalKey == LogicalKeyboardKey.enter ||
+                                                event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                                              widget.onRequestExit();
+                                              return KeyEventResult.handled;
+                                            }
+                                            return KeyEventResult.ignored;
+                                          },
+                                          child: _controlButton(
+                                            Icons.close_rounded,
+                                            widget.onRequestExit,
+                                          ),
                                         ),
                                     ],
                                   ),
