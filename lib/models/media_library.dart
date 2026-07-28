@@ -1350,8 +1350,12 @@ class ParsedMediaName {
     // the unambiguous SS EE form to avoid treating years as episode numbers.
     final numericPrefix = RegExp(r'^\s*(\d{1,4})(?=$|[ ._-])').firstMatch(stem);
     final numericOnly = numericPrefix != null && genericName;
+    // 即使 genericName 为 false，但如果标题以数字开头且符合剧集特征，也尝试检测集号
+    final numericEpisode = numericPrefix != null &&
+        episode == null &&
+        !RegExp(r'^(?:19|20)\d{2}$').hasMatch(numericPrefix.group(1)!);
     if (episode == null &&
-        numericOnly &&
+        (numericOnly || numericEpisode) &&
         (directoryName != null || directoryPath != null) &&
         !RegExp(r'^(?:19|20)\d{2}$').hasMatch(numericPrefix.group(1)!)) {
       final digits = numericPrefix.group(1)!;
@@ -1359,9 +1363,18 @@ class ParsedMediaName {
       if (parentSeason != null) {
         season = parentSeason;
         episode = int.tryParse(digits);
-      } else if (digits.length <= 2 && parent != null) {
+      } else if (digits.length <= 2 && (parent != null ||
+          directoryName?.trim().isNotEmpty == true)) {
+        // 当 parent 为空时，从 _bestParentContext 获取目录上下文
+        if (parent == null) {
+          parent = _bestParentContext(directoryName, directoryPath);
+        }
         // A bare file such as `13.mkv` inside a meaningful series directory is
         // an episode even when the folder omits an explicit season marker.
+        if (parent?.title.isNotEmpty == true) {
+          title = parent!.title;
+          inheritedTitleFromParent = true;
+        }
         season = 1;
         episode = int.tryParse(digits);
       } else if (digits.length == 3 || digits.length == 4) {
@@ -1635,7 +1648,7 @@ class ParsedMediaName {
     // Resolution and format labels that appear inline (e.g. 4K between title
     // words) are release metadata, not part of the TMDB search title.
     title = title.replaceAll(
-      RegExp(r'(?<=\s|^)4K(?=\s|$)', caseSensitive: false),
+      RegExp(r'\b4K\b', caseSensitive: false),
       ' ',
     );
 
