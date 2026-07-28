@@ -2388,7 +2388,15 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               },
             ),
             child: EasyRefresh.builder(
-              header: const ClassicHeader(),
+              header: ClassicHeader(
+                dragText: '下拉刷新',
+                armedText: '释放刷新',
+                readyText: '正在刷新…',
+                processingText: '正在刷新…',
+                processedText: '刷新完成',
+                noMoreText: '没有更多',
+                failedText: '刷新失败',
+              ),
               footer: const ClassicFooter(),
               onRefresh: () async {
                 await _mediaNotifier.loadContent(
@@ -2724,6 +2732,15 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               final filter = label == '电影'
                   ? MediaLibraryBrowseFilter.movies
                   : MediaLibraryBrowseFilter.series;
+              // 从当前列表中取一张随机海报
+              final posterPaths = visible
+                  .map((w) => w.primary.posterPath)
+                  .whereType<String>()
+                  .where((p) => p.isNotEmpty)
+                  .toList();
+              final randomPoster = posterPaths.isEmpty
+                  ? null
+                  : posterPaths[index % posterPaths.length];
               return SizedBox(
                 width: compact ? 132 : 142,
                 child: _HomeSectionEntryTile(
@@ -2731,6 +2748,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                   count: works.length,
                   icon: icon,
                   compact: compact,
+                  posterPath: randomPoster,
                   onTap: () {
                     setState(() => _wallFilter = filter);
                     unawaited(_mediaNotifier.loadContent(
@@ -3054,6 +3072,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   Widget _buildTMDBResultItem(BuildContext context, Map<String, dynamic> item) {
     final cs = ShadTheme.of(context).colorScheme;
     final title = item['title'] ?? item['name'] ?? '未知';
+    final originalTitle = item['original_title']?.toString() ?? item['original_name']?.toString() ?? '';
     final overview = item['overview']?.toString() ?? '';
     final releaseDate =
         item['release_date']?.toString() ??
@@ -3062,6 +3081,14 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     final mediaType = item['media_type']?.toString() ?? 'movie';
     final posterPath = item['poster_path'] as String?;
     final year = releaseDate.length >= 4 ? releaseDate.substring(0, 4) : '';
+    final originCountry = item['origin_country'] ?? item['original_language'];
+    final countryStr = originCountry is List
+        ? originCountry.join('/')
+        : originCountry?.toString() ?? '';
+    final isTV = mediaType == 'tv';
+    // 详情中可能包含的额外信息（从 search 结果中有限可用）
+    final seasons = item['number_of_seasons'];
+    final episodes = item['number_of_episodes'];
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
@@ -3103,20 +3130,62 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                         ),
                       ),
                     ),
-                    ShadBadge(child: Text(mediaType == 'tv' ? '剧集' : '电影')),
+                    ShadBadge(child: Text(isTV ? '剧集' : '电影')),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  overview.isEmpty ? '暂无简介' : overview,
-                  style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
+                if (originalTitle.isNotEmpty && originalTitle != title) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    originalTitle,
+                    style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    if (year.isNotEmpty)
+                      _infoBadge(cs, '${year}年'),
+                    if (countryStr.isNotEmpty)
+                      _infoBadge(cs, countryStr),
+                    if (isTV)
+                      _infoBadge(cs, '剧集'),
+                    if (seasons != null)
+                      _infoBadge(cs, '$seasons 季'),
+                    if (episodes != null)
+                      _infoBadge(cs, '$episodes 集'),
+                  ],
                 ),
+                if (overview.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    overview,
+                    style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _infoBadge(ShadColorScheme cs, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: cs.muted,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 11, color: cs.mutedForeground),
       ),
     );
   }
@@ -3830,21 +3899,34 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       );
       setState(() => _manualMatchApplyingResourceKeys.add(targetKey));
       if (candidate['media_type'] == 'tv') {
-        await notifier.applyTMDBMatch(queryResource, candidate);
-      } else {
-        final orderedResources = [
-          queryResource,
-          ...resources.where(
-            (resource) =>
-                _mediaRecordKey(resource) != _mediaRecordKey(queryResource),
-          ),
-        ];
-        for (var index = 0; index < orderedResources.length; index++) {
-          await notifier.applyTMDBMatch(
-            orderedResources[index],
-            candidate,
-            applyManualEpisodeOverride: index == 0,
+        // 主资源和同文件夹其他剧集全部不等待后台处理
+        unawaited(notifier.applyTMDBMatch(queryResource, candidate));
+        final parentPath = _parentCloudPath(queryResource.file.cloudPath);
+        if (parentPath.isNotEmpty) {
+          final siblings = ref.read(mediaLibraryProvider).allItems.where(
+            (item) =>
+                item.id != queryResource.id &&
+                _parentCloudPath(item.file.cloudPath) == parentPath,
           );
+          for (final sibling in siblings) {
+            unawaited(notifier.applyTMDBMatch(sibling, candidate));
+          }
+        }
+        // 触发异步刷新，不等待后台处理
+        if (_detailWork != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _refreshDetailData(work);
+          });
+        }
+      } else {
+        // 主资源同步匹配，版本循环后台执行避免逐个await卡loading
+        await notifier.applyTMDBMatch(queryResource, candidate);
+        final siblings = resources.where(
+          (resource) =>
+              _mediaRecordKey(resource) != _mediaRecordKey(queryResource),
+        );
+        for (final sibling in siblings) {
+          unawaited(notifier.applyTMDBMatch(sibling, candidate));
         }
       }
       if (!mounted ||
@@ -3921,9 +4003,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             ),
           ),
           popover: (_) => SizedBox(
-            width: size.width <= 392
-                ? (size.width - 16)
-                : (size.width - 32).clamp(360.0, 820.0).toDouble(),
+            width: size.width <= 480
+                ? (size.width - 12)
+                : (size.width * 0.65).clamp(520.0, 960.0).toDouble(),
             height: size.height <= 560
                 ? (size.height - 80)
                 : (size.height - 140).clamp(420.0, 680.0).toDouble(),
@@ -5955,6 +6037,7 @@ class _HomeSectionEntryTile extends StatelessWidget {
   final int count;
   final IconData icon;
   final bool compact;
+  final String? posterPath;
   final VoidCallback onTap;
 
   const _HomeSectionEntryTile({
@@ -5962,6 +6045,7 @@ class _HomeSectionEntryTile extends StatelessWidget {
     required this.count,
     required this.icon,
     required this.compact,
+    this.posterPath,
     required this.onTap,
   });
 
@@ -5969,6 +6053,7 @@ class _HomeSectionEntryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final width = compact ? 132.0 : 142.0;
+    final hasPoster = posterPath?.isNotEmpty == true;
     return Semantics(
       button: true,
       label: '$label，共 $count 部',
@@ -5981,24 +6066,43 @@ class _HomeSectionEntryTile extends StatelessWidget {
             color: cs.muted.withValues(alpha: 0.45),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: cs.border),
+            image: hasPoster
+                ? DecorationImage(
+                    image: CachedNetworkImageProvider(
+                      _tmdbImageURL(posterPath!, size: 'w200'),
+                    ),
+                    fit: BoxFit.cover,
+                    colorFilter: ColorFilter.mode(
+                      Colors.black.withValues(alpha: 0.55),
+                      BlendMode.darken,
+                    ),
+                  )
+                : null,
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 28, color: cs.mutedForeground),
-              const SizedBox(height: 8),
+              if (!hasPoster) ...[
+                Icon(icon, size: 28, color: cs.mutedForeground),
+                const SizedBox(height: 8),
+              ],
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: cs.mutedForeground,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: hasPoster ? Colors.white : cs.mutedForeground,
                 ),
               ),
               const SizedBox(height: 4),
               Text(
                 '共 $count 部',
-                style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: hasPoster
+                      ? Colors.white.withValues(alpha: 0.8)
+                      : cs.mutedForeground,
+                ),
               ),
             ],
           ),
@@ -8831,6 +8935,7 @@ class _ManualTMDBMatchDialogState
                     const SizedBox(height: 4),
                     Wrap(
                       spacing: 6,
+                      runSpacing: 4,
                       children: [
                         ShadBadge.outline(child: Text(mediaType)),
                         ShadBadge.outline(
@@ -8840,6 +8945,27 @@ class _ManualTMDBMatchDialogState
                                 : '未知年份',
                           ),
                         ),
+                        if (candidate['origin_country'] is List
+                            ? (candidate['origin_country'] as List).isNotEmpty
+                            : (candidate['original_language']?.toString().isNotEmpty == true)) ...[
+                          ShadBadge.outline(
+                            child: Text(
+                              candidate['origin_country'] is List
+                                  ? (candidate['origin_country'] as List).join('/')
+                                  : (candidate['original_language']?.toString() ?? ''),
+                            ),
+                          ),
+                        ],
+                        if (candidate['media_type'] == 'tv') ...[
+                          if (candidate['number_of_seasons'] != null)
+                            ShadBadge.outline(
+                              child: Text('${candidate['number_of_seasons']} 季'),
+                            ),
+                          if (candidate['number_of_episodes'] != null)
+                            ShadBadge.outline(
+                              child: Text('${candidate['number_of_episodes']} 集'),
+                            ),
+                        ],
                         if (candidate['_source'] == 'douban')
                           ShadBadge(
                             backgroundColor: const Color(
@@ -8869,22 +8995,24 @@ class _ManualTMDBMatchDialogState
               ),
               const SizedBox(width: 10),
               SizedBox(
-                width: 68,
+                width: 80,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    ShadButton.outline(
+                    ShadButton(
                       size: ShadButtonSize.sm,
                       onPressed: _loadingDetail
                           ? null
                           : () => unawaited(_viewDetails(candidate)),
-                      child: const Text('查看'),
+                      leading: const Icon(Icons.info_outline_rounded, size: 14),
+                      child: const Text('详情'),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 4),
                     ShadButton(
                       size: ShadButtonSize.sm,
                       onPressed: () => _select(candidate),
+                      leading: const Icon(Icons.check_circle_outline_rounded, size: 14),
                       child: const Text('选中'),
                     ),
                   ],
@@ -9171,6 +9299,7 @@ class _ManualTMDBMatchDialogState
         controller: _yearController,
         keyboardType: TextInputType.number,
         placeholder: const Text('年份'),
+        onSubmitted: (_) => _search(),
       ),
     );
     return LayoutBuilder(
