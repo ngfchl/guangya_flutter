@@ -4621,7 +4621,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                 : current,
           )
           .toList(),
-      allItems: await _loadAllItems(),
       statusMessage: '已匹配《${updated.title}》，正在后台补全刮削信息…',
       clearError: true,
     );
@@ -4636,7 +4635,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         manualEpisode: manualEpisode,
       ),
     );
-    unawaited(_manualMatchEnrichmentTail);
+    // 后台补全完成后刷新 allItems
+    unawaited(_manualMatchEnrichmentTail.then((_) async {
+      state = state.copyWith(allItems: await _loadAllItems());
+    }));
     return updated;
   }
 
@@ -5147,6 +5149,57 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               attempts: attempts,
             );
           }
+        }
+      }
+    }
+    // ── 指定类型(movie/tv)无结果或结果不足时，用 auto 重试并比对年份 ──
+    if (mediaKind != 'auto') {
+      for (final variant in variants) {
+        try {
+          final autoResult = await _api!.tmdbSearch(
+            variant.value,
+            apiKey: apiKey,
+            mediaKind: 'auto',
+            proxyHost: proxyHost,
+            proxyPort: proxyPort,
+            year: year,
+          );
+          final values = autoResult['results'];
+          if (values is! List) continue;
+          for (final value in values) {
+            if (value is! Map) continue;
+            final candidate = Map<String, dynamic>.from(value);
+            final type = candidate['media_type']?.toString();
+            if (type != 'movie' && type != 'tv') continue;
+            candidate['media_type'] = type;
+            final releaseDate =
+                (candidate['release_date'] ?? candidate['first_air_date'])
+                    ?.toString() ?? '';
+            // 年份比对：有年份时要求匹配，无年份时只要类型正确就接受
+            final yearMatch = year == null ||
+                releaseDate.isEmpty ||
+                releaseDate.startsWith('$year');
+            if (yearMatch) {
+              candidate['_recognitionTitle'] = variant.value;
+              candidate['_recognitionSource'] = variant.source;
+              candidate['_recognitionYear'] = year;
+              candidate['_recognitionFromAutoRetry'] = true;
+              final id = candidate['id']?.toString();
+              final key = id == null || id.isEmpty
+                  ? '$type:${candidate['title'] ?? candidate['name']}'
+                  : '$type:$id';
+              allRelated[key] = candidate;
+            }
+          }
+          attempts.add(
+            'auto 重试：${variant.value}，年份=$year -> '
+            '${allRelated.length} 条',
+          );
+          if (allRelated.length == 1) break;
+        } catch (retryError) {
+          attempts.add(
+            'auto 重试失败：${variant.value}，$retryError',
+          );
         }
       }
     }
@@ -6215,12 +6268,26 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       fallback,
       primaryTitle: parsed.title,
     );
-    return MediaTMDBCandidateResolver.refine(
-      candidates: candidates,
+    // 分离 auto 重试候选，避免被类型过滤
+    final autoRetry = <Map<String, dynamic>>[];
+    final regular = <Map<String, dynamic>>[];
+    for (final c in candidates) {
+      if (c['_recognitionFromAutoRetry'] == true) {
+        autoRetry.add(c);
+      } else {
+        regular.add(c);
+      }
+    }
+    final refined = MediaTMDBCandidateResolver.refine(
+      candidates: regular,
       expectedType: expectedType,
       year: parsed.year,
       titleEvidence: variants.map((variant) => variant.value),
     );
+    // auto 重试结果直接加入，不经过类型过滤
+    final result = refined.toList(growable: true);
+    result.addAll(autoRetry);
+    return result;
   }
 
   Future<TMDBCandidateResolution> _resolveAmbiguousTMDBCandidates(
@@ -6409,8 +6476,15 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       dynamicRange: fileParsed.dynamicRange ?? parentParsed?.dynamicRange,
     );
     final extension = _extensionOf(item.file.name);
-    final year = item.year.isEmpty ? '' : '.${item.year}';
-    final episode = item.mediaKind == TMDBMediaKind.tv && parsed.isEpisode
+    final year = item.year.isEmpty
+        ? (fileParsed.year != null
+            ? '.${fileParsed.year.toString().padLeft(4, '0').substring(0, 4)}'
+            : '')
+        : '.${item.year}';
+    final episode = (item.mediaKind == TMDBMediaKind.tv ||
+            item.mediaKind == null ||
+            item.mediaKind == TMDBMediaKind.automatic) &&
+        parsed.isEpisode
         ? '.S${parsed.season!.toString().padLeft(2, '0')}E${parsed.episode!.toString().padLeft(2, '0')}'
         : '';
     final technical = <String>[
@@ -6425,7 +6499,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     // `1989.mp4`: `福星闯江湖.1989.mp4` is still a useful canonical name even
     // when the source provides no resolution or release information.
     final renameTitle = simplifiedMediaTitle(item.title);
-    final baseName = item.mediaKind == TMDBMediaKind.tv && parsed.isEpisode
+    final baseName = (item.mediaKind == TMDBMediaKind.tv ||
+                item.mediaKind == null ||
+                item.mediaKind == TMDBMediaKind.automatic) &&
+            parsed.isEpisode
         ? '$renameTitle$episode$year'
         : '$renameTitle$year';
     final targetName =
