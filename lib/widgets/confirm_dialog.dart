@@ -25,6 +25,7 @@ Future<bool> showConfirmDialog(
           onPressed: () => Navigator.of(context).pop(false),
         ),
         ShadButton(
+          autofocus: true,
           child: Text(confirmText),
           onPressed: () => Navigator.of(context).pop(true),
         ),
