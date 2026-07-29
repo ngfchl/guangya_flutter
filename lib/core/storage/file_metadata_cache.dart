@@ -27,6 +27,9 @@ class FileMetadataCache {
   static Future<List<CloudFile>?> folderChildren(String? folderID) =>
       _store.folderChildren(folderID);
 
+  static Future<List<CloudFile>?> folderChildrenForScan(String? folderID) =>
+      _store.folderChildrenForScan(folderID);
+
   static Future<List<CloudFile>> allCachedFolderChildren() =>
       _store.allCachedFolderChildren();
 
@@ -42,6 +45,14 @@ class FileMetadataCache {
     int batchSize = 500,
   }) =>
       _store.allCachedFolderChildrenBatched(onBatch, batchSize: batchSize);
+
+  static Future<void> folderChildrenSnapshotsBatched(
+    Future<void> Function(Map<String?, List<CloudFile>> batch) onBatch, {
+    int batchSize = 250,
+  }) => _store.folderChildrenSnapshotsBatched(
+    onBatch,
+    batchSize: batchSize,
+  );
 
   static Future<List<CloudFile>?> siblingFiles(String fileID) =>
       _store.siblingFiles(fileID);

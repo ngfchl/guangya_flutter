@@ -1147,6 +1147,52 @@ class MediaLibraryStore {
     }
   }
 
+  /// Reads one directory snapshot for cleanup scans and repairs false-empty
+  /// snapshots with files still present in the reverse GCID index.
+  ///
+  /// `folder_children` is a parent -> direct children snapshot table, while
+  /// `file_index.folder_id` is an independent reverse lookup for files with a
+  /// GCID. Merging both prevents an incomplete snapshot from being reported as
+  /// an empty directory.
+  Future<List<CloudFile>?> folderChildrenForScan(String? folderID) async {
+    final snapshot = await folderChildren(folderID);
+    if (snapshot == null) return null;
+    final folderKey = _folderID(folderID);
+    final rows = await (await _db).rawQuery(
+      '''SELECT i.file_id, i.gcid, d.file_json
+         FROM file_index i
+         JOIN gcid_details d ON d.gcid = i.gcid
+         WHERE i.folder_id = ?''',
+      [folderKey],
+    );
+    if (rows.isEmpty) return snapshot;
+
+    final merged = <String, CloudFile>{
+      for (final file in snapshot) file.id: file,
+    };
+    for (final row in rows) {
+      final fileID = row['file_id']?.toString();
+      final gcid = row['gcid']?.toString();
+      if (fileID == null || fileID.isEmpty || merged.containsKey(fileID)) {
+        continue;
+      }
+      try {
+        final raw = jsonDecode(row['file_json']?.toString() ?? '{}');
+        if (raw is! Map) continue;
+        final file = CloudFile.fromJson(Map<String, dynamic>.from(raw));
+        merged[fileID] = file.copyWith(
+          id: fileID,
+          gcid: gcid,
+          parentID: folderID,
+          clearParentID: folderID == null,
+        );
+      } catch (_) {
+        // Ignore malformed retained metadata; the valid snapshot still wins.
+      }
+    }
+    return merged.values.toList(growable: false);
+  }
+
   Future<List<CloudFile>> allCachedFolderChildren() async {
     final result = <CloudFile>[];
     await allCachedFolderChildrenBatched((batch) async {
@@ -1211,6 +1257,52 @@ class MediaLibraryStore {
         } catch (_) {}
       }
       if (batch.isNotEmpty) await onBatch(batch.toList());
+    }
+  }
+
+  /// Streams directory snapshots while retaining each snapshot's parent ID.
+  /// This is used by cleanup scans to build directory ancestry without loading
+  /// the complete `folder_children` table into one Dart map.
+  Future<void> folderChildrenSnapshotsBatched(
+    Future<void> Function(Map<String?, List<CloudFile>> batch) onBatch, {
+    int batchSize = 250,
+  }) async {
+    final db = await _db;
+    var offset = 0;
+    while (true) {
+      final rows = await db.query(
+        'folder_children',
+        columns: const ['folder_id', 'children_json'],
+        limit: batchSize,
+        offset: offset,
+      );
+      if (rows.isEmpty) break;
+      offset += rows.length;
+      final snapshots = <String?, List<CloudFile>>{};
+      for (final row in rows) {
+        final storedFolderID = row['folder_id']?.toString();
+        if (storedFolderID == null) continue;
+        final folderID = storedFolderID == _rootFolderID
+            ? null
+            : storedFolderID;
+        try {
+          final raw = jsonDecode(
+            row['children_json']?.toString() ?? '[]',
+          );
+          if (raw is! List) continue;
+          snapshots[folderID] = raw
+              .whereType<Map>()
+              .map(
+                (value) =>
+                    CloudFile.fromJson(Map<String, dynamic>.from(value)),
+              )
+              .toList(growable: false);
+        } catch (_) {
+          // A malformed snapshot is ignored and repaired by the next refresh.
+        }
+      }
+      if (snapshots.isNotEmpty) await onBatch(snapshots);
+      if (rows.length < batchSize) break;
     }
   }
 
