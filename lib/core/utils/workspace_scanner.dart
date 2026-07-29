@@ -124,13 +124,7 @@ class WorkspaceScanner {
     while (queue.isNotEmpty) {
       final pending = queue.removeLast();
       if (await addChildren(pending.folder.id, pending.path)) {
-        // The full index also retains directory counters. A missing/empty
-        // child snapshot must not turn a known non-empty directory into a
-        // false candidate when an earlier cache page was incomplete.
-        final hasKnownChildren =
-            (pending.folder.subDirectoryCount ?? 0) > 0 ||
-            (pending.folder.subFileCount ?? 0) > 0;
-        if (!hasKnownChildren) emptyFolders.add(pending.folder);
+        emptyFolders.add(pending.folder);
       }
     }
 
