@@ -205,6 +205,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
   var _hasVideoDimensions = false;
   bool _showEpisodes = false;
   int _lastRecordedSeconds = 0;
+  WatchHistoryNotifier? _watchHistory;
   List<CloudFile> _episodes = const [];
   List<CloudFile> _subtitleCandidates = const [];
   bool _initialSubtitleApplied = false;
@@ -247,6 +248,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
       _handlePlaybackFailure(error, '内置视频输出初始化失败');
     }
     _currentFile = widget.file;
+    _watchHistory = ref.read(watchHistoryProvider.notifier);
     _videoParamsSubscription = _player.stream.videoParams.listen(
       _updateVideoDimensions,
     );
@@ -357,8 +359,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     if (!completed && position.inSeconds - _lastRecordedSeconds < 10) return;
     _lastRecordedSeconds = position.inSeconds;
     unawaited(
-      ref
-          .read(watchHistoryProvider.notifier)
+      (_watchHistory ?? ref.read(watchHistoryProvider.notifier))!
           .record(
             fileID: _currentFile.id,
             position: position,
