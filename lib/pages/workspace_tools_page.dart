@@ -4967,6 +4967,31 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
     _duplicateQuickSelectController.hide();
   }
 
+  Widget _pageSizeControl() {
+    if (!_hasScanned || _result == null) return const SizedBox.shrink();
+    return SizedBox(
+      width: 120,
+      height: 32,
+      child: ShadSelect<int>(
+        key: ValueKey('pageSize-$_pageSize'),
+        initialValue: _pageSize,
+        selectedOptionBuilder: (context, value) => Text('$value 条/页', style: const TextStyle(fontSize: 12)),
+        options: [
+          for (final size in _pageSizeOptions)
+            ShadOption(value: size, child: Text('$size 条/页', style: const TextStyle(fontSize: 12))),
+        ],
+        onChanged: (value) {
+          if (value != null && value != _pageSize) {
+            setState(() {
+              _pageSize = value;
+              _resultPages.clear();
+            });
+          }
+        },
+      ),
+    );
+  }
+
   Widget _duplicateQuickSelectControl(ShadColorScheme cs) {
     return ShadPopover(
       controller: _duplicateQuickSelectController,
@@ -5130,9 +5155,20 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
           ),
           _pageControls('all-empty', result.emptyFolders.length, cs),
           const SizedBox(height: 14),
-          Text(
-            '重复文件 · ${result.duplicateFiles.length} 组',
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          Row(
+            children: [
+              Text(
+                '重复文件 · ${result.duplicateFiles.length} 组',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+              const Spacer(),
+              if (result.duplicateFiles.isNotEmpty)
+                _pageSizeControl(),
+              if (result.duplicateFiles.isNotEmpty)
+                const SizedBox(width: 8),
+              if (result.duplicateFiles.isNotEmpty)
+                _duplicateQuickSelectControl(cs),
+            ],
           ),
           if (result.duplicateFiles.isEmpty)
             Padding(
@@ -5176,7 +5212,18 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 12),
-          Text('发现 ${result.duplicateFiles.length} 组重复文件', style: const TextStyle(fontSize: 12)),
+          Row(
+            children: [
+              Text('发现 ${result.duplicateFiles.length} 组重复文件', style: const TextStyle(fontSize: 12)),
+              const Spacer(),
+              if (result.duplicateFiles.isNotEmpty)
+                _pageSizeControl(),
+              if (result.duplicateFiles.isNotEmpty)
+                const SizedBox(width: 8),
+              if (result.duplicateFiles.isNotEmpty)
+                _duplicateQuickSelectControl(cs),
+            ],
+          ),
           if (result.duplicateFiles.isEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 10),
@@ -5229,27 +5276,6 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
                   child: Text(_selectedPath, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
                 ),
               ),
-              if (_result != null)
-                SizedBox(
-                  width: 120,
-                  height: 32,
-                  child: ShadSelect<int>(
-                    initialValue: _pageSize,
-                    selectedOptionBuilder: (context, value) => Text('$value 条/页', style: const TextStyle(fontSize: 12)),
-                    options: [
-                      for (final size in _pageSizeOptions)
-                        ShadOption(value: size, child: Text('$size 条/页', style: const TextStyle(fontSize: 12))),
-                    ],
-                    onChanged: (value) {
-                      if (value != null && value != _pageSize) {
-                        setState(() {
-                          _pageSize = value;
-                          _resultPages.clear();
-                        });
-                      }
-                    },
-                  ),
-                ),
               ShadButton(
                 size: ShadButtonSize.sm,
                 onPressed: _scanning ? null : _startScan,
