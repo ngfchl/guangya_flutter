@@ -4797,7 +4797,8 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
   String? _error;
   WorkspaceScanResult? _result;
   final _resultPages = <String, int>{};
-  static const _resultPageSize = 50;
+  int _pageSize = 50;
+  static const _pageSizeOptions = [50, 100, 200, 500, 1000, 2000, 5000];
   final _duplicateQuickSelectController = ShadPopoverController();
   _DuplicateQuickSelect? _duplicateQuickSelection;
   var _duplicateQuickSelectionRevision = 0;
@@ -4908,26 +4909,26 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
   }
 
   List<T> _pageItems<T>(String key, List<T> items) {
-    final maxPage = items.isEmpty ? 0 : (items.length - 1) ~/ _resultPageSize;
+    final maxPage = items.isEmpty ? 0 : (items.length - 1) ~/ _pageSize;
     final page = (_resultPages[key] ?? 0).clamp(0, maxPage).toInt();
     return items
-        .skip(page * _resultPageSize)
-        .take(_resultPageSize)
+        .skip(page * _pageSize)
+        .take(_pageSize)
         .toList(growable: false);
   }
 
   Widget _pageControls(String key, int total, ShadColorScheme cs) {
-    if (total <= _resultPageSize) return const SizedBox.shrink();
-    final maxPage = (total - 1) ~/ _resultPageSize;
+    if (total <= _pageSize) return const SizedBox.shrink();
+    final maxPage = (total - 1) ~/ _pageSize;
     final page = (_resultPages[key] ?? 0).clamp(0, maxPage).toInt();
-    final end = ((page + 1) * _resultPageSize).clamp(0, total).toInt();
+    final end = ((page + 1) * _pageSize).clamp(0, total).toInt();
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           Text(
-            '${page * _resultPageSize + 1}-$end / $total',
+            '${page * _pageSize + 1}-$end / $total',
             style: TextStyle(fontSize: 12, color: cs.mutedForeground),
           ),
           const SizedBox(width: 8),
@@ -5219,6 +5220,26 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
                   child: Text(_selectedPath, maxLines: 1, overflow: TextOverflow.ellipsis),
                 ),
               ),
+              if (_result != null)
+                SizedBox(
+                  width: 100,
+                  child: ShadSelect<int>(
+                    initialValue: _pageSize,
+                    selectedOptionBuilder: (context, value) => Text('$value 条/页', style: const TextStyle(fontSize: 12)),
+                    options: [
+                      for (final size in _pageSizeOptions)
+                        ShadOption(value: size, child: Text('$size 条/页', style: const TextStyle(fontSize: 12))),
+                    ],
+                    onChanged: (value) {
+                      if (value != null && value != _pageSize) {
+                        setState(() {
+                          _pageSize = value;
+                          _resultPages.clear();
+                        });
+                      }
+                    },
+                  ),
+                ),
               ShadButton(
                 onPressed: _scanning ? null : _startScan,
                 leading: _scanning
