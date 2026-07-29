@@ -1100,10 +1100,9 @@ class FileNotifier extends StateNotifier<FileState> {
         await _api!.shareDelete(ids);
       } else {
         await _api!.fsDelete(ids);
-        await FileMetadataCache.removeFilesFromAllFolders(ids);
-        await FileMetadataCache.updateFolderChildren(
+        await FileMetadataCache.removeFilesAllFoldersAndUpdateParent(
+          ids,
           _currentParentID,
-          removeIDs: ids,
         );
       }
       await _invalidateListCache(_currentParentID);

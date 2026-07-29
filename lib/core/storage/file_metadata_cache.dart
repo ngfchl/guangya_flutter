@@ -30,6 +30,13 @@ class FileMetadataCache {
   static Future<List<CloudFile>> allCachedFolderChildren() =>
       _store.allCachedFolderChildren();
 
+  /// Loads the complete directory snapshot index in one SQLite read.
+  ///
+  /// The null key represents the cloud root. Empty directories are retained
+  /// as empty lists, which is required by the empty-folder scanner.
+  static Future<Map<String?, List<CloudFile>>> allFolderChildrenSnapshots() =>
+      _store.allFolderChildrenSnapshots();
+
   static Future<void> allCachedFolderChildrenBatched(
     Future<void> Function(List<CloudFile> batch) onBatch, {
     int batchSize = 500,
@@ -69,4 +76,11 @@ class FileMetadataCache {
 
   static Future<void> removeFilesFromAllFolders(Iterable<String> fileIDs) =>
       _store.removeFilesFromAllFolders(fileIDs);
+
+  /// Atomically removes [fileIDs] from all folders and updates the parent
+  /// folder's children list in a single database transaction.
+  static Future<void> removeFilesAllFoldersAndUpdateParent(
+    Iterable<String> fileIDs,
+    String? parentID,
+  ) => _store.removeFilesAllFoldersAndUpdateParent(fileIDs, parentID);
 }

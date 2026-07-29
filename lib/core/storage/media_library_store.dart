@@ -1155,6 +1155,33 @@ class MediaLibraryStore {
     return result;
   }
 
+  Future<Map<String?, List<CloudFile>>> allFolderChildrenSnapshots() async {
+    final rows = await (await _db).query(
+      'folder_children',
+      columns: const ['folder_id', 'children_json'],
+    );
+    final result = <String?, List<CloudFile>>{};
+    for (final row in rows) {
+      final storedFolderID = row['folder_id']?.toString();
+      if (storedFolderID == null) continue;
+      final folderID = storedFolderID == _rootFolderID ? null : storedFolderID;
+      try {
+        final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
+        if (raw is! List) continue;
+        result[folderID] = raw
+            .whereType<Map>()
+            .map(
+              (value) =>
+                  CloudFile.fromJson(Map<String, dynamic>.from(value)),
+            )
+            .toList();
+      } catch (_) {
+        // Ignore a malformed stale snapshot; the next index refresh repairs it.
+      }
+    }
+    return result;
+  }
+
   /// Process all cached folder children in batches to avoid loading everything
   /// into memory at once. [onBatch] is called for each batch of files.
   Future<void> allCachedFolderChildrenBatched(
@@ -1498,6 +1525,90 @@ class MediaLibraryStore {
         );
       }
     });
+  }
+
+  /// Atomically removes [fileIDs] from all folders AND updates the parent
+  /// folder's children list in a single database transaction.
+  Future<void> removeFilesAllFoldersAndUpdateParent(
+    Iterable<String> fileIDs,
+    String? parentID,
+  ) async {
+    final ids = fileIDs.toSet();
+    if (ids.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      // 1. Remove from all folders (same logic as removeFilesFromAllFolders)
+      final rows = await txn.query('folder_children');
+      for (final row in rows) {
+        final folderID = row['folder_id']?.toString();
+        if (folderID == null) continue;
+        try {
+          final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
+          if (raw is! List) continue;
+          final children = raw
+              .whereType<Map>()
+              .map(
+                (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
+              )
+              .toList();
+          final retained = children
+              .where((file) => !ids.contains(file.id))
+              .toList();
+          if (retained.length != children.length) {
+            await txn.update(
+              'folder_children',
+              {
+                'child_ids': jsonEncode(retained.map((file) => file.id).toList()),
+                'children_json': jsonEncode(
+                  retained.map((file) => file.toJson()).toList(),
+                ),
+              },
+              where: 'folder_id = ?',
+              whereArgs: [folderID],
+            );
+          }
+        } catch (_) {}
+      }
+
+      // 2. Update parent folder children (same logic as updateFolderChildren)
+      final parentKey = _folderID(parentID);
+      final existingRows = await txn.query(
+        'folder_children',
+        columns: ['children_json'],
+        where: 'folder_id = ?',
+        whereArgs: [parentKey],
+      );
+      if (existingRows.isNotEmpty) {
+        final existingJson = existingRows.first['children_json']?.toString() ?? '[]';
+        _updateParentChildrenInTxn(txn, parentKey, existingJson, ids);
+      }
+    });
+  }
+
+  void _updateParentChildrenInTxn(
+    Transaction txn,
+    String parentKey,
+    String existingJson,
+    Set<String> ids,
+  ) async {
+    try {
+      final raw = jsonDecode(existingJson);
+      if (raw is! List) return;
+      final children = raw
+          .map((m) => m is Map ? CloudFile.fromJson(Map<String, dynamic>.from(m)) : null)
+          .whereType<CloudFile>()
+          .where((f) => !ids.contains(f.id))
+          .toList();
+      await txn.update(
+        'folder_children',
+        {
+          'child_ids': jsonEncode(children.map((f) => f.id).toList()),
+          'children_json': jsonEncode(children.map((f) => f.toJson()).toList()),
+        },
+        where: 'folder_id = ?',
+        whereArgs: [parentKey],
+      );
+    } catch (_) {}
   }
 
   Future<void> _createSchema(DatabaseExecutor db) async {
