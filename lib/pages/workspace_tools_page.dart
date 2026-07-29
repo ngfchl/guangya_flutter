@@ -5177,7 +5177,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
             )
           else
             for (final group in _pageItems('all-duplicates', result.duplicateFiles))
-              _DuplicateGroup(files: group),
+              _duplicateGroup(group),
           _pageControls('all-duplicates', result.duplicateFiles.length, cs),
           const SizedBox(height: 14),
           Text(
@@ -5231,7 +5231,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
             )
           else
             for (final group in _pageItems('duplicates', result.duplicateFiles))
-              _DuplicateGroup(files: group),
+              _duplicateGroup(group),
           _pageControls('duplicates', result.duplicateFiles.length, cs),
         ],
       ),
