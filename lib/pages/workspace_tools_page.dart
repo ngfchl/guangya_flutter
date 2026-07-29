@@ -13,6 +13,8 @@ import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
 import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/storage_manager.dart';
+import '../core/utils/json_deep.dart';
+import '../core/utils/workspace_scanner.dart';
 import '../models/cloud_file.dart';
 import '../models/batch_rename.dart';
 import '../models/fast_transfer.dart';
@@ -97,15 +99,15 @@ class WorkspaceToolsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final body = switch (tool) {
-      WorkspaceTool.scan => const _FileScanTool(),
+      WorkspaceTool.scan => const _ScopedWorkspaceScanTool(kind: _WorkspaceScanKind.all),
       WorkspaceTool.rename => const _BatchRenameTool(),
       WorkspaceTool.fastTransfer => const _FastTransferTool(),
       WorkspaceTool.tmdb => const MediaLibraryPage(showLibrarySidebar: true, showManagementToolbar: true),
       WorkspaceTool.organize => const _MediaOrganizerTool(),
       WorkspaceTool.categories => const _CategoryManagementTool(),
-      WorkspaceTool.emptyFolderScan => const _EmptyFolderScanTool(),
-      WorkspaceTool.duplicateFileScan => const _DuplicateFileScanTool(),
-      WorkspaceTool.similarFolderScan => const _SimilarFolderScanTool(),
+      WorkspaceTool.emptyFolderScan => const _ScopedWorkspaceScanTool(kind: _WorkspaceScanKind.emptyFolders),
+      WorkspaceTool.duplicateFileScan => const _ScopedWorkspaceScanTool(kind: _WorkspaceScanKind.duplicateFiles),
+      WorkspaceTool.similarFolderScan => const _ScopedWorkspaceScanTool(kind: _WorkspaceScanKind.similarFolders),
     };
     return Column(
       children: [
@@ -280,196 +282,6 @@ class _ToolMediaLibrarySwitcherState extends State<_ToolMediaLibrarySwitcher> {
   }
 }
 
-class _FileScanTool extends ConsumerStatefulWidget {
-  const _FileScanTool();
-
-  @override
-  ConsumerState<_FileScanTool> createState() => _FileScanToolState();
-}
-
-class _FileScanToolState extends ConsumerState<_FileScanTool> {
-  bool _scanning = false;
-  bool _cancelRequested = false;
-  int _foldersScanned = 0;
-  int _filesScanned = 0;
-  String? _error;
-  List<CloudFile> _emptyFolders = [];
-  List<List<CloudFile>> _duplicates = [];
-  List<List<CloudFile>> _similarFolders = [];
-
-  Future<void> _scan() async {
-    final state = ref.read(fileProvider);
-    final api = ref.read(authProvider.notifier).api;
-    setState(() {
-      _scanning = true;
-      _cancelRequested = false;
-      _foldersScanned = 0;
-      _filesScanned = 0;
-      _error = null;
-      _emptyFolders = [];
-      _duplicates = [];
-      _similarFolders = [];
-    });
-    try {
-      final empty = <CloudFile>[];
-      final groups = <String, List<CloudFile>>{};
-      final queue = <CloudFile>[...state.files.where((file) => file.isDirectory)];
-      final files = <CloudFile>[...state.files.where((file) => !file.isDirectory)];
-      final folders = <CloudFile>[...state.files.where((file) => file.isDirectory)];
-      while (queue.isNotEmpty) {
-        if (_cancelRequested) break;
-        final folder = queue.removeLast();
-        final response = await api.fsFiles(parentID: folder.id, pageSize: 1000);
-        final children = _extractFiles(response);
-        _foldersScanned += 1;
-        _filesScanned += children.where((child) => !child.isDirectory).length;
-        if (children.isEmpty) empty.add(folder);
-        for (final child in children) {
-          if (child.isDirectory) {
-            queue.add(child);
-            folders.add(child);
-          } else {
-            files.add(child);
-          }
-        }
-        if (mounted) {
-          setState(() {
-            _emptyFolders = List.of(empty);
-            _similarFolders = _groupSimilarFolders(folders);
-          });
-        }
-      }
-      for (final file in files) {
-        final key = file.gcid;
-        if (key != null && key.isNotEmpty) {
-          groups.putIfAbsent(key, () => []).add(file);
-        }
-      }
-      if (mounted) {
-        setState(() {
-          _emptyFolders = empty;
-          _duplicates = groups.values.where((group) => group.length > 1).toList();
-          _similarFolders = _groupSimilarFolders(folders);
-          if (_cancelRequested) _error = '扫描已取消，已保留当前结果';
-        });
-      }
-    } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    } finally {
-      if (mounted) setState(() => _scanning = false);
-    }
-  }
-
-  void _cancelScan() {
-    if (!_scanning) return;
-    setState(() => _cancelRequested = true);
-  }
-
-  List<List<CloudFile>> _groupSimilarFolders(List<CloudFile> folders) {
-    final groups = <String, List<CloudFile>>{};
-    for (final folder in folders) {
-      final key = _normalizedFolderName(folder.name);
-      if (key.isNotEmpty) groups.putIfAbsent(key, () => []).add(folder);
-    }
-    return groups.values.where((group) => group.length > 1).toList();
-  }
-
-  String _normalizedFolderName(String value) {
-    var normalized = value.toLowerCase().trim();
-    normalized = normalized.replaceAll(
-      RegExp(r'(?:[\s._-]*(?:copy|duplicate|backup|副本|复制|拷贝|备份))(?:[\s._-]*\d+)?$', caseSensitive: false),
-      '',
-    );
-    normalized = normalized.replaceAll(RegExp(r'(?:[（(\[]\s*\d{1,3}\s*[）)\]])$'), '');
-    return normalized.replaceAll(RegExp(r'[\s._()\[\]{}-]+'), '');
-  }
-
-  List<CloudFile> _extractFiles(Map<String, dynamic> value) {
-    final files = <CloudFile>[];
-    void visit(dynamic node) {
-      if (node is Map) {
-        try {
-          files.add(CloudFile.fromJson(Map<String, dynamic>.from(node)));
-        } catch (_) {}
-        for (final child in node.values) {
-          visit(child);
-        }
-      } else if (node is List) {
-        for (final child in node) {
-          visit(child);
-        }
-      }
-    }
-
-    visit(value);
-    return {for (final file in files) file.id: file}.values.toList();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = ShadTheme.of(context).colorScheme;
-    return ListView(
-      padding: const EdgeInsets.all(18),
-      children: [
-        _ToolSection(
-          title: '当前目录扫描',
-          description: _scanning ? '已扫描 $_foldersScanned 个文件夹、$_filesScanned 个文件。' : '检查空文件夹、相同 GCID 的重复文件和相似名称目录。',
-          trailing: ShadButton(
-            onPressed: _scanning ? _cancelScan : _scan,
-            leading: Icon(_scanning ? Icons.stop_circle_outlined : Icons.play_arrow_rounded, size: 16),
-            child: Text(_scanning ? '取消扫描' : '开始扫描'),
-          ),
-          child: _scanning
-              ? Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Semantics(
-                    label: '文件扫描进度：$_foldersScanned 个文件夹，$_filesScanned 个文件',
-                    child: const Align(
-                      alignment: Alignment.centerLeft,
-                      child: AppLoadingIndicator(size: AppLoadingSize.compact, semanticsLabel: '正在扫描当前目录'),
-                    ),
-                  ),
-                )
-              : _error != null
-              ? Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(_error!, style: TextStyle(color: cs.destructive)),
-                )
-              : const SizedBox.shrink(),
-        ),
-        const SizedBox(height: 14),
-        _ToolSection(
-          title: '空文件夹',
-          description: '扫描到 ${_emptyFolders.length} 个。',
-          child: _CleanupList(files: _emptyFolders, emptyText: '开始扫描后显示空文件夹。'),
-        ),
-        const SizedBox(height: 14),
-        _ToolSection(
-          title: '重复文件',
-          description: '扫描到 ${_duplicates.length} 组。',
-          child: _duplicates.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Text('开始扫描后显示重复项。', style: TextStyle(color: cs.mutedForeground)),
-                )
-              : Column(children: [for (final group in _duplicates) _DuplicateGroup(files: group)]),
-        ),
-        const SizedBox(height: 14),
-        _ToolSection(
-          title: '相似文件夹',
-          description: '扫描到 ${_similarFolders.length} 组，忽略空格、标点和副本后缀。',
-          child: _similarFolders.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Text('开始扫描后显示相似名称的文件夹。', style: TextStyle(color: cs.mutedForeground)),
-                )
-              : Column(children: [for (final group in _similarFolders) _SimilarFolderGroup(folders: group)]),
-        ),
-      ],
-    );
-  }
-}
-
 class _SimilarFolderGroup extends ConsumerStatefulWidget {
   final List<CloudFile> folders;
 
@@ -481,6 +293,12 @@ class _SimilarFolderGroup extends ConsumerStatefulWidget {
 
 class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
   late Set<String> _selectedIDs;
+  bool _deleting = false;
+  int _deleteTotal = 0;
+  int _deleteCurrent = 0;
+  String? _currentDeleteID;
+  final _deletedIDs = <String>{};
+  final _failedIDs = <String>{};
 
   @override
   void initState() {
@@ -490,7 +308,7 @@ class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
 
   Future<void> _confirmDelete() async {
     final targets = widget.folders.where((folder) => _selectedIDs.contains(folder.id)).toList();
-    if (targets.isEmpty) return;
+    if (targets.isEmpty || _deleting) return;
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
@@ -503,8 +321,42 @@ class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    await ref.read(fileProvider.notifier).deleteFiles(targets);
-    if (mounted) setState(_selectedIDs.clear);
+
+    setState(() {
+      _deleting = true;
+      _deleteTotal = targets.length;
+      _deleteCurrent = 0;
+      _currentDeleteID = null;
+      _deletedIDs.clear();
+      _failedIDs.clear();
+    });
+
+    for (var i = 0; i < targets.length; i++) {
+      if (!mounted) return;
+      final folder = targets[i];
+      setState(() {
+        _deleteCurrent = i + 1;
+        _currentDeleteID = folder.id;
+      });
+      try {
+        final ok = await ref.read(fileProvider.notifier).deleteFiles([folder]);
+        if (ok && mounted) {
+          setState(() => _deletedIDs.add(folder.id));
+        } else if (mounted) {
+          setState(() => _failedIDs.add(folder.id));
+        }
+      } catch (_) {
+        if (mounted) setState(() => _failedIDs.add(folder.id));
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _deleting = false;
+        _currentDeleteID = null;
+        _selectedIDs.removeAll(_deletedIDs);
+      });
+    }
   }
 
   @override
@@ -517,9 +369,35 @@ class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '相似名称组 · ${widget.folders.length} 个文件夹',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.primary),
+          Row(
+            children: [
+              Text(
+                '相似名称组 · ${widget.folders.length} 个文件夹',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.primary),
+              ),
+              const Spacer(),
+              if (_deleting && _deleteTotal > 0)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: SizedBox(
+                    width: 80,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: _deleteCurrent / _deleteTotal,
+                        minHeight: 6,
+                        backgroundColor: cs.border,
+                      ),
+                    ),
+                  ),
+                ),
+              ShadButton.destructive(
+                size: ShadButtonSize.sm,
+                onPressed: _selectedIDs.isEmpty || _deleting ? null : _confirmDelete,
+                leading: _deleting ? const AppLoadingIndicator(size: AppLoadingSize.inline) : null,
+                child: Text(_deleting ? '删除中 $_deleteCurrent/$_deleteTotal' : '删除 ${_selectedIDs.length}'),
+              ),
+            ],
           ),
           for (final folder in widget.folders)
             Padding(
@@ -528,96 +406,97 @@ class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
                 children: [
                   ShadCheckbox(
                     value: _selectedIDs.contains(folder.id),
-                    onChanged: (value) => setState(() {
-                      if (value == true) {
-                        if (_selectedIDs.length < widget.folders.length - 1) {
-                          _selectedIDs.add(folder.id);
-                        }
-                      } else {
-                        _selectedIDs.remove(folder.id);
-                      }
-                    }),
+                    onChanged: _deleting
+                        ? null
+                        : (value) => setState(() {
+                            if (value == true) {
+                              if (_selectedIDs.length < widget.folders.length - 1) {
+                                _selectedIDs.add(folder.id);
+                              }
+                            } else {
+                              _selectedIDs.remove(folder.id);
+                            }
+                          }),
                   ),
                   const SizedBox(width: 8),
                   Icon(Icons.folder_rounded, size: 17, color: cs.primary),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(folder.name, maxLines: 1, overflow: TextOverflow.ellipsis)),
-                  Text(folder.formattedSize, style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(child: Text(folder.name, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        if (_deletedIDs.contains(folder.id))
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Icon(Icons.check_circle_rounded, size: 16, color: cs.primary),
+                          ),
+                        if (_failedIDs.contains(folder.id))
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Icon(Icons.error_outline_rounded, size: 16, color: cs.destructive),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (_deletedIDs.contains(folder.id))
+                    Text('已完成', style: TextStyle(fontSize: 12, color: cs.primary))
+                  else if (_failedIDs.contains(folder.id))
+                    Text('失败', style: TextStyle(fontSize: 12, color: cs.destructive))
+                  else if (_deleting && _currentDeleteID == folder.id)
+                    const AppLoadingIndicator(size: AppLoadingSize.inline)
+                  else
+                    Text(folder.formattedSize, style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
                 ],
               ),
             ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: ShadButton.destructive(
-              size: ShadButtonSize.sm,
-              onPressed: _selectedIDs.isEmpty ? null : _confirmDelete,
-              child: Text('删除 ${_selectedIDs.length}'),
-            ),
-          ),
         ],
       ),
     );
   }
 }
 
-class _CleanupList extends ConsumerWidget {
+class _CleanupList extends ConsumerStatefulWidget {
   final List<CloudFile> files;
   final String emptyText;
+  final ValueChanged<Set<String>> onRemoved;
 
-  const _CleanupList({required this.files, required this.emptyText});
+  const _CleanupList({required this.files, required this.emptyText, required this.onRemoved});
 
-  Future<void> _confirmDeleteEmpty(BuildContext context, WidgetRef ref, CloudFile folder) async {
-    final confirmed = await showShadDialog<bool>(
-      context: context,
-      builder: (dialogContext) => ShadDialog(
-        title: Text('删除空文件夹「${folder.name}」？'),
-        actions: [
-          ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('取消')),
-          ShadButton.destructive(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('复检删除')),
-        ],
-        child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('删除前会重新检查目录是否为空；已发生变化的目录将被保留。')),
-      ),
-    );
-    if (confirmed != true || !context.mounted) return;
+  @override
+  ConsumerState<_CleanupList> createState() => _CleanupListState();
+}
 
-    try {
-      final response = await ref.read(authProvider.notifier).api.fsFiles(parentID: folder.id, pageSize: 1);
-      if (_hasCloudFile(response)) {
-        if (!context.mounted) return;
-        await showShadDialog<void>(
-          context: context,
-          builder: (dialogContext) => ShadDialog(
-            title: const Text('已跳过删除'),
-            actions: [ShadButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('知道了'))],
-            child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('该文件夹在扫描后已有内容，未执行删除。')),
-          ),
-        );
-        return;
-      }
-      await ref.read(fileProvider.notifier).deleteFiles([folder]);
-    } catch (_) {
-      if (!context.mounted) return;
-      await showShadDialog<void>(
-        context: context,
-        builder: (dialogContext) => ShadDialog(
-          title: const Text('无法校验文件夹'),
-          actions: [ShadButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('关闭'))],
-          child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('未能重新读取目录内容，因此没有执行删除。')),
-        ),
-      );
-    }
+class _CleanupListState extends ConsumerState<_CleanupList> {
+  final _selectedIDs = <String>{};
+  bool _checking = false;
+  bool _deleting = false;
+  int _deleteTotal = 0;
+  int _deleteCurrent = 0;
+  String? _checkingFolderID;
+  String? _currentDeleteID;
+  final _deletedIDs = <String>{};
+  final _failedIDs = <String>{};
+
+  @override
+  void didUpdateWidget(covariant _CleanupList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final currentIDs = widget.files.map((file) => file.id).toSet();
+    _selectedIDs.removeWhere((id) => !currentIDs.contains(id));
+    _deletedIDs.removeWhere((id) => !currentIDs.contains(id));
+    _failedIDs.removeWhere((id) => !currentIDs.contains(id));
   }
 
-  bool _hasCloudFile(Map<String, dynamic> value) {
-    var found = false;
+  CloudFile? _detailFile(Map<String, dynamic> response, String fileID) {
+    CloudFile? result;
     void visit(dynamic node) {
-      if (found) return;
+      if (result != null) return;
       if (node is Map) {
         try {
-          CloudFile.fromJson(Map<String, dynamic>.from(node));
-          found = true;
-          return;
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(node));
+          if (file.id == fileID) {
+            result = file;
+            return;
+          }
         } catch (_) {}
         for (final child in node.values) {
           visit(child);
@@ -629,42 +508,285 @@ class _CleanupList extends ConsumerWidget {
       }
     }
 
-    visit(value);
-    return found;
+    visit(response);
+    return result;
+  }
+
+  Future<CloudFile> _loadFolderDetail(CloudFile folder) async {
+    final response = await ref.read(authProvider.notifier).api.fsDetail(folder.id);
+    final detail = _detailFile(response, folder.id);
+    final subDirectoryCount =
+        detail?.subDirectoryCount ??
+        JsonDeep.findInt(response, const ['subDirCount', 'subDirectoryCount', 'directoryCount', 'dirCount']);
+    final subFileCount =
+        detail?.subFileCount ?? JsonDeep.findInt(response, const ['subFileCount', 'subFileNum', 'fileCount']);
+    if (subDirectoryCount == null || subFileCount == null) {
+      throw StateError('目录详情缺少子项计数');
+    }
+    return folder.copyWith(
+      size: detail?.size ?? folder.size,
+      subDirectoryCount: subDirectoryCount,
+      subFileCount: subFileCount,
+      modifiedAt: detail?.modifiedAt.isNotEmpty == true ? detail!.modifiedAt : folder.modifiedAt,
+      cloudPath: detail?.cloudPath.isNotEmpty == true ? detail!.cloudPath : folder.cloudPath,
+      parentID: detail?.parentID ?? folder.parentID,
+      fullParentIDs: detail?.fullParentIDs ?? folder.fullParentIDs,
+    );
+  }
+
+  Future<void> _updateNonEmptyFolderCache(CloudFile folder) async {
+    var parentID = folder.parentID?.trim();
+    if (parentID == null || parentID.isEmpty) {
+      parentID = await FileMetadataCache.parentFolderID(folder.id);
+    }
+    await FileMetadataCache.updateFolderChildren(
+      parentID == null || parentID.isEmpty ? null : parentID,
+      addOrReplace: [folder],
+    );
+  }
+
+  Future<void> _confirmDeleteSelected() async {
+    final targets = widget.files.where((file) => _selectedIDs.contains(file.id)).toList();
+    if (targets.isEmpty || _checking || _deleting) return;
+    final confirmed = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: Text('删除 ${targets.length} 个空文件夹？'),
+        actions: [
+          ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('取消')),
+          ShadButton.destructive(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('复检并删除')),
+        ],
+        child: const Padding(
+          padding: EdgeInsets.only(top: 10),
+          child: Text('删除前会逐个获取目录详情。确认仍为空的目录将直接删除；已有内容的目录会从候选列表移除。'),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _checking = true;
+      _checkingFolderID = null;
+      _deletedIDs.clear();
+      _failedIDs.clear();
+    });
+    final confirmedEmpty = <CloudFile>[];
+    final removedIDs = <String>{};
+    var nonEmptyCount = 0;
+    var failedCount = 0;
+    for (final folder in targets) {
+      if (!mounted) return;
+      setState(() => _checkingFolderID = folder.id);
+      try {
+        final detail = await _loadFolderDetail(folder);
+        if ((detail.subDirectoryCount ?? 0) == 0 && (detail.subFileCount ?? 0) == 0) {
+          confirmedEmpty.add(detail);
+        } else {
+          await _updateNonEmptyFolderCache(detail);
+          removedIDs.add(folder.id);
+          nonEmptyCount += 1;
+        }
+      } catch (_) {
+        failedCount += 1;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _checking = false;
+      _checkingFolderID = null;
+      _deleting = true;
+      _deleteTotal = confirmedEmpty.length;
+      _deleteCurrent = 0;
+      _currentDeleteID = null;
+    });
+
+    var deletedCount = 0;
+    if (confirmedEmpty.isNotEmpty) {
+      for (var i = 0; i < confirmedEmpty.length; i++) {
+        if (!mounted) return;
+        final folder = confirmedEmpty[i];
+        setState(() {
+          _deleteCurrent = i + 1;
+          _currentDeleteID = folder.id;
+        });
+        try {
+          final deleted = await ref.read(fileProvider.notifier).deleteFiles([folder]);
+          if (deleted && mounted) {
+            deletedCount += 1;
+            removedIDs.add(folder.id);
+            setState(() => _deletedIDs.add(folder.id));
+          } else if (mounted) {
+            failedCount += 1;
+            setState(() => _failedIDs.add(folder.id));
+          }
+        } catch (_) {
+          if (mounted) {
+            failedCount += 1;
+            setState(() => _failedIDs.add(folder.id));
+          }
+        }
+      }
+    }
+
+    if (!mounted) return;
+    widget.onRemoved(removedIDs);
+    setState(() {
+      _deleting = false;
+      _deleteTotal = 0;
+      _deleteCurrent = 0;
+      _currentDeleteID = null;
+      _selectedIDs.removeAll(removedIDs);
+    });
+    await showShadDialog<void>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('处理完成'),
+        actions: [ShadButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('知道了'))],
+        child: Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Text(
+            '已删除 $deletedCount 个空文件夹；移除 $nonEmptyCount 个非空候选${failedCount > 0 ? '；$failedCount 个校验或删除失败，已保留' : ''}。',
+          ),
+        ),
+      ),
+    );
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    if (files.isEmpty) {
+    if (widget.files.isEmpty) {
       return Padding(
         padding: const EdgeInsets.only(top: 10),
-        child: Text(emptyText, style: TextStyle(color: cs.mutedForeground)),
+        child: Text(widget.emptyText, style: TextStyle(color: cs.mutedForeground)),
       );
     }
+    final allSelected = _selectedIDs.length == widget.files.length;
+    final isWorking = _checking || _deleting;
     return Column(
       children: [
-        for (final file in files)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Row(
+            children: [
+              ShadCheckbox(
+                value: allSelected,
+                onChanged: isWorking
+                    ? null
+                    : (selected) => setState(() {
+                        _selectedIDs.clear();
+                        if (selected == true) _selectedIDs.addAll(widget.files.map((file) => file.id));
+                      }),
+              ),
+              const SizedBox(width: 8),
+              Text('全选', style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
+              const Spacer(),
+              if (_deleting && _deleteTotal > 0)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: SizedBox(
+                    width: 100,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: _deleteCurrent / _deleteTotal,
+                        minHeight: 6,
+                        backgroundColor: cs.border,
+                      ),
+                    ),
+                  ),
+                ),
+              ShadButton.destructive(
+                size: ShadButtonSize.sm,
+                onPressed: _selectedIDs.isEmpty || isWorking ? null : _confirmDeleteSelected,
+                leading: isWorking ? const AppLoadingIndicator(size: AppLoadingSize.inline) : null,
+                child: Text(
+                  _deleting
+                      ? '删除中 $_deleteCurrent/$_deleteTotal'
+                      : _checking
+                      ? '正在复检…'
+                      : '删除选中 ${_selectedIDs.length}',
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (final file in widget.files)
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.folder_rounded, color: cs.primary),
-            title: Text(file.name),
-            trailing: ShadButton.destructive(
-              size: ShadButtonSize.sm,
-              onPressed: () => _confirmDeleteEmpty(context, ref, file),
-              child: const Text('删除'),
+            leading: ShadCheckbox(
+              value: _selectedIDs.contains(file.id),
+              onChanged: isWorking
+                  ? null
+                  : (selected) => setState(() {
+                      if (selected == true) {
+                        _selectedIDs.add(file.id);
+                      } else {
+                        _selectedIDs.remove(file.id);
+                      }
+                    }),
             ),
+            title: Row(
+              children: [
+                Flexible(child: Text(file.name, overflow: TextOverflow.ellipsis)),
+                if (_deletedIDs.contains(file.id))
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: Icon(Icons.check_circle_rounded, size: 16, color: cs.primary),
+                  ),
+                if (_failedIDs.contains(file.id))
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: Icon(Icons.error_outline_rounded, size: 16, color: cs.destructive),
+                  ),
+              ],
+            ),
+            subtitle: file.cloudPath.isEmpty
+                ? null
+                : Text(file.cloudPath, maxLines: 1, overflow: TextOverflow.ellipsis),
+            trailing: _deletedIDs.contains(file.id)
+                ? Text('已完成', style: TextStyle(fontSize: 11, color: cs.primary))
+                : (_failedIDs.contains(file.id)
+                      ? Text('失败', style: TextStyle(fontSize: 11, color: cs.destructive))
+                      : (_checking && _checkingFolderID == file.id
+                            ? const AppLoadingIndicator(size: AppLoadingSize.inline)
+                            : (_deleting && _currentDeleteID == file.id
+                                  ? const AppLoadingIndicator(size: AppLoadingSize.inline)
+                                  : Icon(Icons.folder_rounded, color: cs.primary)))),
           ),
       ],
     );
   }
 }
 
+enum _DuplicateQuickSelectKind {
+  keepShortestPath,
+  keepLongestPath,
+  keepLargestFile,
+  keepNewestFile,
+  largerThan,
+  clear,
+}
+
+class _DuplicateQuickSelect {
+  final _DuplicateQuickSelectKind kind;
+  final int minimumBytes;
+
+  const _DuplicateQuickSelect(this.kind, {this.minimumBytes = 0});
+}
+
 class _DuplicateGroup extends ConsumerStatefulWidget {
   final List<CloudFile> files;
+  final _DuplicateQuickSelect? quickSelection;
+  final int quickSelectionRevision;
 
-  const _DuplicateGroup({required this.files});
+  const _DuplicateGroup({
+    required this.files,
+    this.quickSelection,
+    this.quickSelectionRevision = 0,
+  });
 
   @override
   ConsumerState<_DuplicateGroup> createState() => _DuplicateGroupState();
@@ -672,16 +794,68 @@ class _DuplicateGroup extends ConsumerStatefulWidget {
 
 class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
   late Set<String> _selectedIDs;
+  bool _deleting = false;
+  int _deleteTotal = 0;
+  int _deleteCurrent = 0;
+  String? _currentDeleteID;
+  final _deletedIDs = <String>{};
+  final _failedIDs = <String>{};
 
   @override
   void initState() {
     super.initState();
     _selectedIDs = widget.files.skip(1).map((file) => file.id).toSet();
+    _applyQuickSelection(widget.quickSelection);
+  }
+
+  @override
+  void didUpdateWidget(covariant _DuplicateGroup oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.quickSelectionRevision != widget.quickSelectionRevision) {
+      _applyQuickSelection(widget.quickSelection);
+    }
+  }
+
+  String _pathFor(CloudFile file) =>
+      file.cloudPath.trim().isEmpty ? file.name : file.cloudPath;
+
+  void _applyQuickSelection(_DuplicateQuickSelect? selection) {
+    if (selection == null) return;
+    final files = widget.files;
+    if (files.isEmpty) return;
+    CloudFile keepBy(Comparator<CloudFile> comparator) =>
+        files.reduce((current, file) => comparator(current, file) <= 0 ? current : file);
+
+    switch (selection.kind) {
+      case _DuplicateQuickSelectKind.keepShortestPath:
+        final keep = keepBy((left, right) => _pathFor(left).length.compareTo(_pathFor(right).length));
+        _selectedIDs = files.where((file) => file.id != keep.id).map((file) => file.id).toSet();
+      case _DuplicateQuickSelectKind.keepLongestPath:
+        final keep = keepBy((left, right) => _pathFor(right).length.compareTo(_pathFor(left).length));
+        _selectedIDs = files.where((file) => file.id != keep.id).map((file) => file.id).toSet();
+      case _DuplicateQuickSelectKind.keepLargestFile:
+        final keep = keepBy((left, right) => (left.size ?? 0).compareTo(right.size ?? 0));
+        _selectedIDs = files.where((file) => file.id != keep.id).map((file) => file.id).toSet();
+      case _DuplicateQuickSelectKind.keepNewestFile:
+        final keep = keepBy((left, right) => left.modifiedAt.compareTo(right.modifiedAt));
+        _selectedIDs = files.where((file) => file.id != keep.id).map((file) => file.id).toSet();
+      case _DuplicateQuickSelectKind.largerThan:
+        _selectedIDs = files
+            .where((file) => (file.size ?? 0) > selection.minimumBytes)
+            .map((file) => file.id)
+            .toSet();
+        if (_selectedIDs.length == files.length) {
+          final keep = keepBy((left, right) => _pathFor(left).length.compareTo(_pathFor(right).length));
+          _selectedIDs.remove(keep.id);
+        }
+      case _DuplicateQuickSelectKind.clear:
+        _selectedIDs = <String>{};
+    }
   }
 
   Future<void> _confirmDelete() async {
     final targets = widget.files.where((file) => _selectedIDs.contains(file.id)).toList();
-    if (targets.isEmpty) return;
+    if (targets.isEmpty || _deleting) return;
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
@@ -694,14 +868,51 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    await ref.read(fileProvider.notifier).deleteFiles(targets);
-    if (mounted) setState(_selectedIDs.clear);
+
+    setState(() {
+      _deleting = true;
+      _deleteTotal = targets.length;
+      _deleteCurrent = 0;
+      _currentDeleteID = null;
+      _deletedIDs.clear();
+      _failedIDs.clear();
+    });
+
+    for (var i = 0; i < targets.length; i++) {
+      if (!mounted) return;
+      final file = targets[i];
+      setState(() {
+        _deleteCurrent = i + 1;
+        _currentDeleteID = file.id;
+      });
+      try {
+        final ok = await ref.read(fileProvider.notifier).deleteFiles([file]);
+        if (ok && mounted) {
+          setState(() => _deletedIDs.add(file.id));
+        } else if (mounted) {
+          setState(() => _failedIDs.add(file.id));
+        }
+      } catch (_) {
+        if (mounted) {
+          setState(() => _failedIDs.add(file.id));
+        }
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _deleting = false;
+        _currentDeleteID = null;
+        _selectedIDs.removeAll(_deletedIDs);
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final selectedCount = _selectedIDs.length;
+    final gcid = widget.files.first.gcid?.trim() ?? '';
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(10),
@@ -710,15 +921,60 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
         children: [
           Row(
             children: [
-              Text(
-                '重复组 · ${widget.files.length} 项',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.primary),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '重复组 · ${widget.files.length} 项',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: cs.primary,
+                      ),
+                    ),
+                    if (gcid.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Tooltip(
+                          message: gcid,
+                          child: SelectionArea(
+                            child: Text(
+                              'GCID: $gcid',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: cs.mutedForeground,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
+              if (_deleting && _deleteTotal > 0)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: SizedBox(
+                    width: 80,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: _deleteCurrent / _deleteTotal,
+                        minHeight: 6,
+                        backgroundColor: cs.border,
+                      ),
+                    ),
+                  ),
+                ),
               ShadButton.destructive(
                 size: ShadButtonSize.sm,
-                onPressed: selectedCount == 0 ? null : _confirmDelete,
-                child: Text('删除 $selectedCount'),
+                onPressed: selectedCount == 0 || _deleting ? null : _confirmDelete,
+                leading: _deleting ? const AppLoadingIndicator(size: AppLoadingSize.inline) : null,
+                child: Text(_deleting ? '删除中 $_deleteCurrent/$_deleteTotal' : '删除 $selectedCount'),
               ),
             ],
           ),
@@ -729,22 +985,38 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                 children: [
                   ShadCheckbox(
                     value: _selectedIDs.contains(file.id),
-                    onChanged: (value) => setState(() {
-                      if (value == true) {
-                        if (_selectedIDs.length < widget.files.length - 1) {
-                          _selectedIDs.add(file.id);
-                        }
-                      } else {
-                        _selectedIDs.remove(file.id);
-                      }
-                    }),
+                    onChanged: _deleting
+                        ? null
+                        : (value) => setState(() {
+                            if (value == true) {
+                              if (_selectedIDs.length < widget.files.length - 1) {
+                                _selectedIDs.add(file.id);
+                              }
+                            } else {
+                              _selectedIDs.remove(file.id);
+                            }
+                          }),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Row(
+                          children: [
+                            Flexible(child: Text(file.name, overflow: TextOverflow.ellipsis)),
+                            if (_deletedIDs.contains(file.id))
+                              Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: Icon(Icons.check_circle_rounded, size: 16, color: cs.primary),
+                              ),
+                            if (_failedIDs.contains(file.id))
+                              Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: Icon(Icons.error_outline_rounded, size: 16, color: cs.destructive),
+                              ),
+                          ],
+                        ),
                         Text(
                           file.cloudPath,
                           maxLines: 1,
@@ -754,10 +1026,20 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                       ],
                     ),
                   ),
-                  Text(
-                    _selectedIDs.contains(file.id) ? '将删除' : '保留',
-                    style: TextStyle(fontSize: 12, color: _selectedIDs.contains(file.id) ? cs.destructive : cs.primary),
-                  ),
+                  if (_deletedIDs.contains(file.id))
+                    Text('已完成', style: TextStyle(fontSize: 12, color: cs.primary))
+                  else if (_failedIDs.contains(file.id))
+                    Text('失败', style: TextStyle(fontSize: 12, color: cs.destructive))
+                  else if (_deleting && _currentDeleteID == file.id)
+                    const AppLoadingIndicator(size: AppLoadingSize.inline)
+                  else
+                    Text(
+                      _selectedIDs.contains(file.id) ? '将删除' : '保留',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _selectedIDs.contains(file.id) ? cs.destructive : cs.primary,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -4335,36 +4617,18 @@ class _CategoryRuleDialogState extends State<_CategoryRuleDialog> {
   }
 }
 
-/// 扫描结果数据结构
-class _ScanFolderInfo {
-  final CloudFile file;
-  final bool isEmptyAfterCandidates;
+class _CloudFolderSelection {
+  final String label;
+  final String? id;
 
-  const _ScanFolderInfo({required this.file, required this.isEmptyAfterCandidates});
-}
-
-/// 重复文件分组
-class _DuplicateFileGroup {
-  final String gcid;
-  final List<CloudFile> files;
-
-  const _DuplicateFileGroup({required this.gcid, required this.files});
-}
-
-/// 相似文件夹分组
-class _ScanSimilarFolderGroup {
-  final String key;
-  final List<CloudFile> folders;
-
-  const _ScanSimilarFolderGroup({required this.key, required this.folders});
+  const _CloudFolderSelection({required this.label, required this.id});
 }
 
 /// 通用云盘目录选择弹窗
 class _CloudFolderPicker extends ConsumerStatefulWidget {
-  final String? initialID;
   final String title;
 
-  const _CloudFolderPicker({this.initialID, this.title = '选择云盘目录'});
+  const _CloudFolderPicker({this.title = '选择云盘目录'});
 
   @override
   ConsumerState<_CloudFolderPicker> createState() => _CloudFolderPickerState();
@@ -4392,22 +4656,9 @@ class _CloudFolderPickerState extends ConsumerState<_CloudFolderPicker> {
       _error = null;
     });
     try {
-      final response = await ref.read(authProvider.notifier).api.fsFiles(parentID: _parentID, pageSize: 1000);
+      final cached = await FileMetadataCache.folderChildren(_parentID);
       if (!mounted) return;
-      final folders = <CloudFile>[];
-      void visit(dynamic node) {
-        if (node is Map) {
-          try {
-            final file = CloudFile.fromJson(Map<String, dynamic>.from(node));
-            if (file.isDirectory) folders.add(file);
-          } catch (_) {}
-          for (final child in node.values) visit(child);
-        } else if (node is List) {
-          for (final child in node) visit(child);
-        }
-      }
-
-      visit(response);
+      final folders = (cached ?? const <CloudFile>[]).where((file) => file.isDirectory);
       setState(
         () =>
             _folders = {for (final f in folders) f.id: f}.values.toList()
@@ -4433,7 +4684,9 @@ class _CloudFolderPickerState extends ConsumerState<_CloudFolderPicker> {
             actions: [
               ShadButton.outline(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
               ShadButton(
-                onPressed: _loading ? null : () => Navigator.of(context).pop('$_label|${_parentID ?? ''}'),
+                onPressed: _loading
+                    ? null
+                    : () => Navigator.of(context).pop(_CloudFolderSelection(label: _label, id: _parentID)),
                 leading: const Icon(Icons.check_rounded, size: 16),
                 child: const Text('使用此目录'),
               ),
@@ -4506,365 +4759,485 @@ class _CloudFolderPickerState extends ConsumerState<_CloudFolderPicker> {
   }
 }
 
-/// 空文件夹扫描工具
-class _EmptyFolderScanTool extends ConsumerStatefulWidget {
-  const _EmptyFolderScanTool();
+enum _WorkspaceScanKind { all, emptyFolders, duplicateFiles, similarFolders }
 
-  @override
-  ConsumerState<_EmptyFolderScanTool> createState() => _EmptyFolderScanToolState();
+extension on _WorkspaceScanKind {
+  String get title => switch (this) {
+    _WorkspaceScanKind.all => '文件扫描与清理',
+    _WorkspaceScanKind.emptyFolders => '空文件夹扫描',
+    _WorkspaceScanKind.duplicateFiles => '重复文件扫描',
+    _WorkspaceScanKind.similarFolders => '相似文件夹扫描',
+  };
+
+  String get description => switch (this) {
+    _WorkspaceScanKind.all => '通过 SQLite 文件索引检查空文件夹、重复文件和相似名称目录。',
+    _WorkspaceScanKind.emptyFolders => '递归扫描指定目录中不包含任何内容的文件夹。',
+    _WorkspaceScanKind.duplicateFiles => '递归扫描指定目录，通过文件 GCID 识别内容完全相同的文件。',
+    _WorkspaceScanKind.similarFolders => '递归扫描指定目录，查找忽略空格、标点和副本后缀后名称相同的文件夹。',
+  };
 }
 
-class _EmptyFolderScanToolState extends ConsumerState<_EmptyFolderScanTool> {
-  String? _selectedPath;
+class _ScopedWorkspaceScanTool extends ConsumerStatefulWidget {
+  final _WorkspaceScanKind kind;
+
+  const _ScopedWorkspaceScanTool({required this.kind});
+
+  @override
+  ConsumerState<_ScopedWorkspaceScanTool> createState() => _ScopedWorkspaceScanToolState();
+}
+
+class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTool> {
+  String _selectedPath = '云盘根目录';
+  String? _selectedFolderID;
   bool _scanning = false;
-  bool _scanningFailed = false;
+  bool _hasScanned = false;
   int _foldersScanned = 0;
   int _filesScanned = 0;
-  List<CloudFile> _emptyFolders = [];
-  String _scope = 'wholeDrive'; // wholeDrive, currentFolder, customFolder
+  String _scanPhase = '';
+  String? _error;
+  WorkspaceScanResult? _result;
+  final _resultPages = <String, int>{};
+  static const _resultPageSize = 50;
+  final _duplicateQuickSelectController = ShadPopoverController();
+  _DuplicateQuickSelect? _duplicateQuickSelection;
+  var _duplicateQuickSelectionRevision = 0;
+  var _duplicateQuickSelectMinimumMB = 100;
 
-  String get _pathLabel {
-    if (_selectedPath != null) return _selectedPath!;
+  @override
+  void dispose() {
+    _duplicateQuickSelectController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
     final fileState = ref.read(fileProvider);
-    return fileState.folderPath.isEmpty ? '云盘根目录' : '/${fileState.folderPath.map((f) => f.name).join('/')}';
+    if (fileState.folderPath.isNotEmpty) {
+      _selectedFolderID = fileState.folderPath.last.id;
+      _selectedPath = fileState.folderPath.map((folder) => folder.name).join(' / ');
+    }
   }
 
   Future<void> _startScan() async {
     if (_scanning) return;
-    setState(() { _scanning = true; _scanningFailed = false; _foldersScanned = 0; _filesScanned = 0; _emptyFolders = []; });
+    setState(() {
+      _scanning = true;
+      _hasScanned = true;
+      _foldersScanned = 0;
+      _filesScanned = 0;
+      _scanPhase = '正在增量更新云盘索引…';
+      _error = null;
+      _result = null;
+      _resultPages.clear();
+    });
     try {
-      final api = ref.read(authProvider.notifier).api;
-      final fileState = ref.read(fileProvider);
-      final startID = _scope == 'currentFolder' && fileState.folderPath.isNotEmpty ? fileState.folderPath.last.id : null;
-      final queue = <CloudFile>[];
-      // 初始目录
-      if (startID != null) {
-        final response = await api.fsFiles(parentID: startID, page: 0, pageSize: 5000);
-        final children = _extractFiles(response);
-        for (final child in children.where((c) => c.isDirectory)) queue.add(child);
-      } else {
-        final response = await api.fsFiles(parentID: null, page: 0, pageSize: 5000);
-        final children = _extractFiles(response);
-        setState(() { _foldersScanned += 1; });
-        for (final child in children.where((c) => c.isDirectory)) queue.add(child);
-      }
-      while (queue.isNotEmpty) {
-        if (!mounted) return;
-        final folder = queue.removeLast();
-        final response = await api.fsFiles(parentID: folder.id, page: 0, pageSize: 5000);
-        final children = _extractFiles(response);
-        setState(() { _foldersScanned += 1; _filesScanned += children.where((c) => !c.isDirectory).length; });
-        if (children.isEmpty) {
-          setState(() => _emptyFolders = [..._emptyFolders, folder]);
-        } else {
-          for (final child in children.where((c) => c.isDirectory)) queue.add(child);
-        }
-      }
-      setState(() => _scanning = false);
-    } catch (e) {
-      setState(() { _scanning = false; _scanningFailed = true; });
+      final refreshed = await ref
+          .read(mediaLibraryProvider.notifier)
+          .refreshGlobalCloudIndex(forceIncrementalCheck: true);
+      if (!refreshed) throw StateError('云盘索引增量更新失败');
+      if (!mounted) return;
+      setState(() => _scanPhase = '正在从 SQLite 流式读取目录索引…');
+      final scanner = WorkspaceScanner(
+        loadChildren: (folderID) async {
+          final children = await FileMetadataCache.folderChildren(folderID);
+          if (children == null) {
+            throw StateError('SQLite 文件索引不完整，请先在设置中执行全量索引');
+          }
+          return children;
+        },
+      );
+      final result = await scanner.scan(
+        rootFolderID: _selectedFolderID,
+        rootPath: _selectedPath,
+        onProgress: (progress) {
+          if (!mounted || progress.foldersScanned % 100 != 0) return;
+          setState(() {
+            _foldersScanned = progress.foldersScanned;
+            _filesScanned = progress.filesScanned;
+          });
+        },
+        onFilesBatch: (_) {},
+        filesBatchSize: 500,
+        includeSimilarFolders:
+            widget.kind == _WorkspaceScanKind.all || widget.kind == _WorkspaceScanKind.similarFolders,
+      );
+      if (!mounted) return;
+      setState(() {
+        _result = result;
+        _foldersScanned = result.foldersScanned;
+        _filesScanned = result.filesScanned;
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _scanning = false);
     }
   }
 
-  List<CloudFile> _extractFiles(Map<String, dynamic> value) {
-    final files = <CloudFile>[];
-    void visit(dynamic node) {
-      if (node is Map) {
-        try { files.add(CloudFile.fromJson(Map<String, dynamic>.from(node))); } catch (_) {}
-        for (final child in node.values) visit(child);
-      } else if (node is List) { for (final child in node) visit(child); }
-    }
-    visit(value);
-    return {for (final f in files) f.id: f}.values.toList();
+  Future<void> _pickDirectory() async {
+    final selection = await showShadDialog<_CloudFolderSelection>(
+      context: context,
+      builder: (_) => _CloudFolderPicker(title: '选择${widget.kind.title}目录'),
+    );
+    if (selection == null || !mounted) return;
+    setState(() {
+      _selectedPath = selection.label;
+      _selectedFolderID = selection.id;
+      _hasScanned = false;
+      _result = null;
+      _error = null;
+      _foldersScanned = 0;
+      _filesScanned = 0;
+      _resultPages.clear();
+    });
   }
 
-  @override
-  Widget build(BuildContext context) {
+  void _removeEmptyFolderCandidates(Set<String> folderIDs) {
+    final result = _result;
+    if (result == null || folderIDs.isEmpty) return;
+    setState(() {
+      _result = WorkspaceScanResult(
+        emptyFolders: result.emptyFolders.where((folder) => !folderIDs.contains(folder.id)).toList(),
+        duplicateFiles: result.duplicateFiles,
+        similarFolders: result.similarFolders,
+        foldersScanned: result.foldersScanned,
+        filesScanned: result.filesScanned,
+      );
+    });
+  }
+
+  List<T> _pageItems<T>(String key, List<T> items) {
+    final maxPage = items.isEmpty ? 0 : (items.length - 1) ~/ _resultPageSize;
+    final page = (_resultPages[key] ?? 0).clamp(0, maxPage).toInt();
+    return items
+        .skip(page * _resultPageSize)
+        .take(_resultPageSize)
+        .toList(growable: false);
+  }
+
+  Widget _pageControls(String key, int total, ShadColorScheme cs) {
+    if (total <= _resultPageSize) return const SizedBox.shrink();
+    final maxPage = (total - 1) ~/ _resultPageSize;
+    final page = (_resultPages[key] ?? 0).clamp(0, maxPage).toInt();
+    final end = ((page + 1) * _resultPageSize).clamp(0, total).toInt();
     return Padding(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          _ToolSection(
-            title: '空文件夹扫描',
-            description: '扫描指定目录中不包含任何文件的空文件夹。',
-            trailing: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ShadButton(
-                  onPressed: _scanning ? null : _startScan,
-                  leading: _scanning
-                      ? const AppLoadingIndicator(size: AppLoadingSize.inline)
-                      : const Icon(Icons.search_rounded, size: 16),
-                  child: Text(_scanning ? '扫描中…' : '开始扫描'),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 8),
-                Text('扫描范围: $_pathLabel', style: TextStyle(fontSize: 12)),
-                if (_scanning || _foldersScanned > 0) ...[
-                  const SizedBox(height: 8),
-                  Text('已扫描 $_foldersScanned 个文件夹, $_filesScanned 个文件', style: TextStyle(fontSize: 12)),
-                ],
-                if (_emptyFolders.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text('发现 ${_emptyFolders.length} 个空文件夹', style: TextStyle(fontSize: 12)),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: _emptyFolders.length,
-                      itemBuilder: (_, i) => ListTile(
-                        leading: const Icon(Icons.folder_off_rounded, size: 16),
-                        title: Text(_emptyFolders[i].name, style: const TextStyle(fontSize: 13)),
-                        subtitle: _emptyFolders[i].cloudPath.isNotEmpty
-                            ? Text(_emptyFolders[i].cloudPath, style: TextStyle(fontSize: 11))
-                            : null,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
+          Text(
+            '${page * _resultPageSize + 1}-$end / $total',
+            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+          ),
+          const SizedBox(width: 8),
+          ShadButton.outline(
+            size: ShadButtonSize.sm,
+            onPressed:
+                page == 0 ? null : () => setState(() => _resultPages[key] = page - 1),
+            child: const Icon(Icons.chevron_left_rounded, size: 16),
+          ),
+          const SizedBox(width: 4),
+          ShadButton.outline(
+            size: ShadButtonSize.sm,
+            onPressed: page >= maxPage
+                ? null
+                : () => setState(() => _resultPages[key] = page + 1),
+            child: const Icon(Icons.chevron_right_rounded, size: 16),
           ),
         ],
       ),
     );
   }
-}
 
-/// 重复文件扫描工具
-class _DuplicateFileScanTool extends ConsumerStatefulWidget {
-  const _DuplicateFileScanTool();
-
-  @override
-  ConsumerState<_DuplicateFileScanTool> createState() => _DuplicateFileScanToolState();
-}
-
-class _DuplicateFileScanToolState extends ConsumerState<_DuplicateFileScanTool> {
-  String? _selectedPath;
-  bool _scanning = false;
-  int _filesScanned = 0;
-  List<List<CloudFile>> _duplicates = [];
-
-  String get _pathLabel {
-    if (_selectedPath != null) return _selectedPath!;
-    final fileState = ref.read(fileProvider);
-    return fileState.folderPath.isEmpty ? '云盘根目录' : '/${fileState.folderPath.map((f) => f.name).join('/')}';
+  void _applyDuplicateQuickSelection(_DuplicateQuickSelect selection) {
+    setState(() {
+      _duplicateQuickSelection = selection;
+      _duplicateQuickSelectionRevision += 1;
+    });
+    _duplicateQuickSelectController.hide();
   }
 
-  List<CloudFile> _extractFiles(Map<String, dynamic> value) {
-    final files = <CloudFile>[];
-    void visit(dynamic node) {
-      if (node is Map) {
-        try { files.add(CloudFile.fromJson(Map<String, dynamic>.from(node))); } catch (_) {}
-        for (final child in node.values) visit(child);
-      } else if (node is List) { for (final child in node) visit(child); }
-    }
-    visit(value);
-    return {for (final f in files) f.id: f}.values.toList();
-  }
-
-  Future<void> _startScan() async {
-    if (_scanning) return;
-    setState(() { _scanning = true; _filesScanned = 0; _duplicates = []; });
-    try {
-      final all = await FileMetadataCache.allCachedFolderChildren();
-      setState(() => _filesScanned = all.length);
-      final byGcid = <String, List<CloudFile>>{};
-      for (final f in all) {
-        if (f.gcid != null && f.gcid!.isNotEmpty) {
-          byGcid.putIfAbsent(f.gcid!, () => []).add(f);
-        }
-      }
-      final dupes = byGcid.values
-          .where((g) => g.length > 1)
-          .map((g) => g..sort((a, b) => a.cloudPath.compareTo(b.cloudPath)))
-          .toList();
-      setState(() { _duplicates = dupes; _scanning = false; });
-    } catch (e) {
-      setState(() { _scanning = false; });
-    }
-  }
-
-  Future<void> _pickDirectory() async {
-    final theme = ShadTheme.of(context);
-    final selection = await showShadDialog<String>(
-      context: context,
-      builder: (_) => Material(
-        type: MaterialType.transparency,
-        child: _CloudFolderPicker(title: '选择重复文件扫描目录'),
-      ),
-    );
-    if (selection != null && mounted) {
-      final parts = selection.split('|');
-      setState(() => _selectedPath = parts[0]);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _ToolSection(
-            title: '重复文件扫描',
-            description: '扫描指定目录中名称和大小相同的重复文件。',
-            trailing: Row(
-              children: [
-                ShadButton.outline(
-                  onPressed: _pickDirectory,
-                  leading: const Icon(Icons.folder_open_rounded, size: 16),
-                  child: Text(_selectedPath ?? '选择目录'),
+  Widget _duplicateQuickSelectControl(ShadColorScheme cs) {
+    return ShadPopover(
+      controller: _duplicateQuickSelectController,
+      popover: (_) => SizedBox(
+        width: 280,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ShadButton.ghost(
+              mainAxisAlignment: MainAxisAlignment.start,
+              onPressed: () => _applyDuplicateQuickSelection(
+                const _DuplicateQuickSelect(
+                  _DuplicateQuickSelectKind.keepShortestPath,
                 ),
-                const SizedBox(width: 8),
-                ShadButton(
-                  onPressed: _selectedPath == null || _scanning ? null : _startScan,
-                  leading: _scanning
-                      ? const AppLoadingIndicator(size: AppLoadingSize.inline)
-                      : const Icon(Icons.search_rounded, size: 16),
-                  child: Text(_scanning ? '扫描中…' : '开始扫描'),
-                ),
-              ],
-            ),
-            child: const SizedBox.shrink(),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 相似文件夹扫描工具
-class _SimilarFolderScanTool extends ConsumerStatefulWidget {
-  const _SimilarFolderScanTool();
-
-  @override
-  ConsumerState<_SimilarFolderScanTool> createState() => _SimilarFolderScanToolState();
-}
-
-class _SimilarFolderScanToolState extends ConsumerState<_SimilarFolderScanTool> {
-  String? _selectedPath;
-  bool _scanning = false;
-  int _foldersScanned = 0;
-  List<List<CloudFile>> _similarGroups = [];
-
-  String get _pathLabel {
-    if (_selectedPath != null) return _selectedPath!;
-    final fileState = ref.read(fileProvider);
-    return fileState.folderPath.isEmpty ? '云盘根目录' : '/${fileState.folderPath.map((f) => f.name).join('/')}';
-  }
-
-  List<CloudFile> _extractFiles(Map<String, dynamic> value) {
-    final files = <CloudFile>[];
-    void visit(dynamic node) {
-      if (node is Map) {
-        try { files.add(CloudFile.fromJson(Map<String, dynamic>.from(node))); } catch (_) {}
-        for (final child in node.values) visit(child);
-      } else if (node is List) { for (final child in node) visit(child); }
-    }
-    visit(value);
-    return {for (final f in files) f.id: f}.values.toList();
-  }
-
-  String _normalizedFolderName(String value) {
-    var n = value.toLowerCase().trim();
-    n = n.replaceAll(RegExp(r'(?:[\s._-]*(?:copy|duplicate|backup|副本|复制|拷贝|备份))(?:[\s._-]*\d+)?$', caseSensitive: false), '');
-    n = n.replaceAll(RegExp(r'(?:[（(\[]\s*\d{1,3}\s*[）)\]])$'), '');
-    return n.replaceAll(RegExp(r'[\s._()\[\]{}-]+'), '');
-  }
-
-  Future<void> _startScan() async {
-    if (_scanning) return;
-    setState(() { _scanning = true; _foldersScanned = 0; _similarGroups = []; });
-    try {
-      final api = ref.read(authProvider.notifier).api;
-      final allDirs = <CloudFile>[];
-      final queue = <CloudFile>[];
-      final rootResp = await api.fsFiles(parentID: null, page: 0, pageSize: 5000);
-      for (final child in _extractFiles(rootResp).where((c) => c.isDirectory)) queue.add(child);
-      while (queue.isNotEmpty) {
-        if (!mounted) return;
-        final folder = queue.removeLast();
-        allDirs.add(folder);
-        setState(() => _foldersScanned += 1);
-        final resp = await api.fsFiles(parentID: folder.id, page: 0, pageSize: 5000);
-        for (final child in _extractFiles(resp).where((c) => c.isDirectory)) queue.add(child);
-      }
-      final byKey = <String, List<CloudFile>>{};
-      for (final d in allDirs) {
-        final key = _normalizedFolderName(d.name);
-        if (key.isNotEmpty) byKey.putIfAbsent(key, () => []).add(d);
-      }
-      setState(() { _similarGroups = byKey.values.where((g) => g.length > 1).toList(); _scanning = false; });
-    } catch (e) {
-      setState(() { _scanning = false; });
-    }
-  }
-
-  Future<void> _pickDirectory() async {
-    final selection = await showShadDialog<String>(
-      context: context,
-      builder: (_) => const _CloudFolderPicker(title: '选择相似文件夹扫描目录'),
-    );
-    if (selection != null && mounted) {
-      final parts = selection.split('|');
-      setState(() => _selectedPath = parts[0]);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _ToolSection(
-            title: '相似文件夹扫描',
-            description: '扫描指定目录中名称相似的文件夹（可能需合并）。',
-            trailing: Row(children: [
-              ShadButton.outline(
-                onPressed: _pickDirectory,
-                leading: const Icon(Icons.folder_open_rounded, size: 16),
-                child: Text(_selectedPath ?? '选择目录'),
               ),
-              const SizedBox(width: 8),
+              child: const Text('保留路径最短，选择其余项'),
+            ),
+            ShadButton.ghost(
+              mainAxisAlignment: MainAxisAlignment.start,
+              onPressed: () => _applyDuplicateQuickSelection(
+                const _DuplicateQuickSelect(
+                  _DuplicateQuickSelectKind.keepLongestPath,
+                ),
+              ),
+              child: const Text('保留路径最长，选择其余项'),
+            ),
+            const Divider(height: 14),
+            ShadButton.ghost(
+              mainAxisAlignment: MainAxisAlignment.start,
+              onPressed: () => _applyDuplicateQuickSelection(
+                const _DuplicateQuickSelect(
+                  _DuplicateQuickSelectKind.keepLargestFile,
+                ),
+              ),
+              child: const Text('保留最大文件，选择其余项'),
+            ),
+            ShadButton.ghost(
+              mainAxisAlignment: MainAxisAlignment.start,
+              onPressed: () => _applyDuplicateQuickSelection(
+                const _DuplicateQuickSelect(
+                  _DuplicateQuickSelectKind.keepNewestFile,
+                ),
+              ),
+              child: const Text('保留最新文件，选择其余项'),
+            ),
+            const Divider(height: 14),
+            Row(
+              children: [
+                const Text('阈值', style: TextStyle(fontSize: 12)),
+                const Spacer(),
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: _duplicateQuickSelectMinimumMB <= 1
+                      ? null
+                      : () => setState(
+                          () => _duplicateQuickSelectMinimumMB =
+                              (_duplicateQuickSelectMinimumMB - 10).clamp(1, 50000),
+                        ),
+                  child: const Icon(Icons.remove_rounded, size: 15),
+                ),
+                SizedBox(
+                  width: 76,
+                  child: Text(
+                    '$_duplicateQuickSelectMinimumMB MB',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                  ),
+                ),
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: _duplicateQuickSelectMinimumMB >= 50000
+                      ? null
+                      : () => setState(
+                          () => _duplicateQuickSelectMinimumMB =
+                              (_duplicateQuickSelectMinimumMB + 10).clamp(1, 50000),
+                        ),
+                  child: const Icon(Icons.add_rounded, size: 15),
+                ),
+              ],
+            ),
+            ShadButton.ghost(
+              mainAxisAlignment: MainAxisAlignment.start,
+              onPressed: () => _applyDuplicateQuickSelection(
+                _DuplicateQuickSelect(
+                  _DuplicateQuickSelectKind.largerThan,
+                  minimumBytes: _duplicateQuickSelectMinimumMB * 1024 * 1024,
+                ),
+              ),
+              child: Text('选择大于 $_duplicateQuickSelectMinimumMB MB 的文件'),
+            ),
+            const Divider(height: 14),
+            ShadButton.ghost(
+              mainAxisAlignment: MainAxisAlignment.start,
+              onPressed: () => _applyDuplicateQuickSelection(
+                const _DuplicateQuickSelect(_DuplicateQuickSelectKind.clear),
+              ),
+              child: const Text('清除快速选择'),
+            ),
+          ],
+        ),
+      ),
+      child: ShadButton.outline(
+        size: ShadButtonSize.sm,
+        onPressed: _duplicateQuickSelectController.toggle,
+        leading: const Icon(Icons.auto_fix_high_rounded, size: 16),
+        child: const Text('快速选择'),
+      ),
+    );
+  }
+
+  Widget _duplicateGroup(List<CloudFile> files) => _DuplicateGroup(
+    files: files,
+    quickSelection: _duplicateQuickSelection,
+    quickSelectionRevision: _duplicateQuickSelectionRevision,
+  );
+
+  Widget _buildResults(ShadColorScheme cs) {
+    if (_error != null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Text('扫描失败：$_error', style: TextStyle(color: cs.destructive)),
+      );
+    }
+    if (_scanning) {
+      final progress = _foldersScanned == 0 && _filesScanned == 0
+          ? _scanPhase
+          : '$_scanPhase 已读取 $_foldersScanned 个目录、$_filesScanned 个文件';
+      return Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Row(
+          children: [
+            const AppLoadingIndicator(size: AppLoadingSize.inline),
+            const SizedBox(width: 8),
+            Text(progress, style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
+          ],
+        ),
+      );
+    }
+    if (!_hasScanned || _result == null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Text('选择扫描范围后开始扫描。', style: TextStyle(color: cs.mutedForeground)),
+      );
+    }
+
+    final result = _result!;
+    return switch (widget.kind) {
+      _WorkspaceScanKind.all => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 12),
+          Text(
+            '空文件夹 · ${result.emptyFolders.length} 个',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+          _CleanupList(
+            files: _pageItems('all-empty', result.emptyFolders),
+            emptyText: '没有发现空文件夹。',
+            onRemoved: _removeEmptyFolderCandidates,
+          ),
+          _pageControls('all-empty', result.emptyFolders.length, cs),
+          const SizedBox(height: 14),
+          Text(
+            '重复文件 · ${result.duplicateFiles.length} 组',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+          if (result.duplicateFiles.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text('没有发现重复文件。', style: TextStyle(color: cs.mutedForeground)),
+            )
+          else
+            for (final group in _pageItems('all-duplicates', result.duplicateFiles))
+              _DuplicateGroup(files: group),
+          _pageControls('all-duplicates', result.duplicateFiles.length, cs),
+          const SizedBox(height: 14),
+          Text(
+            '相似文件夹 · ${result.similarFolders.length} 组',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+          if (result.similarFolders.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text('没有发现相似文件夹。', style: TextStyle(color: cs.mutedForeground)),
+            )
+          else
+            for (final group in _pageItems('all-similar', result.similarFolders))
+              _SimilarFolderGroup(folders: group),
+          _pageControls('all-similar', result.similarFolders.length, cs),
+        ],
+      ),
+      _WorkspaceScanKind.emptyFolders => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 12),
+          Text('发现 ${result.emptyFolders.length} 个空文件夹', style: const TextStyle(fontSize: 12)),
+          _CleanupList(
+            files: _pageItems('empty', result.emptyFolders),
+            emptyText: '没有发现空文件夹。',
+            onRemoved: _removeEmptyFolderCandidates,
+          ),
+          _pageControls('empty', result.emptyFolders.length, cs),
+        ],
+      ),
+      _WorkspaceScanKind.duplicateFiles => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 12),
+          Text('发现 ${result.duplicateFiles.length} 组重复文件', style: const TextStyle(fontSize: 12)),
+          if (result.duplicateFiles.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text('没有发现重复文件。', style: TextStyle(color: cs.mutedForeground)),
+            )
+          else
+            for (final group in _pageItems('duplicates', result.duplicateFiles))
+              _DuplicateGroup(files: group),
+          _pageControls('duplicates', result.duplicateFiles.length, cs),
+        ],
+      ),
+      _WorkspaceScanKind.similarFolders => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 12),
+          Text('发现 ${result.similarFolders.length} 组相似文件夹', style: const TextStyle(fontSize: 12)),
+          if (result.similarFolders.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text('没有发现相似文件夹。', style: TextStyle(color: cs.mutedForeground)),
+            )
+          else
+            for (final group in _pageItems('similar', result.similarFolders))
+              _SimilarFolderGroup(folders: group),
+          _pageControls('similar', result.similarFolders.length, cs),
+        ],
+      ),
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return ListView(
+      padding: const EdgeInsets.all(18),
+      children: [
+        _ToolSection(
+          title: widget.kind.title,
+          description: widget.kind.description,
+          trailing: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 240),
+                child: ShadButton.outline(
+                  onPressed: _scanning ? null : _pickDirectory,
+                  leading: const Icon(Icons.folder_open_rounded, size: 16),
+                  child: Text(_selectedPath, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+              ),
               ShadButton(
-                onPressed: _selectedPath == null || _scanning ? null : _startScan,
+                onPressed: _scanning ? null : _startScan,
                 leading: _scanning
                     ? const AppLoadingIndicator(size: AppLoadingSize.inline)
                     : const Icon(Icons.search_rounded, size: 16),
                 child: Text(_scanning ? '扫描中…' : '开始扫描'),
               ),
-            ]),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const SizedBox(height: 8),
-              Text('扫描范围: $_pathLabel', style: TextStyle(fontSize: 12)),
-              if (_scanning || _foldersScanned > 0) ...[
-                const SizedBox(height: 8),
-                Text('已扫描 $_foldersScanned 个文件夹', style: TextStyle(fontSize: 12)),
-              ],
-              if (_similarGroups.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text('发现 ${_similarGroups.length} 组相似文件夹', style: TextStyle(fontSize: 12)),
-                Expanded(child: ListView.builder(
-                  itemCount: _similarGroups.length,
-                  itemBuilder: (_, i) => ListTile(
-                    leading: const Icon(Icons.folder_special_rounded, size: 16),
-                    title: Text('第 ${i + 1} 组 (${_similarGroups[i].length} 个)', style: const TextStyle(fontSize: 13)),
-                  ),
-                )),
-              ],
-            ]),
+            ],
           ),
-        ],
-      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 10),
+              Text('扫描范围：$_selectedPath', style: const TextStyle(fontSize: 12)),
+              _buildResults(cs),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
