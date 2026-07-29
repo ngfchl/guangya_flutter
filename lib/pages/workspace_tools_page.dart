@@ -545,6 +545,169 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
     );
   }
 
+  Future<List<CloudFile>> _loadRemoteFolderChildren(String folderID) async {
+    const pageSize = 500;
+    final children = <String, CloudFile>{};
+    for (var page = 0; ; page++) {
+      final response = await ref
+          .read(authProvider.notifier)
+          .api
+          .fsFiles(
+            parentID: folderID,
+            page: page,
+            pageSize: pageSize,
+            orderBy: 0,
+            sortType: 0,
+          );
+      final batch = extractWorkspaceCloudFiles(response);
+      for (final child in batch) {
+        children[child.id] = child;
+      }
+      if (batch.length < pageSize) break;
+    }
+    return children.values.toList(growable: false);
+  }
+
+  Future<bool> _folderTreeHasNoFiles(
+    String folderID, {
+    required Map<String, bool> memo,
+    required Set<String> visiting,
+  }) async {
+    final cached = memo[folderID];
+    if (cached != null) return cached;
+    if (!visiting.add(folderID)) return false;
+    try {
+      final children = await _loadRemoteFolderChildren(folderID);
+      if (children.any((child) => !child.isDirectory)) {
+        memo[folderID] = false;
+        return false;
+      }
+      for (final child in children.where((child) => child.isDirectory)) {
+        if (!await _folderTreeHasNoFiles(
+          child.id,
+          memo: memo,
+          visiting: visiting,
+        )) {
+          memo[folderID] = false;
+          return false;
+        }
+      }
+      memo[folderID] = true;
+      return true;
+    } finally {
+      visiting.remove(folderID);
+    }
+  }
+
+  Future<void> _showFolderDetails(CloudFile folder) async {
+    await showShadDialog<void>(
+      context: context,
+      builder: (dialogContext) => ShadDialog(
+        title: const Text('文件夹详情'),
+        description: Text(folder.name),
+        actions: [
+          ShadButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+        child: SizedBox(
+          width: 520,
+          child: FutureBuilder<CloudFile>(
+            future: _loadFolderDetail(folder),
+            builder: (context, snapshot) {
+              final detail = snapshot.data ?? folder;
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 36),
+                  child: Center(
+                    child: AppLoadingIndicator(
+                      size: AppLoadingSize.compact,
+                    ),
+                  ),
+                );
+              }
+              final cs = ShadTheme.of(context).colorScheme;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (snapshot.hasError)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        '最新详情读取失败，以下为本地索引信息：${snapshot.error}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: cs.destructive,
+                        ),
+                      ),
+                    ),
+                  _FolderDetailRow(label: '名称', value: detail.name),
+                  _FolderDetailRow(
+                    label: '完整路径',
+                    value: detail.cloudPath.isEmpty
+                        ? folder.cloudPath
+                        : detail.cloudPath,
+                  ),
+                  _FolderDetailRow(label: '目录 ID', value: detail.id),
+                  _FolderDetailRow(
+                    label: '父目录 ID',
+                    value: detail.parentID?.isNotEmpty == true
+                        ? detail.parentID!
+                        : '云盘根目录',
+                  ),
+                  _FolderDetailRow(
+                    label: '子文件夹',
+                    value: detail.subDirectoryCount?.toString() ?? '--',
+                  ),
+                  _FolderDetailRow(
+                    label: '子文件',
+                    value: detail.subFileCount?.toString() ?? '--',
+                  ),
+                  _FolderDetailRow(
+                    label: '大小',
+                    value: detail.formattedSize,
+                  ),
+                  _FolderDetailRow(
+                    label: '修改时间',
+                    value: detail.modifiedAt.isEmpty
+                        ? '--'
+                        : detail.modifiedAt,
+                  ),
+                  if (detail.fullParentIDs?.isNotEmpty == true)
+                    _FolderDetailRow(
+                      label: '祖先目录 ID',
+                      value: detail.fullParentIDs!,
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _folderStatus(CloudFile folder, ShadColorScheme cs) {
+    if (_deletedIDs.contains(folder.id)) {
+      return Text(
+        '已完成',
+        style: TextStyle(fontSize: 11, color: cs.primary),
+      );
+    }
+    if (_failedIDs.contains(folder.id)) {
+      return Text(
+        '失败',
+        style: TextStyle(fontSize: 11, color: cs.destructive),
+      );
+    }
+    if ((_checking && _checkingFolderID == folder.id) ||
+        (_deleting && _currentDeleteID == folder.id)) {
+      return const AppLoadingIndicator(size: AppLoadingSize.inline);
+    }
+    return Icon(Icons.folder_rounded, color: cs.primary);
+  }
+
   Future<void> _confirmDeleteSelected() async {
     final targets = widget.files.where((file) => _selectedIDs.contains(file.id)).toList();
     if (targets.isEmpty || _checking || _deleting) return;
@@ -558,7 +721,7 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
         ],
         child: const Padding(
           padding: EdgeInsets.only(top: 10),
-          child: Text('删除前会逐个获取目录详情。确认仍为空的目录将直接删除；已有内容的目录会从候选列表移除。'),
+          child: Text('删除前会递归复检目录。整棵目录树没有任何文件时才会删除；发现文件的目录会从候选列表移除。'),
         ),
       ),
     );
@@ -574,15 +737,27 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
     final removedIDs = <String>{};
     var nonEmptyCount = 0;
     var failedCount = 0;
+    final verificationMemo = <String, bool>{};
     for (final folder in targets) {
       if (!mounted) return;
       setState(() => _checkingFolderID = folder.id);
       try {
-        final detail = await _loadFolderDetail(folder);
-        if ((detail.subDirectoryCount ?? 0) == 0 && (detail.subFileCount ?? 0) == 0) {
-          confirmedEmpty.add(detail);
+        final hasNoFiles = await _folderTreeHasNoFiles(
+          folder.id,
+          memo: verificationMemo,
+          visiting: <String>{},
+        );
+        if (hasNoFiles) {
+          confirmedEmpty.add(folder);
         } else {
-          await _updateNonEmptyFolderCache(detail);
+          try {
+            await _updateNonEmptyFolderCache(
+              await _loadFolderDetail(folder),
+            );
+          } catch (_) {
+            // Recursive listing already confirmed that this folder contains
+            // files; detail counters are only used to enrich the cache.
+          }
           removedIDs.add(folder.id);
           nonEmptyCount += 1;
         }
@@ -746,17 +921,63 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
             subtitle: file.cloudPath.isEmpty
                 ? null
                 : Text(file.cloudPath, maxLines: 1, overflow: TextOverflow.ellipsis),
-            trailing: _deletedIDs.contains(file.id)
-                ? Text('已完成', style: TextStyle(fontSize: 11, color: cs.primary))
-                : (_failedIDs.contains(file.id)
-                      ? Text('失败', style: TextStyle(fontSize: 11, color: cs.destructive))
-                      : (_checking && _checkingFolderID == file.id
-                            ? const AppLoadingIndicator(size: AppLoadingSize.inline)
-                            : (_deleting && _currentDeleteID == file.id
-                                  ? const AppLoadingIndicator(size: AppLoadingSize.inline)
-                                  : Icon(Icons.folder_rounded, color: cs.primary)))),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: () => _showFolderDetails(file),
+                  leading: const Icon(
+                    Icons.info_outline_rounded,
+                    size: 15,
+                  ),
+                  child: const Text('查看详情'),
+                ),
+                const SizedBox(width: 6),
+                _folderStatus(file, cs),
+              ],
+            ),
           ),
       ],
+    );
+  }
+}
+
+class _FolderDetailRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _FolderDetailRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 86,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: cs.mutedForeground,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: SelectionArea(
+              child: Text(
+                value.isEmpty ? '--' : value,
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -4933,9 +5154,31 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
       if (!refreshed) throw StateError('云盘索引增量更新失败');
       if (!mounted) return;
       setState(() => _scanPhase = '正在从 SQLite 流式读取目录索引…');
+      final pathEmptyScan =
+          widget.kind == _WorkspaceScanKind.emptyFolders ||
+              widget.kind == _WorkspaceScanKind.all
+          ? await _scanEmptyFoldersByFileParents()
+          : null;
+      if (!mounted) return;
+      if (widget.kind == _WorkspaceScanKind.emptyFolders) {
+        setState(() {
+          _result = WorkspaceScanResult(
+            emptyFolders: pathEmptyScan!.emptyFolders,
+            duplicateFiles: const [],
+            similarFolders: const [],
+            foldersScanned: pathEmptyScan.foldersScanned,
+            filesScanned: pathEmptyScan.filesScanned,
+          );
+          _foldersScanned = pathEmptyScan.foldersScanned;
+          _filesScanned = pathEmptyScan.filesScanned;
+        });
+        return;
+      }
       final scanner = WorkspaceScanner(
         loadChildren: (folderID) async {
-          final children = await FileMetadataCache.folderChildren(folderID);
+          final children = await FileMetadataCache.folderChildrenForScan(
+            folderID,
+          );
           if (children == null) {
             throw StateError('SQLite 文件索引不完整，请先在设置中执行全量索引');
           }
@@ -4969,7 +5212,15 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
       );
       if (!mounted) return;
       setState(() {
-        _result = result;
+        _result = pathEmptyScan == null
+            ? result
+            : WorkspaceScanResult(
+                emptyFolders: pathEmptyScan.emptyFolders,
+                duplicateFiles: result.duplicateFiles,
+                similarFolders: result.similarFolders,
+                foldersScanned: result.foldersScanned,
+                filesScanned: result.filesScanned,
+              );
         _foldersScanned = result.foldersScanned;
         _filesScanned = result.filesScanned;
       });
@@ -4978,6 +5229,131 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
+  }
+
+  Future<
+    ({
+      List<CloudFile> emptyFolders,
+      int foldersScanned,
+      int filesScanned,
+    })
+  >
+  _scanEmptyFoldersByFileParents() async {
+    final directories = <String, CloudFile>{};
+    final directoryParents = <String, String?>{};
+    final allDirectoryIDs = <String>{};
+    final directoriesWithFiles = <String>{};
+    final seenFileIDs = <String>{};
+    var fileCount = 0;
+
+    await FileMetadataCache.folderChildrenSnapshotsBatched((snapshots) async {
+      for (final snapshot in snapshots.entries) {
+        final snapshotParentID = snapshot.key;
+        if (snapshotParentID != null) {
+          allDirectoryIDs.add(snapshotParentID);
+        }
+        for (final entry in snapshot.value) {
+          final declaredParentID = entry.parentID?.trim();
+          final parentID =
+              declaredParentID != null && declaredParentID.isNotEmpty
+              ? declaredParentID
+              : snapshotParentID;
+          if (entry.isDirectory) {
+            allDirectoryIDs.add(entry.id);
+            directories[entry.id] = entry;
+            directoryParents[entry.id] = parentID;
+          } else if (seenFileIDs.add(entry.id)) {
+            fileCount += 1;
+            if (parentID != null && parentID.isNotEmpty) {
+              directoriesWithFiles.add(parentID);
+            }
+          }
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _foldersScanned = allDirectoryIDs.length;
+          _filesScanned = fileCount;
+        });
+      }
+    }, batchSize: 250);
+
+    // A file makes its direct parent and every ancestor non-empty.
+    final queue = directoriesWithFiles.toList(growable: true);
+    for (var index = 0; index < queue.length; index++) {
+      final directoryID = queue[index];
+      final parentID = directoryParents[directoryID];
+      if (parentID != null &&
+          parentID.isNotEmpty &&
+          directoriesWithFiles.add(parentID)) {
+        queue.add(parentID);
+      }
+    }
+
+    final pathCache = <String, String>{};
+    String resolveDirectoryPath(CloudFile folder) {
+      final cached = pathCache[folder.id];
+      if (cached != null) return cached;
+      final names = <String>[folder.name];
+      final visited = <String>{folder.id};
+      var parentID = directoryParents[folder.id];
+      while (parentID != null && parentID.isNotEmpty && visited.add(parentID)) {
+        if (parentID == _selectedFolderID) break;
+        final parent = directories[parentID];
+        if (parent == null) break;
+        names.add(parent.name);
+        parentID = directoryParents[parentID];
+      }
+      final prefix = _selectedFolderID == null
+          ? ''
+          : (_selectedPath == '云盘根目录'
+                ? ''
+                : '/${_selectedPath.split(' / ').join('/')}');
+      final resolved =
+          '$prefix/${names.reversed.join('/')}'
+              .replaceAll(RegExp(r'/+'), '/')
+              .replaceFirst(RegExp(r'/$'), '');
+      pathCache[folder.id] = resolved;
+      return resolved;
+    }
+
+    bool isInSelectedSubtree(CloudFile folder) {
+      final selectedID = _selectedFolderID;
+      if (selectedID == null) return true;
+      var parentID = directoryParents[folder.id];
+      final visited = <String>{folder.id};
+      while (parentID != null && parentID.isNotEmpty && visited.add(parentID)) {
+        if (parentID == selectedID) return true;
+        parentID = directoryParents[parentID];
+      }
+      final ancestors = folder.fullParentIDs
+          ?.split(RegExp(r'[^0-9A-Za-z_-]+'))
+          .where((id) => id.isNotEmpty);
+      return ancestors?.contains(selectedID) ?? false;
+    }
+
+    final emptyFolders = allDirectoryIDs
+        .where((id) => !directoriesWithFiles.contains(id))
+        .map((id) => directories[id])
+        .whereType<CloudFile>()
+        .where((folder) {
+          if (folder.id == _selectedFolderID ||
+              !isInSelectedSubtree(folder)) {
+            return false;
+          }
+          return true;
+        })
+        .map(
+          (folder) =>
+              folder.copyWith(cloudPath: resolveDirectoryPath(folder)),
+        )
+        .toList()
+      ..sort((left, right) => left.cloudPath.compareTo(right.cloudPath));
+    return (
+      emptyFolders: emptyFolders,
+      foldersScanned: allDirectoryIDs.length,
+      filesScanned: fileCount,
+    );
   }
 
   Future<void> _pickDirectory() async {
@@ -5480,9 +5856,9 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
       final progress = _foldersScanned == 0 && _filesScanned == 0
           ? _scanPhase
           : '$_scanPhase 已读取 $_foldersScanned 个目录、$_filesScanned 个文件';
-      return Padding(
-        padding: const EdgeInsets.only(top: 12),
-        child: Center(
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 12),
           child: Row(
             children: [
               const AppLoadingIndicator(size: AppLoadingSize.inline),
