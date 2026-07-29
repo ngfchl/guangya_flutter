@@ -2558,7 +2558,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     _appendScanLog('[同步识别][调试] 已请求取消同步识别');
   }
 
-  Future<bool> refreshGlobalCloudIndex({bool force = false}) async {
+  Future<bool> refreshGlobalCloudIndex({
+    bool force = false,
+    bool forceIncrementalCheck = false,
+  }) async {
     if (_api == null) {
       AppLogger.warning('CloudIndex', '无法刷新全盘文件索引：云盘接口尚未初始化');
       return false;
@@ -2589,7 +2592,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         lastUpdated == null ||
         rootSnapshot == null ||
         !liveGCIDIndexReady;
-    if (!force && !needsFullRebuild) {
+    if (!force && !forceIncrementalCheck && !needsFullRebuild) {
       final elapsed = DateTime.now().difference(
         DateTime.fromMillisecondsSinceEpoch(lastUpdated),
       );
@@ -2612,6 +2615,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       late final _CloudIndexRefreshResult result;
       if (needsFullRebuild) {
         final reason = force ? '用户手动触发' : '本地缓存为空';
+        if (force) {
+          AppLogger.info('CloudIndex', '手动全量刷新：正在清空本地文件索引');
+          await FileMetadataCache.clearFolderChildrenIndex();
+          await StorageManager.delete(StorageKeys.cloudIndexLastUpdatedAt);
+        }
         await StorageManager.delete(StorageKeys.cloudIndexLiveGCIDVersion);
         AppLogger.info('CloudIndex', '开始通过全盘分页接口刷新索引：$reason');
         result = await _rebuildGlobalCloudIndex();

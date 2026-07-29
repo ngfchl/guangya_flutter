@@ -291,24 +291,60 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                     _SettingsRow(
                       icon: Icons.refresh_rounded,
                       label: '全盘文件索引',
-                      child: ShadButton.outline(
-                        size: ShadButtonSize.sm,
-                        onPressed: mediaState.isRefreshingCloudIndex
-                            ? null
-                            : () => unawaited(
-                                ref
-                                    .read(mediaLibraryProvider.notifier)
-                                    .refreshGlobalCloudIndex(force: true),
+                      child: SizedBox(
+                        width: 124,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ShadButton.outline(
+                              size: ShadButtonSize.sm,
+                              onPressed: mediaState.isRefreshingCloudIndex
+                                  ? null
+                                  : () => unawaited(
+                                      ref
+                                          .read(
+                                            mediaLibraryProvider.notifier,
+                                          )
+                                          .refreshGlobalCloudIndex(force: true),
+                                    ),
+                              leading: mediaState.isRefreshingCloudIndex
+                                  ? AppLoadingIndicator(
+                                      size: AppLoadingSize.inline,
+                                      color: cs.primary,
+                                      semanticsLabel: '正在刷新全盘文件索引',
+                                    )
+                                  : const Icon(
+                                      Icons.refresh_rounded,
+                                      size: 15,
+                                    ),
+                              child: Text(
+                                mediaState.isRefreshingCloudIndex
+                                    ? '刷新中'
+                                    : '立即刷新',
                               ),
-                        leading: mediaState.isRefreshingCloudIndex
-                            ? AppLoadingIndicator(
-                                size: AppLoadingSize.inline,
-                                color: cs.primary,
-                                semanticsLabel: '正在刷新全盘文件索引',
-                              )
-                            : const Icon(Icons.refresh_rounded, size: 15),
-                        child: Text(
-                          mediaState.isRefreshingCloudIndex ? '刷新中' : '立即刷新',
+                            ),
+                            const SizedBox(height: 6),
+                            ShadButton.outline(
+                              size: ShadButtonSize.sm,
+                              onPressed: mediaState.isRefreshingCloudIndex
+                                  ? null
+                                  : () => unawaited(
+                                      ref
+                                          .read(
+                                            mediaLibraryProvider.notifier,
+                                          )
+                                          .refreshGlobalCloudIndex(
+                                            forceIncrementalCheck: true,
+                                          ),
+                                    ),
+                              leading: const Icon(
+                                Icons.sync_rounded,
+                                size: 15,
+                              ),
+                              child: const Text('增量刷新'),
+                            ),
+                          ],
                         ),
                       ),
                     ),
