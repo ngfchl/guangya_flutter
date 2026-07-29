@@ -1005,6 +1005,14 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                         Row(
                           children: [
                             Flexible(child: Text(file.name, overflow: TextOverflow.ellipsis)),
+                            if (file.size != null && file.size! > 0)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 8),
+                                child: Text(
+                                  file.formattedSize,
+                                  style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                                ),
+                              ),
                             if (_deletedIDs.contains(file.id))
                               Padding(
                                 padding: const EdgeInsets.only(left: 6),
@@ -5215,14 +5223,16 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 240),
                 child: ShadButton.outline(
+                  size: ShadButtonSize.sm,
                   onPressed: _scanning ? null : _pickDirectory,
                   leading: const Icon(Icons.folder_open_rounded, size: 16),
-                  child: Text(_selectedPath, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  child: Text(_selectedPath, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
                 ),
               ),
               if (_result != null)
                 SizedBox(
-                  width: 100,
+                  width: 120,
+                  height: 32,
                   child: ShadSelect<int>(
                     initialValue: _pageSize,
                     selectedOptionBuilder: (context, value) => Text('$value 条/页', style: const TextStyle(fontSize: 12)),
@@ -5241,6 +5251,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
                   ),
                 ),
               ShadButton(
+                size: ShadButtonSize.sm,
                 onPressed: _scanning ? null : _startScan,
                 leading: _scanning
                     ? const AppLoadingIndicator(size: AppLoadingSize.inline)
