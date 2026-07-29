@@ -323,7 +323,7 @@ class GuangyaAPI {
   Future<Map<String, dynamic>> fsDelete(List<String> fileIDs) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/file/delete_file',
-      body: {'fileIds': fileIDs},
+      body: {'fileIds': fileIDs, 'clientId': AppConfig.clientID},
     );
   }
 
