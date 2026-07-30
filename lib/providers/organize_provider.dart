@@ -726,6 +726,10 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   Future<void> _executeAction(OrganizeAction action) async {
     switch (action.type) {
       case OrganizeActionType.moveToBase:
+        if (_sameParent(action.sourceParentId, action.targetParentId)) {
+          _log('  跳过: ${action.sourceName} 已在目标目录');
+          break;
+        }
         _log('  移动: ${action.sourceName} → ${action.targetParentName ?? ""}/');
         await _api!.fsMove([action.sourceId], parentID: action.targetParentId);
         await _syncMoveCache(action);
@@ -741,7 +745,8 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
         _log('  重命名: ${action.sourceName} → ${action.newFileName}');
         await _api!.fsRename(action.sourceId, action.newFileName!);
         await _syncRenameCache(action);
-        if (action.targetParentId != null) {
+        if (action.targetParentId != null &&
+            !_sameParent(action.sourceParentId, action.targetParentId)) {
           _log('  移入: ${action.newFileName} → ${action.targetParentName ?? ""}/');
           await _api!.fsMove([action.sourceId], parentID: action.targetParentId);
           await _syncMoveCache(action);
@@ -806,6 +811,9 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
     return normalized == null || normalized.isEmpty ? null : normalized;
   }
 
+  bool _sameParent(String? left, String? right) =>
+      _cacheParentID(left) == _cacheParentID(right);
+
   // ═══════════════════════════════════════════════════
   //  工具
   // ═══════════════════════════════════════════════════
@@ -814,6 +822,11 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   String? _unfolderKey(String key) => key == '__root__' ? null : key;
 
   void _addAction(OrganizeAction action) {
+    if (action.type == OrganizeActionType.moveToBase &&
+        _sameParent(action.sourceParentId, action.targetParentId)) {
+      _log('  跳过: ${action.sourceName} 已在目标目录');
+      return;
+    }
     state = state.copyWith(actions: [...state.actions, action]);
   }
 
