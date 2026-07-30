@@ -4591,6 +4591,8 @@ class _MediaLibraryScanTaskDialogState
 class _MediaLibraryManagementDialogState
     extends ConsumerState<_MediaLibraryManagementDialog> {
   bool _backupBusy = false;
+  final _clearingLibraryIDs = <String>{};
+  bool _clearingAllLibraries = false;
 
   @override
   Widget build(BuildContext context) {
@@ -4644,8 +4646,14 @@ class _MediaLibraryManagementDialogState
                         _backupBusy || state.hasActiveScans || state.libraries.isEmpty
                             ? null
                             : _clearAllLibraries,
-                    leading: const Icon(Icons.delete_sweep_rounded, size: 16),
-                    child: const Text('清理'),
+                    leading: _clearingAllLibraries
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete_sweep_rounded, size: 16),
+                    child: Text(_clearingAllLibraries ? '清理中' : '清理'),
                   ),
                 ),
                 Expanded(
@@ -4683,7 +4691,8 @@ class _MediaLibraryManagementDialogState
                           library: library,
                           statistics: statistics,
                           selected: library.id == state.selectedLibraryID,
-                          disabled: scanning,
+                          disabled: scanning || _backupBusy,
+                          clearing: _clearingLibraryIDs.contains(library.id),
                           onSelect: () => ref
                               .read(mediaLibraryProvider.notifier)
                               .selectLibrary(library.id),
@@ -4770,12 +4779,20 @@ class _MediaLibraryManagementDialogState
       confirmText: '清空',
     );
     if (!confirmed || !mounted) return;
-    setState(() => _backupBusy = true);
+    setState(() {
+      _backupBusy = true;
+      _clearingLibraryIDs.add(library.id);
+    });
     AppLogger.info('Media', '[媒体库页面-清空媒体库] 确认清空「${library.name}」，ID=${library.id}');
     try {
       await ref.read(mediaLibraryProvider.notifier).clearLibrary(library.id);
     } finally {
-      if (mounted) setState(() => _backupBusy = false);
+      if (mounted) {
+        setState(() {
+          _backupBusy = false;
+          _clearingLibraryIDs.remove(library.id);
+        });
+      }
     }
   }
 
@@ -4791,7 +4808,10 @@ class _MediaLibraryManagementDialogState
       confirmText: '全部清空',
     );
     if (!confirmed || !mounted) return;
-    setState(() => _backupBusy = true);
+    setState(() {
+      _backupBusy = true;
+      _clearingAllLibraries = true;
+    });
     AppLogger.info('Media', '[媒体库页面-清空所有] 确认清空 $count 个媒体库');
     try {
       for (final library in libs) {
@@ -4799,7 +4819,12 @@ class _MediaLibraryManagementDialogState
         await ref.read(mediaLibraryProvider.notifier).clearLibrary(library.id);
       }
     } finally {
-      if (mounted) setState(() => _backupBusy = false);
+      if (mounted) {
+        setState(() {
+          _backupBusy = false;
+          _clearingAllLibraries = false;
+        });
+      }
     }
   }
 
@@ -4911,6 +4936,7 @@ class _ManagementLibraryRow extends ConsumerWidget {
   final MediaLibraryStatistics statistics;
   final bool selected;
   final bool disabled;
+  final bool clearing;
   final VoidCallback onSelect;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -4921,6 +4947,7 @@ class _ManagementLibraryRow extends ConsumerWidget {
     required this.statistics,
     required this.selected,
     required this.disabled,
+    required this.clearing,
     required this.onSelect,
     required this.onEdit,
     required this.onDelete,
@@ -5032,7 +5059,13 @@ class _ManagementLibraryRow extends ConsumerWidget {
               child: ShadButton.ghost(
                 size: ShadButtonSize.sm,
                 onPressed: disabled ? null : onClear,
-                child: const Icon(Icons.cleaning_services_rounded, size: 16),
+                child: clearing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cleaning_services_rounded, size: 16),
               ),
             ),
             ShadTooltip(
