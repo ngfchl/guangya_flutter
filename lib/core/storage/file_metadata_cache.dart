@@ -5,6 +5,9 @@ import 'media_library_store.dart';
 class FileMetadataCache {
   static final _store = MediaLibraryStore();
 
+  static Future<Map<String, String>> gcidsByFileIDs(Iterable<String> fileIDs) =>
+      _store.gcidsByFileIDs(fileIDs);
+
   static Future<void> cacheFolderChildren(
     String? folderID,
     List<CloudFile> files,

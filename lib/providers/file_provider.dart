@@ -294,6 +294,8 @@ class FileNotifier extends StateNotifier<FileState> {
 
   FileNotifier() : super(const FileState());
 
+  GuangyaAPI? get api => _api;   // ← 加这一行
+
   bool _sameParentID(String? left, String? right) {
     final normalizedLeft = left?.trim();
     final normalizedRight = right?.trim();

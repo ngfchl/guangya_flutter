@@ -1486,6 +1486,28 @@ class MediaLibraryStore {
     }
     return result;
   }
+  /// Returns gcid values for the given file IDs from the file_index table.
+  Future<Map<String, String>> gcidsByFileIDs(Iterable<String> fileIDs) async {
+    final ids = fileIDs.where((id) => id.isNotEmpty).toSet();
+    if (ids.isEmpty) return const {};
+    final db = await _db;
+    final result = <String, String>{};
+    for (final chunk in _chunked(ids.toList(), 500)) {
+      final rows = await db.rawQuery(
+        'SELECT file_id, gcid FROM file_index '
+            'WHERE file_id IN (${chunk.map((_) => '?').join(',')})',
+        chunk,
+      );
+      for (final row in rows) {
+        final fileId = row['file_id']?.toString();
+        final gcid = row['gcid']?.toString();
+        if (fileId != null && gcid != null && gcid.isNotEmpty) {
+          result[fileId] = gcid;
+        }
+      }
+    }
+    return result;
+  }
 
   /// Returns the folder snapshot that still contains [fileID]. An empty
   /// string represents the cloud root; null means no cached parent exists.
