@@ -10,6 +10,7 @@ class FileListTile extends StatefulWidget {
   final CloudFile file;
   final bool isSelected;
   final VoidCallback? onSelect;
+  final VoidCallback? onLongPress;
   final VoidCallback? onOpen;
   final String openLabel;
   final VoidCallback? onPreview;
@@ -34,6 +35,7 @@ class FileListTile extends StatefulWidget {
     required this.file,
     this.isSelected = false,
     this.onSelect,
+    this.onLongPress,
     this.onOpen,
     this.openLabel = '打开',
     this.onPreview,
@@ -272,6 +274,7 @@ class _FileListTileState extends State<FileListTile> {
         hint: _isRenaming ? '正在重命名' : '点按选择，双击打开',
         child: GestureDetector(
           onTap: _isRenaming ? null : widget.onSelect,
+          onLongPress: _isRenaming ? null : widget.onLongPress,
           onDoubleTap: _isRenaming ? null : widget.onOpen,
           child: Container(
             height: compact ? 74 : 62,

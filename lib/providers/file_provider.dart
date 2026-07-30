@@ -1247,8 +1247,8 @@ class FileNotifier extends StateNotifier<FileState> {
     }
   }
 
-  Future<void> copyFilesTo(List<CloudFile> files, {String? parentID}) async {
-    if (_api == null || files.isEmpty) return;
+  Future<bool> copyFilesTo(List<CloudFile> files, {String? parentID}) async {
+    if (_api == null || files.isEmpty) return false;
     state = state.copyWith(statusMessage: '正在复制 ${files.length} 个项目…');
     try {
       await _api!.fsCopy(
@@ -1259,8 +1259,10 @@ class FileNotifier extends StateNotifier<FileState> {
       await _invalidateListCache(parentID);
       state = state.copyWith(statusMessage: '复制完成');
       await loadFiles(parentID: _currentParentID);
+      return true;
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
+      return false;
     }
   }
 
@@ -2065,14 +2067,14 @@ class FileNotifier extends StateNotifier<FileState> {
     }
   }
 
-  Future<void> moveFilesTo(List<CloudFile> files, {String? parentID}) async {
-    if (_api == null || files.isEmpty) return;
+  Future<bool> moveFilesTo(List<CloudFile> files, {String? parentID}) async {
+    if (_api == null || files.isEmpty) return false;
     final movable = files
         .where((file) => !_sameParentID(file.parentID, parentID))
         .toList(growable: false);
     if (movable.isEmpty) {
       state = state.copyWith(statusMessage: '不能移动至相同目录', clearError: true);
-      return;
+      return false;
     }
     final skipped = files.length - movable.length;
     state = state.copyWith(
