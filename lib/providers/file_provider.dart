@@ -151,6 +151,28 @@ extension FileSortExt on FileSort {
 
 enum SortDirection { ascending, descending }
 
+const supportedFilePageSizes = [
+  10,
+  20,
+  50,
+  100,
+  200,
+  500,
+  1000,
+  2000,
+  5000,
+  10000,
+];
+
+int normalizeFilePageSize(String? value) {
+  final parsed = int.tryParse(value?.trim() ?? '');
+  return supportedFilePageSizes.contains(parsed) ? parsed! : 50;
+}
+
+int configuredDefaultFilePageSize() => normalizeFilePageSize(
+  StorageManager.get<String>(StorageKeys.defaultFilePageSize),
+);
+
 class UploadProgress {
   final int totalFiles;
   final int completedFiles;
@@ -292,7 +314,8 @@ class FileNotifier extends StateNotifier<FileState> {
   final _pendingStatsIDs = <String>{};
   Timer? _statsDebounce;
 
-  FileNotifier() : super(const FileState());
+  FileNotifier()
+    : super(FileState(pageSize: configuredDefaultFilePageSize()));
 
   GuangyaAPI? get api => _api;   // ← 加这一行
 

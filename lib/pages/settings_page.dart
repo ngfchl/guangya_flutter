@@ -7,6 +7,7 @@ import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 import '../providers/theme_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../providers/auth_provider.dart';
+import '../providers/file_provider.dart';
 import '../widgets/app_log_dialog.dart';
 import '../core/http/dio_client.dart';
 import '../core/storage/storage_manager.dart';
@@ -475,6 +476,10 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   );
 
   Future<void> _saveSettings() async {
+    final defaultFilePageSize = normalizeFilePageSize(
+      _pageSizeController.text,
+    );
+    _pageSizeController.text = '$defaultFilePageSize';
     await Future.wait([
       StorageManager.set(
         StorageKeys.tmdbApiKey,
@@ -524,7 +529,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       ),
       StorageManager.set(
         StorageKeys.defaultFilePageSize,
-        _pageSizeController.text.trim(),
+        '$defaultFilePageSize',
       ),
       StorageManager.set(
         StorageKeys.mediaLibraryPageSize,
@@ -544,6 +549,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       ),
     ]);
     DioClient.updateNetworkProxy();
+    ref.read(fileProvider.notifier).setPageSize(defaultFilePageSize);
     ref.read(mediaLibraryProvider.notifier).updateCloudIndexRefreshSchedule();
   }
 
