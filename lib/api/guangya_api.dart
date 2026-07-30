@@ -348,7 +348,7 @@ class GuangyaAPI {
   Future<Map<String, dynamic>> fsDetail(String fileID) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/file/get_file_detail',
-      body: {'fileId': fileID},
+      body: {'fileId': fileID, 'clientId': AppConfig.clientID},
     );
   }
 
