@@ -316,7 +316,7 @@ class GuangyaAPI {
   }) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/file/move_file',
-      body: {'fileIds': fileIDs, 'parentId': parentID ?? ''},
+      body: {'fileIds': fileIDs, 'parentId': parentID ?? '', 'clientId': AppConfig.clientID},
     );
   }
 
@@ -330,7 +330,7 @@ class GuangyaAPI {
   Future<Map<String, dynamic>> fsRecycle(List<String> fileIDs) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/file/recycle_file',
-      body: {'fileIds': fileIDs},
+      body: {'fileIds': fileIDs, 'clientId': AppConfig.clientID},
     );
   }
 
