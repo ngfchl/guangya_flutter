@@ -11,9 +11,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
 
+import '../core/logging/app_logger.dart';
 import '../core/storage/file_metadata_cache.dart';
 import '../core/storage/storage_manager.dart';
-import '../core/utils/json_deep.dart';
 import '../core/utils/workspace_scanner.dart';
 import '../models/cloud_file.dart';
 import '../models/batch_rename.dart';
@@ -25,6 +25,9 @@ import '../providers/media_library_provider.dart';
 import '../utils/fast_transfer_path_resolver.dart';
 import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
+import '../widgets/file_detail_dialog.dart';
+import '../widgets/file_preview_dialog.dart';
+import '../widgets/media_player_dialog.dart';
 import 'media_library_page.dart';
 
 enum WorkspaceTool {
@@ -459,8 +462,9 @@ class _CleanupList extends ConsumerStatefulWidget {
   final List<CloudFile> files;
   final String emptyText;
   final ValueChanged<Set<String>> onRemoved;
+  final List<CloudFile>? allFiles;
 
-  const _CleanupList({required this.files, required this.emptyText, required this.onRemoved});
+  const _CleanupList({required this.files, required this.emptyText, required this.onRemoved, this.allFiles});
 
   @override
   ConsumerState<_CleanupList> createState() => _CleanupListState();
@@ -472,6 +476,8 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
   bool _deleting = false;
   int _deleteTotal = 0;
   int _deleteCurrent = 0;
+  int _overallTotal = 0;
+  int _overallProcessed = 0;
   String? _checkingFolderID;
   String? _currentDeleteID;
   final _deletedIDs = <String>{};
@@ -480,10 +486,10 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
   @override
   void didUpdateWidget(covariant _CleanupList oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final currentIDs = widget.files.map((file) => file.id).toSet();
-    _selectedIDs.removeWhere((id) => !currentIDs.contains(id));
-    _deletedIDs.removeWhere((id) => !currentIDs.contains(id));
-    _failedIDs.removeWhere((id) => !currentIDs.contains(id));
+    final validIDs = widget.allFiles?.map((f) => f.id).toSet() ?? widget.files.map((file) => file.id).toSet();
+    _selectedIDs.removeWhere((id) => !validIDs.contains(id));
+    _deletedIDs.removeWhere((id) => !validIDs.contains(id));
+    _failedIDs.removeWhere((id) => !validIDs.contains(id));
   }
 
   CloudFile? _detailFile(Map<String, dynamic> response, String fileID) {
@@ -514,19 +520,19 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
 
   Future<CloudFile> _loadFolderDetail(CloudFile folder) async {
     final response = await ref.read(authProvider.notifier).api.fsDetail(folder.id);
+    debugPrint('_loadFolderDetail API 响应: ${jsonEncode(response)}');
     final detail = _detailFile(response, folder.id);
-    final subDirectoryCount =
-        detail?.subDirectoryCount ??
-        JsonDeep.findInt(response, const ['subDirCount', 'subDirectoryCount', 'directoryCount', 'dirCount']);
-    final subFileCount =
-        detail?.subFileCount ?? JsonDeep.findInt(response, const ['subFileCount', 'subFileNum', 'fileCount']);
-    if (subDirectoryCount == null || subFileCount == null) {
-      throw StateError('目录详情缺少子项计数');
-    }
+    // 直接解析 data.sizeInfo 子对象
+    final dataNode = response['data'];
+    final sizeInfo = dataNode is Map ? dataNode['sizeInfo'] as Map<String, dynamic>? : null;
+    AppLogger.debug('[文件详情]', 'sizeInfo: $sizeInfo');
+    final subDirCount = sizeInfo?['subDirCount'] as int?;
+    final subFileCount = sizeInfo?['subFileCount'] as int?;
+    final size = sizeInfo?['size'] as int?;
     return folder.copyWith(
-      size: detail?.size ?? folder.size,
-      subDirectoryCount: subDirectoryCount,
-      subFileCount: subFileCount,
+      size: size ?? 0,
+      subDirectoryCount: subDirCount ?? 0,
+      subFileCount: subFileCount ?? 0,
       modifiedAt: detail?.modifiedAt.isNotEmpty == true ? detail!.modifiedAt : folder.modifiedAt,
       cloudPath: detail?.cloudPath.isNotEmpty == true ? detail!.cloudPath : folder.cloudPath,
       parentID: detail?.parentID ?? folder.parentID,
@@ -552,13 +558,7 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
       final response = await ref
           .read(authProvider.notifier)
           .api
-          .fsFiles(
-            parentID: folderID,
-            page: page,
-            pageSize: pageSize,
-            orderBy: 0,
-            sortType: 0,
-          );
+          .fsFiles(parentID: folderID, page: page, pageSize: pageSize, orderBy: 0, sortType: 0);
       final batch = extractWorkspaceCloudFiles(response);
       for (final child in batch) {
         children[child.id] = child;
@@ -583,11 +583,7 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
         return false;
       }
       for (final child in children.where((child) => child.isDirectory)) {
-        if (!await _folderTreeHasNoFiles(
-          child.id,
-          memo: memo,
-          visiting: visiting,
-        )) {
+        if (!await _folderTreeHasNoFiles(child.id, memo: memo, visiting: visiting)) {
           memo[folderID] = false;
           return false;
         }
@@ -605,80 +601,47 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
       builder: (dialogContext) => ShadDialog(
         title: const Text('文件夹详情'),
         description: Text(folder.name),
-        actions: [
-          ShadButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('关闭'),
-          ),
-        ],
+        actions: [ShadButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('关闭'))],
         child: SizedBox(
           width: 520,
           child: FutureBuilder<CloudFile>(
             future: _loadFolderDetail(folder),
             builder: (context, snapshot) {
-              final detail = snapshot.data ?? folder;
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Padding(
                   padding: EdgeInsets.symmetric(vertical: 36),
-                  child: Center(
-                    child: AppLoadingIndicator(
-                      size: AppLoadingSize.compact,
-                    ),
+                  child: Center(child: AppLoadingIndicator(size: AppLoadingSize.compact)),
+                );
+              }
+              if (snapshot.hasError || snapshot.data == null) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Text(
+                    '详情读取失败：${snapshot.error}',
+                    style: TextStyle(color: ShadTheme.of(context).colorScheme.destructive),
                   ),
                 );
               }
-              final cs = ShadTheme.of(context).colorScheme;
+              final detail = snapshot.data!;
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (snapshot.hasError)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Text(
-                        '最新详情读取失败，以下为本地索引信息：${snapshot.error}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: cs.destructive,
-                        ),
-                      ),
-                    ),
                   _FolderDetailRow(label: '名称', value: detail.name),
                   _FolderDetailRow(
                     label: '完整路径',
-                    value: detail.cloudPath.isEmpty
-                        ? folder.cloudPath
-                        : detail.cloudPath,
+                    value: detail.cloudPath.isEmpty ? folder.cloudPath : detail.cloudPath,
                   ),
                   _FolderDetailRow(label: '目录 ID', value: detail.id),
                   _FolderDetailRow(
                     label: '父目录 ID',
-                    value: detail.parentID?.isNotEmpty == true
-                        ? detail.parentID!
-                        : '云盘根目录',
+                    value: detail.parentID?.isNotEmpty == true ? detail.parentID! : '云盘根目录',
                   ),
-                  _FolderDetailRow(
-                    label: '子文件夹',
-                    value: detail.subDirectoryCount?.toString() ?? '--',
-                  ),
-                  _FolderDetailRow(
-                    label: '子文件',
-                    value: detail.subFileCount?.toString() ?? '--',
-                  ),
-                  _FolderDetailRow(
-                    label: '大小',
-                    value: detail.formattedSize,
-                  ),
-                  _FolderDetailRow(
-                    label: '修改时间',
-                    value: detail.modifiedAt.isEmpty
-                        ? '--'
-                        : detail.modifiedAt,
-                  ),
+                  _FolderDetailRow(label: '子文件夹', value: detail.subDirectoryCount?.toString() ?? '--'),
+                  _FolderDetailRow(label: '子文件', value: detail.subFileCount?.toString() ?? '--'),
+                  _FolderDetailRow(label: '大小', value: detail.formattedSize),
+                  _FolderDetailRow(label: '修改时间', value: detail.modifiedAt.isEmpty ? '--' : detail.modifiedAt),
                   if (detail.fullParentIDs?.isNotEmpty == true)
-                    _FolderDetailRow(
-                      label: '祖先目录 ID',
-                      value: detail.fullParentIDs!,
-                    ),
+                    _FolderDetailRow(label: '祖先目录 ID', value: detail.fullParentIDs!),
                 ],
               );
             },
@@ -690,26 +653,20 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
 
   Widget _folderStatus(CloudFile folder, ShadColorScheme cs) {
     if (_deletedIDs.contains(folder.id)) {
-      return Text(
-        '已完成',
-        style: TextStyle(fontSize: 11, color: cs.primary),
-      );
+      return Text('已完成', style: TextStyle(fontSize: 11, color: cs.primary));
     }
     if (_failedIDs.contains(folder.id)) {
-      return Text(
-        '失败',
-        style: TextStyle(fontSize: 11, color: cs.destructive),
-      );
+      return Text('失败', style: TextStyle(fontSize: 11, color: cs.destructive));
     }
-    if ((_checking && _checkingFolderID == folder.id) ||
-        (_deleting && _currentDeleteID == folder.id)) {
+    if ((_checking && _checkingFolderID == folder.id) || (_deleting && _currentDeleteID == folder.id)) {
       return const AppLoadingIndicator(size: AppLoadingSize.inline);
     }
     return Icon(Icons.folder_rounded, color: cs.primary);
   }
 
   Future<void> _confirmDeleteSelected() async {
-    final targets = widget.files.where((file) => _selectedIDs.contains(file.id)).toList();
+    final source = widget.allFiles ?? widget.files;
+    final targets = source.where((file) => _selectedIDs.contains(file.id)).toList();
     if (targets.isEmpty || _checking || _deleting) return;
     final confirmed = await showShadDialog<bool>(
       context: context,
@@ -732,77 +689,94 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
       _checkingFolderID = null;
       _deletedIDs.clear();
       _failedIDs.clear();
+      _overallTotal = targets.length;
+      _overallProcessed = 0;
     });
-    final confirmedEmpty = <CloudFile>[];
     final removedIDs = <String>{};
     var nonEmptyCount = 0;
     var failedCount = 0;
+    var totalFolders = targets.length;
+    const deleteConcurrency = 10;
+    const checkBatchSize = 100;
     final verificationMemo = <String, bool>{};
-    for (final folder in targets) {
-      if (!mounted) return;
-      setState(() => _checkingFolderID = folder.id);
-      try {
-        final hasNoFiles = await _folderTreeHasNoFiles(
-          folder.id,
-          memo: verificationMemo,
-          visiting: <String>{},
-        );
-        if (hasNoFiles) {
-          confirmedEmpty.add(folder);
-        } else {
-          try {
-            await _updateNonEmptyFolderCache(
-              await _loadFolderDetail(folder),
-            );
-          } catch (_) {
-            // Recursive listing already confirmed that this folder contains
-            // files; detail counters are only used to enrich the cache.
-          }
-          removedIDs.add(folder.id);
-          nonEmptyCount += 1;
-        }
-      } catch (_) {
-        failedCount += 1;
-      }
-    }
 
-    if (!mounted) return;
-    setState(() {
-      _checking = false;
-      _checkingFolderID = null;
-      _deleting = true;
-      _deleteTotal = confirmedEmpty.length;
-      _deleteCurrent = 0;
-      _currentDeleteID = null;
-    });
+    var processedCount = 0;
+    while (processedCount < totalFolders && mounted) {
+      final batchEnd = (processedCount + checkBatchSize).clamp(0, totalFolders);
+      final batch = targets.sublist(processedCount, batchEnd);
+      final confirmedEmpty = <CloudFile>[];
 
-    var deletedCount = 0;
-    if (confirmedEmpty.isNotEmpty) {
-      for (var i = 0; i < confirmedEmpty.length; i++) {
+      Future<void> processFolder(CloudFile folder) async {
         if (!mounted) return;
-        final folder = confirmedEmpty[i];
-        setState(() {
-          _deleteCurrent = i + 1;
-          _currentDeleteID = folder.id;
-        });
+        setState(() => _checkingFolderID = folder.id);
         try {
-          final deleted = await ref.read(fileProvider.notifier).deleteFiles([folder]);
-          if (deleted && mounted) {
-            deletedCount += 1;
+          final hasNoFiles = await _folderTreeHasNoFiles(folder.id, memo: verificationMemo, visiting: <String>{});
+          if (!mounted) return;
+          if (hasNoFiles) {
+            confirmedEmpty.add(folder);
+          } else {
+            try {
+              await _updateNonEmptyFolderCache(await _loadFolderDetail(folder));
+            } catch (_) {}
             removedIDs.add(folder.id);
-            setState(() => _deletedIDs.add(folder.id));
-          } else if (mounted) {
-            failedCount += 1;
-            setState(() => _failedIDs.add(folder.id));
+            nonEmptyCount += 1;
           }
         } catch (_) {
           if (mounted) {
             failedCount += 1;
             setState(() => _failedIDs.add(folder.id));
+            // Update cache with whatever detail info is available.
+            try {
+              await _updateNonEmptyFolderCache(await _loadFolderDetail(folder));
+            } catch (_) {}
           }
         }
       }
+
+      var nextInBatch = 0;
+      Future<void> worker() async {
+        while (true) {
+          if (!mounted) return;
+          final index = nextInBatch++;
+          if (index >= batch.length) return;
+          await processFolder(batch[index]);
+        }
+      }
+
+      await Future.wait(List.generate(deleteConcurrency, (_) => worker()));
+
+      // Batch delete confirmed-empty folders from this batch.
+      if (confirmedEmpty.isNotEmpty && mounted) {
+        try {
+          final ok = await ref.read(fileProvider.notifier).deleteFiles(confirmedEmpty);
+          if (ok && mounted) {
+            for (final folder in confirmedEmpty) {
+              removedIDs.add(folder.id);
+            }
+            setState(() {
+              _deletedIDs.addAll(confirmedEmpty.map((f) => f.id));
+            });
+          } else if (mounted) {
+            failedCount += confirmedEmpty.length;
+            setState(() {
+              _failedIDs.addAll(confirmedEmpty.map((f) => f.id));
+            });
+          }
+        } catch (_) {
+          if (mounted) {
+            failedCount += confirmedEmpty.length;
+            setState(() {
+              _failedIDs.addAll(confirmedEmpty.map((f) => f.id));
+            });
+          }
+        }
+      }
+
+      processedCount = batchEnd;
+      if (mounted) setState(() => _overallProcessed = processedCount);
     }
+
+    final deletedCount = _deletedIDs.length;
 
     if (!mounted) return;
     widget.onRemoved(removedIDs);
@@ -811,6 +785,8 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
       _deleteTotal = 0;
       _deleteCurrent = 0;
       _currentDeleteID = null;
+      _overallTotal = 0;
+      _overallProcessed = 0;
       _selectedIDs.removeAll(removedIDs);
     });
     await showShadDialog<void>(
@@ -837,7 +813,9 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
         child: Text(widget.emptyText, style: TextStyle(color: cs.mutedForeground)),
       );
     }
-    final allSelected = _selectedIDs.length == widget.files.length;
+    final allSelected = widget.allFiles != null
+        ? _selectedIDs.length == widget.allFiles!.length
+        : _selectedIDs.length == widget.files.length;
     final isWorking = _checking || _deleting;
     return Column(
       children: [
@@ -851,11 +829,16 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
                     ? null
                     : (selected) => setState(() {
                         _selectedIDs.clear();
-                        if (selected == true) _selectedIDs.addAll(widget.files.map((file) => file.id));
+                        if (selected == true) {
+                          _selectedIDs.addAll((widget.allFiles ?? widget.files).map((file) => file.id));
+                        }
                       }),
               ),
               const SizedBox(width: 8),
-              Text('全选', style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
+              Text(
+                widget.allFiles != null ? '全选全部 (${widget.allFiles!.length})' : '全选',
+                style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+              ),
               const Spacer(),
               if (_deleting && _deleteTotal > 0)
                 Padding(
@@ -877,7 +860,9 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
                 onPressed: _selectedIDs.isEmpty || isWorking ? null : _confirmDeleteSelected,
                 leading: isWorking ? const AppLoadingIndicator(size: AppLoadingSize.inline) : null,
                 child: Text(
-                  _deleting
+                  _overallTotal > 0
+                      ? '删除${_deletedIDs.length}/复检$_overallProcessed/待处理${_overallTotal - _overallProcessed}'
+                      : _deleting
                       ? '删除中 $_deleteCurrent/$_deleteTotal'
                       : _checking
                       ? '正在复检…'
@@ -924,14 +909,9 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                ShadButton.ghost(
-                  size: ShadButtonSize.sm,
+                ShadIconButton.ghost(
                   onPressed: () => _showFolderDetails(file),
-                  leading: const Icon(
-                    Icons.info_outline_rounded,
-                    size: 15,
-                  ),
-                  child: const Text('查看详情'),
+                  icon: const Icon(Icons.info_outline_rounded, size: 15),
                 ),
                 const SizedBox(width: 6),
                 _folderStatus(file, cs),
@@ -959,22 +939,11 @@ class _FolderDetailRow extends StatelessWidget {
         children: [
           SizedBox(
             width: 86,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: cs.mutedForeground,
-              ),
-            ),
+            child: Text(label, style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: SelectionArea(
-              child: Text(
-                value.isEmpty ? '--' : value,
-                style: const TextStyle(fontSize: 12),
-              ),
-            ),
+            child: SelectionArea(child: Text(value.isEmpty ? '--' : value, style: const TextStyle(fontSize: 12))),
           ),
         ],
       ),
@@ -982,44 +951,32 @@ class _FolderDetailRow extends StatelessWidget {
   }
 }
 
-enum _DuplicateQuickSelectKind {
-  keepShortestPath,
-  keepLongestPath,
-  keepLargestFile,
-  keepNewestFile,
-  largerThan,
-  clear,
-}
+enum _DuplicateQuickSelectKind { keepShortestPath, keepLongestPath, keepNewestFile, clear }
 
 class _DuplicateQuickSelect {
   final _DuplicateQuickSelectKind kind;
-  final int minimumBytes;
 
-  const _DuplicateQuickSelect(this.kind, {this.minimumBytes = 0});
+  const _DuplicateQuickSelect(this.kind);
 }
 
 class _DuplicateGroup extends ConsumerStatefulWidget {
   final List<CloudFile> files;
-  final _DuplicateQuickSelect? quickSelection;
-  final int quickSelectionRevision;
-  final String keepKeywords;
   final ValueChanged<Set<String>>? onSelectionChanged;
   final Set<String> bulkDeletedIDs;
   final Set<String> bulkFailedIDs;
-  final String? bulkCurrentDeleteID;
+  final Set<String> bulkCurrentDeleteIDs;
   final bool bulkDeleting;
   final Set<String> initialSelectedIDs;
+  final ValueChanged<Set<String>>? onDeleted;
 
   const _DuplicateGroup({
     super.key,
     required this.files,
-    this.quickSelection,
-    this.quickSelectionRevision = 0,
-    this.keepKeywords = '',
     this.onSelectionChanged,
+    this.onDeleted,
     this.bulkDeletedIDs = const {},
     this.bulkFailedIDs = const {},
-    this.bulkCurrentDeleteID,
+    this.bulkCurrentDeleteIDs = const {},
     this.bulkDeleting = false,
     this.initialSelectedIDs = const {},
   });
@@ -1040,68 +997,23 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
   @override
   void initState() {
     super.initState();
-    _selectedIDs = widget.initialSelectedIDs.isNotEmpty
-        ? Set<String>.of(widget.initialSelectedIDs)
-        : widget.files.skip(1).map((file) => file.id).toSet();
-    _applyQuickSelection(widget.quickSelection);
-    _notifySelection();
+    _selectedIDs = Set<String>.of(widget.initialSelectedIDs);
   }
 
   @override
   void didUpdateWidget(covariant _DuplicateGroup oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.quickSelectionRevision != widget.quickSelectionRevision) {
-      _applyQuickSelection(widget.quickSelection);
-    }
-    if (oldWidget.initialSelectedIDs != widget.initialSelectedIDs &&
-        widget.initialSelectedIDs.isNotEmpty) {
+    if (!setEquals(
+      oldWidget.initialSelectedIDs,
+      widget.initialSelectedIDs,
+    )) {
       _selectedIDs = Set<String>.of(widget.initialSelectedIDs);
-      _notifySelection();
     }
     final newlyDeleted = widget.bulkDeletedIDs.difference(oldWidget.bulkDeletedIDs);
     if (newlyDeleted.isNotEmpty) {
       _selectedIDs.removeAll(newlyDeleted);
       _notifySelection();
     }
-  }
-
-  String _pathFor(CloudFile file) =>
-      file.cloudPath.trim().isEmpty ? file.name : file.cloudPath;
-
-  void _applyQuickSelection(_DuplicateQuickSelect? selection) {
-    if (selection == null) return;
-    final files = widget.files;
-    if (files.isEmpty) return;
-    CloudFile keepBy(Comparator<CloudFile> comparator) =>
-        files.reduce((current, file) => comparator(current, file) <= 0 ? current : file);
-
-    switch (selection.kind) {
-      case _DuplicateQuickSelectKind.keepShortestPath:
-        final keep = keepBy((left, right) => _pathFor(left).length.compareTo(_pathFor(right).length));
-        _selectedIDs = files.where((file) => file.id != keep.id).map((file) => file.id).toSet();
-      case _DuplicateQuickSelectKind.keepLongestPath:
-        final keep = keepBy((left, right) => _pathFor(right).length.compareTo(_pathFor(left).length));
-        _selectedIDs = files.where((file) => file.id != keep.id).map((file) => file.id).toSet();
-      case _DuplicateQuickSelectKind.keepLargestFile:
-        final keep = keepBy((left, right) => (right.size ?? 0).compareTo(left.size ?? 0));
-        _selectedIDs = files.where((file) => file.id != keep.id).map((file) => file.id).toSet();
-      case _DuplicateQuickSelectKind.keepNewestFile:
-        final keep = keepBy((left, right) => right.modifiedAt.compareTo(left.modifiedAt));
-        _selectedIDs = files.where((file) => file.id != keep.id).map((file) => file.id).toSet();
-      case _DuplicateQuickSelectKind.largerThan:
-        _selectedIDs = files
-            .where((file) => (file.size ?? 0) > selection.minimumBytes)
-            .map((file) => file.id)
-            .toSet();
-        if (_selectedIDs.length == files.length) {
-          final keep = keepBy((left, right) => _pathFor(left).length.compareTo(_pathFor(right).length));
-          _selectedIDs.remove(keep.id);
-        }
-      case _DuplicateQuickSelectKind.clear:
-        _selectedIDs = <String>{};
-    }
-    _applyKeepKeywords(widget.keepKeywords);
-    _notifySelection();
   }
 
   void _notifySelection() {
@@ -1111,23 +1023,24 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
     });
   }
 
-  /// Removes files whose name or path contains any keep-keyword from
-  /// [_selectedIDs], so they are automatically preserved (保留).
-  void _applyKeepKeywords(String keywords) {
-    if (keywords.trim().isEmpty) return;
-    final patterns = keywords
-        .split(',')
-        .map((kw) => kw.trim().toLowerCase())
-        .where((kw) => kw.isNotEmpty)
-        .toList(growable: false);
-    if (patterns.isEmpty) return;
-    for (final file in widget.files) {
-      final text = '${file.name} ${file.cloudPath}'.toLowerCase();
-      if (patterns.any((kw) => text.contains(kw))) {
-        _selectedIDs.remove(file.id);
-      }
+  void _openFile(CloudFile file) {
+    if (canPreviewCloudFile(file)) {
+      final notifier = ref.read(fileProvider.notifier);
+      unawaited(
+        showCloudFilePreview(
+          context: context,
+          file: file,
+          resolveUrl: () => notifier.previewURL(file),
+          onDownload: () => notifier.downloadFile(file),
+        ),
+      );
+      return;
     }
-    _notifySelection();
+    if (file.isPlayableVideo) {
+      unawaited(showMediaPlayerDialog(context, file));
+      return;
+    }
+    ref.read(fileProvider.notifier).downloadFile(file);
   }
 
   Future<void> _confirmDelete() async {
@@ -1141,7 +1054,7 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
           ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('取消')),
           ShadButton.destructive(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('删除')),
         ],
-        child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('同组至少会保留一项。删除后无法恢复，请确认选中的文件。')),
+        child: const Padding(padding: EdgeInsets.only(top: 10), child: Text('删除后无法恢复，请确认选中的文件。')),
       ),
     );
     if (confirmed != true || !mounted) return;
@@ -1176,13 +1089,20 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
       }
     }
 
+    if (_deletedIDs.isNotEmpty) {
+      await FileMetadataCache.removeFilesFromAllFolders(_deletedIDs);
+      await FileMetadataCache.removeLiveFileIDs(_deletedIDs);
+    }
+
     if (mounted) {
+      final deletedIDs = Set<String>.of(_deletedIDs);
       setState(() {
         _deleting = false;
         _currentDeleteID = null;
-        _selectedIDs.removeAll(_deletedIDs);
+        _selectedIDs.removeAll(deletedIDs);
       });
       _notifySelection();
+      widget.onDeleted?.call(deletedIDs);
     }
   }
 
@@ -1206,11 +1126,7 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                   children: [
                     Text(
                       '重复组 · ${widget.files.length} 项',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: cs.primary,
-                      ),
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.primary),
                     ),
                     if (gcid.isNotEmpty)
                       Padding(
@@ -1222,10 +1138,7 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                               'GCID: $gcid',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: cs.mutedForeground,
-                              ),
+                              style: TextStyle(fontSize: 11, color: cs.mutedForeground),
                             ),
                           ),
                         ),
@@ -1268,9 +1181,7 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                         ? null
                         : (value) => setState(() {
                             if (value == true) {
-                              if (_selectedIDs.length < widget.files.length - 1) {
-                                _selectedIDs.add(file.id);
-                              }
+                              _selectedIDs.add(file.id);
                             } else {
                               _selectedIDs.remove(file.id);
                             }
@@ -1284,7 +1195,13 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                       children: [
                         Row(
                           children: [
-                            Flexible(child: Text(file.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
+                            Flexible(
+                              child: Text(
+                                file.name,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
                             if (file.size != null && file.size! > 0)
                               Padding(
                                 padding: const EdgeInsets.only(left: 8),
@@ -1293,14 +1210,12 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                                   style: TextStyle(fontSize: 10, color: cs.mutedForeground),
                                 ),
                               ),
-                            if (_deletedIDs.contains(file.id) ||
-                                widget.bulkDeletedIDs.contains(file.id))
+                            if (_deletedIDs.contains(file.id) || widget.bulkDeletedIDs.contains(file.id))
                               Padding(
                                 padding: const EdgeInsets.only(left: 6),
                                 child: Icon(Icons.check_circle_rounded, size: 14, color: cs.primary),
                               ),
-                            if (_failedIDs.contains(file.id) ||
-                                widget.bulkFailedIDs.contains(file.id))
+                            if (_failedIDs.contains(file.id) || widget.bulkFailedIDs.contains(file.id))
                               Padding(
                                 padding: const EdgeInsets.only(left: 6),
                                 child: Icon(Icons.error_outline_rounded, size: 14, color: cs.destructive),
@@ -1316,14 +1231,12 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                       ],
                     ),
                   ),
-                  if (_deletedIDs.contains(file.id) ||
-                      widget.bulkDeletedIDs.contains(file.id))
-                    Text('已完成', style: TextStyle(fontSize: 11, color: cs.primary))
-                  else if (_failedIDs.contains(file.id) ||
-                      widget.bulkFailedIDs.contains(file.id))
+                  if (_deletedIDs.contains(file.id) || widget.bulkDeletedIDs.contains(file.id))
+                    Text('已删除', style: TextStyle(fontSize: 11, color: cs.primary))
+                  else if (_failedIDs.contains(file.id) || widget.bulkFailedIDs.contains(file.id))
                     Text('失败', style: TextStyle(fontSize: 11, color: cs.destructive))
                   else if ((_deleting && _currentDeleteID == file.id) ||
-                      (widget.bulkDeleting && widget.bulkCurrentDeleteID == file.id))
+                      (widget.bulkDeleting && widget.bulkCurrentDeleteIDs.contains(file.id)))
                     const AppLoadingIndicator(size: AppLoadingSize.inline)
                   else
                     Text(
@@ -1333,6 +1246,21 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
                         color: _selectedIDs.contains(file.id) ? cs.destructive : cs.primary,
                       ),
                     ),
+                  const SizedBox(width: 4),
+                  Tooltip(
+                    message: '打开',
+                    child: ShadIconButton.ghost(
+                      onPressed: deleting ? null : () => _openFile(file),
+                      icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                    ),
+                  ),
+                  Tooltip(
+                    message: '详情',
+                    child: ShadIconButton.ghost(
+                      onPressed: deleting ? null : () => showFileDetailDialog(context, file),
+                      icon: const Icon(Icons.info_outline_rounded, size: 16),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -5093,8 +5021,6 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
   int _pageSize = 500;
   static const _pageSizeOptions = [50, 100, 200, 500, 1000, 2000, 5000];
   final _duplicateQuickSelectController = ShadPopoverController();
-  _DuplicateQuickSelect? _duplicateQuickSelection;
-  var _duplicateQuickSelectionRevision = 0;
   var _duplicateQuickSelectMinimumMB = 100;
   late final TextEditingController _thresholdController;
   String _keepKeywords = '';
@@ -5108,7 +5034,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
   int _bulkDeleteTotal = 0;
   int _bulkDeleteCompleted = 0;
   int _bulkDeleteDeleted = 0;
-  String? _bulkCurrentDeleteID;
+  final _bulkCurrentDeleteIDs = <String>{};
 
   @override
   void dispose() {
@@ -5154,9 +5080,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
       if (!refreshed) throw StateError('云盘索引增量更新失败');
       if (!mounted) return;
       setState(() => _scanPhase = '正在从 SQLite 流式读取目录索引…');
-      final pathEmptyScan =
-          widget.kind == _WorkspaceScanKind.emptyFolders ||
-              widget.kind == _WorkspaceScanKind.all
+      final pathEmptyScan = widget.kind == _WorkspaceScanKind.emptyFolders || widget.kind == _WorkspaceScanKind.all
           ? await _scanEmptyFoldersByFileParents()
           : null;
       if (!mounted) return;
@@ -5176,9 +5100,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
       }
       final scanner = WorkspaceScanner(
         loadChildren: (folderID) async {
-          final children = await FileMetadataCache.folderChildrenForScan(
-            folderID,
-          );
+          final children = await FileMetadataCache.folderChildrenForScan(folderID);
           if (children == null) {
             throw StateError('SQLite 文件索引不完整，请先在设置中执行全量索引');
           }
@@ -5189,10 +5111,12 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
               .where((kw) => kw.isNotEmpty)
               .toList(growable: false);
           if (patterns.isEmpty) return children;
-          return children.where((child) {
-            final text = '${child.name} ${child.cloudPath}'.toLowerCase();
-            return !patterns.any(text.contains);
-          }).toList(growable: false);
+          return children
+              .where((child) {
+                final text = '${child.name} ${child.cloudPath}'.toLowerCase();
+                return !patterns.any(text.contains);
+              })
+              .toList(growable: false);
         },
       );
       final result = await scanner.scan(
@@ -5211,16 +5135,18 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
             widget.kind == _WorkspaceScanKind.all || widget.kind == _WorkspaceScanKind.similarFolders,
       );
       if (!mounted) return;
+      final scanResult = pathEmptyScan == null
+          ? result
+          : WorkspaceScanResult(
+              emptyFolders: pathEmptyScan.emptyFolders,
+              duplicateFiles: result.duplicateFiles,
+              similarFolders: result.similarFolders,
+              foldersScanned: result.foldersScanned,
+              filesScanned: result.filesScanned,
+            );
       setState(() {
-        _result = pathEmptyScan == null
-            ? result
-            : WorkspaceScanResult(
-                emptyFolders: pathEmptyScan.emptyFolders,
-                duplicateFiles: result.duplicateFiles,
-                similarFolders: result.similarFolders,
-                foldersScanned: result.foldersScanned,
-                filesScanned: result.filesScanned,
-              );
+        _result = scanResult;
+        _initializeDuplicateSelections(scanResult.duplicateFiles);
         _foldersScanned = result.foldersScanned;
         _filesScanned = result.filesScanned;
       });
@@ -5231,13 +5157,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
     }
   }
 
-  Future<
-    ({
-      List<CloudFile> emptyFolders,
-      int foldersScanned,
-      int filesScanned,
-    })
-  >
+  Future<({List<CloudFile> emptyFolders, int foldersScanned, int filesScanned})>
   _scanEmptyFoldersByFileParents() async {
     final directories = <String, CloudFile>{};
     final directoryParents = <String, String?>{};
@@ -5254,8 +5174,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
         }
         for (final entry in snapshot.value) {
           final declaredParentID = entry.parentID?.trim();
-          final parentID =
-              declaredParentID != null && declaredParentID.isNotEmpty
+          final parentID = declaredParentID != null && declaredParentID.isNotEmpty
               ? declaredParentID
               : snapshotParentID;
           if (entry.isDirectory) {
@@ -5283,9 +5202,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
     for (var index = 0; index < queue.length; index++) {
       final directoryID = queue[index];
       final parentID = directoryParents[directoryID];
-      if (parentID != null &&
-          parentID.isNotEmpty &&
-          directoriesWithFiles.add(parentID)) {
+      if (parentID != null && parentID.isNotEmpty && directoriesWithFiles.add(parentID)) {
         queue.add(parentID);
       }
     }
@@ -5306,13 +5223,10 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
       }
       final prefix = _selectedFolderID == null
           ? ''
-          : (_selectedPath == '云盘根目录'
-                ? ''
-                : '/${_selectedPath.split(' / ').join('/')}');
-      final resolved =
-          '$prefix/${names.reversed.join('/')}'
-              .replaceAll(RegExp(r'/+'), '/')
-              .replaceFirst(RegExp(r'/$'), '');
+          : (_selectedPath == '云盘根目录' ? '' : '/${_selectedPath.split(' / ').join('/')}');
+      final resolved = '$prefix/${names.reversed.join('/')}'
+          .replaceAll(RegExp(r'/+'), '/')
+          .replaceFirst(RegExp(r'/$'), '');
       pathCache[folder.id] = resolved;
       return resolved;
     }
@@ -5326,34 +5240,25 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
         if (parentID == selectedID) return true;
         parentID = directoryParents[parentID];
       }
-      final ancestors = folder.fullParentIDs
-          ?.split(RegExp(r'[^0-9A-Za-z_-]+'))
-          .where((id) => id.isNotEmpty);
+      final ancestors = folder.fullParentIDs?.split(RegExp(r'[^0-9A-Za-z_-]+')).where((id) => id.isNotEmpty);
       return ancestors?.contains(selectedID) ?? false;
     }
 
-    final emptyFolders = allDirectoryIDs
-        .where((id) => !directoriesWithFiles.contains(id))
-        .map((id) => directories[id])
-        .whereType<CloudFile>()
-        .where((folder) {
-          if (folder.id == _selectedFolderID ||
-              !isInSelectedSubtree(folder)) {
-            return false;
-          }
-          return true;
-        })
-        .map(
-          (folder) =>
-              folder.copyWith(cloudPath: resolveDirectoryPath(folder)),
-        )
-        .toList()
-      ..sort((left, right) => left.cloudPath.compareTo(right.cloudPath));
-    return (
-      emptyFolders: emptyFolders,
-      foldersScanned: allDirectoryIDs.length,
-      filesScanned: fileCount,
-    );
+    final emptyFolders =
+        allDirectoryIDs
+            .where((id) => !directoriesWithFiles.contains(id))
+            .map((id) => directories[id])
+            .whereType<CloudFile>()
+            .where((folder) {
+              if (folder.id == _selectedFolderID || !isInSelectedSubtree(folder)) {
+                return false;
+              }
+              return true;
+            })
+            .map((folder) => folder.copyWith(cloudPath: resolveDirectoryPath(folder)))
+            .toList()
+          ..sort((left, right) => left.cloudPath.compareTo(right.cloudPath));
+    return (emptyFolders: emptyFolders, foldersScanned: allDirectoryIDs.length, filesScanned: fileCount);
   }
 
   Future<void> _pickDirectory() async {
@@ -5391,13 +5296,29 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
     });
   }
 
+  void _removeDuplicateFileCandidates(Set<String> fileIDs) {
+    final result = _result;
+    if (result == null || fileIDs.isEmpty) return;
+    _result = WorkspaceScanResult(
+      emptyFolders: result.emptyFolders,
+      duplicateFiles: result.duplicateFiles
+          .map((group) => group.where((file) => !fileIDs.contains(file.id)).toList(growable: false))
+          .where((group) => group.length > 1)
+          .toList(growable: false),
+      similarFolders: result.similarFolders,
+      foldersScanned: result.foldersScanned,
+      filesScanned: result.filesScanned,
+    );
+    for (final selectedIDs in _duplicateSelections.values) {
+      selectedIDs.removeAll(fileIDs);
+    }
+    _duplicateSelections.removeWhere((_, selectedIDs) => selectedIDs.isEmpty);
+  }
+
   List<T> _pageItems<T>(String key, List<T> items) {
     final maxPage = items.isEmpty ? 0 : (items.length - 1) ~/ _pageSize;
     final page = (_resultPages[key] ?? 0).clamp(0, maxPage).toInt();
-    return items
-        .skip(page * _pageSize)
-        .take(_pageSize)
-        .toList(growable: false);
+    return items.skip(page * _pageSize).take(_pageSize).toList(growable: false);
   }
 
   Widget _pageControls(String key, int total, ShadColorScheme cs) {
@@ -5410,21 +5331,15 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
       child: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          Text(
-            '${page * _pageSize + 1}-$end / $total',
-            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-          ),
+          Text('${page * _pageSize + 1}-$end / $total', style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
           const SizedBox(width: 8),
           ShadIconButton.ghost(
-            onPressed:
-                page == 0 ? null : () => setState(() => _resultPages[key] = page - 1),
+            onPressed: page == 0 ? null : () => setState(() => _resultPages[key] = page - 1),
             icon: const Icon(Icons.chevron_left_rounded, size: 16),
           ),
           const SizedBox(width: 4),
           ShadIconButton.ghost(
-            onPressed: page >= maxPage
-                ? null
-                : () => setState(() => _resultPages[key] = page + 1),
+            onPressed: page >= maxPage ? null : () => setState(() => _resultPages[key] = page + 1),
             icon: const Icon(Icons.chevron_right_rounded, size: 16),
           ),
         ],
@@ -5434,8 +5349,6 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
 
   void _applyDuplicateQuickSelection(_DuplicateQuickSelect selection) {
     setState(() {
-      _duplicateQuickSelection = selection;
-      _duplicateQuickSelectionRevision += 1;
       _duplicateSelections.clear();
       for (final group in _result?.duplicateFiles ?? const <List<CloudFile>>[]) {
         final selected = _quickSelectedIDs(group, selection);
@@ -5454,18 +5367,18 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
         .map((value) => value.trim().toLowerCase())
         .where((value) => value.isNotEmpty)
         .toList(growable: false);
+    final minimumBytes = _duplicateQuickSelectMinimumMB * 1024 * 1024;
     setState(() {
       _duplicateSelections.clear();
       for (final group in _result!.duplicateFiles) {
-        final selected = <String>{};
-        for (final file in group) {
-          if (keywords.isNotEmpty) {
-            final text = '${file.name} ${file.cloudPath}'.toLowerCase();
-            if (keywords.any(text.contains)) continue; // skip keyword-matching files (keep)
-          }
-          // Select all non-keyword files.  The keyword-matched files
-          // already serve as the "kept" ones, so no minimum-1-keep constraint.
-          selected.add(file.id);
+        final selected = group.where((file) {
+          if ((file.size ?? 0) <= minimumBytes) return false;
+          if (keywords.isEmpty) return true;
+          final text = '${file.name} ${file.cloudPath}'.toLowerCase();
+          return !keywords.any(text.contains);
+        }).map((file) => file.id).toSet();
+        if (selected.length == group.length && group.isNotEmpty) {
+          selected.remove(group.first.id);
         }
         if (selected.isNotEmpty) {
           _duplicateSelections[_duplicateGroupKey(group)] = selected;
@@ -5475,75 +5388,56 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
     _duplicateQuickSelectController.hide();
   }
 
-  Set<String> _quickSelectedIDs(
-    List<CloudFile> files,
-    _DuplicateQuickSelect selection,
-  ) {
+  Set<String> _quickSelectedIDs(List<CloudFile> files, _DuplicateQuickSelect selection) {
     if (files.isEmpty) return const {};
-    // First, exclude keyword-matching files from consideration.
+    if (selection.kind == _DuplicateQuickSelectKind.clear) return const {};
     final keywords = _keepKeywords
         .split(',')
         .map((value) => value.trim().toLowerCase())
         .where((value) => value.isNotEmpty)
         .toList(growable: false);
-    final eligibleFiles = keywords.isEmpty
-        ? files
-        : files.where((file) {
-            final text = '${file.name} ${file.cloudPath}'.toLowerCase();
-            return !keywords.any(text.contains);
-          }).toList(growable: false);
+    final minimumBytes = _duplicateQuickSelectMinimumMB * 1024 * 1024;
+    final eligibleFiles = files.where((file) {
+      if ((file.size ?? 0) <= minimumBytes) return false;
+      if (keywords.isEmpty) return true;
+      final text = '${file.name} ${file.cloudPath}'.toLowerCase();
+      return !keywords.any(text.contains);
+    }).toList(growable: false);
     if (eligibleFiles.isEmpty) return const {};
-    String pathFor(CloudFile file) =>
-        file.cloudPath.trim().isEmpty ? file.name : file.cloudPath;
+    String pathFor(CloudFile file) => file.cloudPath.trim().isEmpty ? file.name : file.cloudPath;
     CloudFile keepBy(Comparator<CloudFile> comparator) =>
-        eligibleFiles.reduce((current, file) => comparator(current, file) <= 0 ? current : file);
-    late Set<String> selected;
+        files.reduce((current, file) => comparator(current, file) <= 0 ? current : file);
+    late CloudFile keep;
     switch (selection.kind) {
       case _DuplicateQuickSelectKind.keepShortestPath:
-        final keep = keepBy(
-          (left, right) => pathFor(left).length.compareTo(pathFor(right).length),
-        );
-        selected = eligibleFiles.where((file) => file.id != keep.id).map((file) => file.id).toSet();
+        keep = keepBy((left, right) => pathFor(left).length.compareTo(pathFor(right).length));
       case _DuplicateQuickSelectKind.keepLongestPath:
-        final keep = keepBy(
-          (left, right) => pathFor(right).length.compareTo(pathFor(left).length),
-        );
-        selected = eligibleFiles.where((file) => file.id != keep.id).map((file) => file.id).toSet();
-      case _DuplicateQuickSelectKind.keepLargestFile:
-        final keep = keepBy(
-          (left, right) => (right.size ?? 0).compareTo(left.size ?? 0),
-        );
-        selected = eligibleFiles.where((file) => file.id != keep.id).map((file) => file.id).toSet();
+        keep = keepBy((left, right) => pathFor(right).length.compareTo(pathFor(left).length));
       case _DuplicateQuickSelectKind.keepNewestFile:
-        final keep = keepBy(
-          (left, right) => right.modifiedAt.compareTo(left.modifiedAt),
-        );
-        selected = eligibleFiles.where((file) => file.id != keep.id).map((file) => file.id).toSet();
-      case _DuplicateQuickSelectKind.largerThan:
-        selected = eligibleFiles
-            .where((file) => (file.size ?? 0) > selection.minimumBytes)
-            .map((file) => file.id)
-            .toSet();
-        if (selected.length == eligibleFiles.length) {
-          final keep = keepBy(
-            (left, right) => pathFor(left).length.compareTo(pathFor(right).length),
-          );
-          selected.remove(keep.id);
-        }
+        keep = keepBy((left, right) => right.modifiedAt.compareTo(left.modifiedAt));
       case _DuplicateQuickSelectKind.clear:
-        selected = <String>{};
+        return const {};
     }
-    return selected;
+    return eligibleFiles.where((file) => file.id != keep.id).map((file) => file.id).toSet();
+  }
+
+  void _initializeDuplicateSelections(List<List<CloudFile>> groups) {
+    _duplicateSelections
+      ..clear()
+      ..addEntries(
+        groups.map((group) {
+          return MapEntry(
+            _duplicateGroupKey(group),
+            group.skip(1).map((file) => file.id).toSet(),
+          );
+        }).where((entry) => entry.value.isNotEmpty),
+      );
   }
 
   String _duplicateGroupKey(List<CloudFile> files) =>
-      files.first.gcid?.trim().isNotEmpty == true
-      ? files.first.gcid!.trim()
-      : files.map((file) => file.id).join('|');
+      files.first.gcid?.trim().isNotEmpty == true ? files.first.gcid!.trim() : files.map((file) => file.id).join('|');
 
-  Set<String> get _selectedDuplicateIDs => {
-    for (final selected in _duplicateSelections.values) ...selected,
-  };
+  Set<String> get _selectedDuplicateIDs => {for (final selected in _duplicateSelections.values) ...selected};
 
   void _setDuplicateGroupSelection(String groupKey, Set<String> selected) {
     if (!mounted) return;
@@ -5586,14 +5480,8 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
         builder: (context, setDialogState) => ShadDialog(
           title: Text('批量删除 ${selected.length} 个重复文件？'),
           actions: [
-            ShadButton.outline(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            ShadButton.destructive(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('删除'),
-            ),
+            ShadButton.outline(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+            ShadButton.destructive(onPressed: () => Navigator.of(context).pop(true), child: const Text('删除')),
           ],
           child: Padding(
             padding: const EdgeInsets.only(top: 10),
@@ -5607,9 +5495,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
                   value: deleteAll,
                   label: const Text('一次性全部删除', style: TextStyle(fontSize: 12)),
                   sublabel: Text(
-                    deleteAll
-                        ? '将删除全部 ${selected.length} 个文件'
-                        : '仅删除前 $batchLimit 个文件',
+                    deleteAll ? '将删除全部 ${selected.length} 个文件' : '仅删除前 $batchLimit 个文件',
                     style: const TextStyle(fontSize: 11),
                   ),
                   onChanged: (value) => setDialogState(() => deleteAll = value),
@@ -5621,72 +5507,74 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
       ),
     );
     if (confirmed != true || !mounted) return;
-    final targets = deleteAll ? selected : (selected.length > batchLimit
-        ? selected.take(batchLimit).toList(growable: false)
-        : selected);
+    final targets = deleteAll
+        ? selected
+        : (selected.length > batchLimit ? selected.take(batchLimit).toList(growable: false) : selected);
 
     setState(() {
       _bulkDeletingDuplicates = true;
       _bulkDeleteTotal = targets.length;
       _bulkDeleteCompleted = 0;
       _bulkDeleteDeleted = 0;
-      _bulkCurrentDeleteID = null;
+      _bulkCurrentDeleteIDs.clear();
       _bulkFailedDuplicateIDs.clear();
     });
     const batchSize = 50;
     for (var offset = 0; offset < targets.length && mounted; offset += batchSize) {
-      final batch = targets.sublist(
-        offset,
-        (offset + batchSize).clamp(0, targets.length),
-      );
+      final batch = targets.sublist(offset, (offset + batchSize).clamp(0, targets.length));
       if (!mounted) return;
-      _bulkCurrentDeleteID = batch.last.id;
+      setState(() {
+        _bulkCurrentDeleteIDs
+          ..clear()
+          ..addAll(batch.map((file) => file.id));
+      });
       try {
         final ok = await ref.read(fileProvider.notifier).deleteFiles(List.of(batch));
+        if (!mounted) return;
+        final deletedIDs = batch.map((f) => f.id).toSet();
+        if (ok) {
+          await FileMetadataCache.removeFilesFromAllFolders(deletedIDs);
+          await FileMetadataCache.removeLiveFileIDs(deletedIDs);
+        }
         if (!mounted) return;
         setState(() {
           if (ok) {
             _bulkDeleteDeleted += batch.length;
-            _bulkDeletedDuplicateIDs.addAll(batch.map((f) => f.id));
+            _bulkDeletedDuplicateIDs.addAll(deletedIDs);
+            _removeDuplicateFileCandidates(deletedIDs);
           } else {
-            _bulkFailedDuplicateIDs.addAll(batch.map((f) => f.id));
+            _bulkFailedDuplicateIDs.addAll(deletedIDs);
           }
           _bulkDeleteCompleted += batch.length;
+          _bulkCurrentDeleteIDs.clear();
         });
       } catch (_) {
         if (!mounted) return;
         setState(() {
           _bulkFailedDuplicateIDs.addAll(batch.map((f) => f.id));
           _bulkDeleteCompleted += batch.length;
+          _bulkCurrentDeleteIDs.clear();
         });
       }
     }
     if (mounted) {
       setState(() {
         _bulkDeletingDuplicates = false;
-        _bulkCurrentDeleteID = null;
+        _bulkCurrentDeleteIDs.clear();
       });
     }
   }
 
   Widget _bulkDeleteDuplicatesButton() {
-    final selectedCount = _selectedDuplicateIDs
-        .where((id) => !_bulkDeletedDuplicateIDs.contains(id))
-        .length;
+    final selectedCount = _selectedDuplicateIDs.where((id) => !_bulkDeletedDuplicateIDs.contains(id)).length;
     final pending = (_bulkDeleteTotal - _bulkDeleteCompleted).clamp(0, _bulkDeleteTotal);
     return ShadButton.destructive(
       size: ShadButtonSize.sm,
-      onPressed: selectedCount == 0 || _bulkDeletingDuplicates
-          ? null
-          : _bulkDeleteDuplicates,
+      onPressed: selectedCount == 0 || _bulkDeletingDuplicates ? null : _bulkDeleteDuplicates,
       leading: _bulkDeletingDuplicates
           ? const AppLoadingIndicator(size: AppLoadingSize.inline)
           : const Icon(Icons.delete_outline_rounded, size: 16),
-      child: Text(
-        _bulkDeletingDuplicates
-            ? '已删除 $_bulkDeleteDeleted · 待删除 $pending'
-            : '批量删除 $selectedCount',
-      ),
+      child: Text(_bulkDeletingDuplicates ? '已删除 $_bulkDeleteDeleted · 待删除 $pending' : '批量删除 $selectedCount'),
     );
   }
 
@@ -5701,7 +5589,10 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
         selectedOptionBuilder: (context, value) => Text('$value 条/页', style: const TextStyle(fontSize: 12)),
         options: [
           for (final size in _pageSizeOptions)
-            ShadOption(value: size, child: Text('$size 条/页', style: const TextStyle(fontSize: 12))),
+            ShadOption(
+              value: size,
+              child: Text('$size 条/页', style: const TextStyle(fontSize: 12)),
+            ),
         ],
         onChanged: (value) {
           if (value != null && value != _pageSize) {
@@ -5727,65 +5618,29 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
             ShadButton.ghost(
               mainAxisAlignment: MainAxisAlignment.start,
               onPressed: () => _applyDuplicateQuickSelection(
-                const _DuplicateQuickSelect(
-                  _DuplicateQuickSelectKind.keepShortestPath,
-                ),
+                const _DuplicateQuickSelect(_DuplicateQuickSelectKind.keepShortestPath),
               ),
-              child: const Text('保留路径最短，选择其余项'),
+              child: const Text('保留路径最短'),
             ),
             ShadButton.ghost(
               mainAxisAlignment: MainAxisAlignment.start,
-              onPressed: () => _applyDuplicateQuickSelection(
-                const _DuplicateQuickSelect(
-                  _DuplicateQuickSelectKind.keepLongestPath,
-                ),
-              ),
-              child: const Text('保留路径最长，选择其余项'),
+              onPressed: () =>
+                  _applyDuplicateQuickSelection(const _DuplicateQuickSelect(_DuplicateQuickSelectKind.keepLongestPath)),
+              child: const Text('保留路径最长'),
             ),
             const Divider(height: 14),
             ShadButton.ghost(
               mainAxisAlignment: MainAxisAlignment.start,
-              onPressed: () => _applyDuplicateQuickSelection(
-                const _DuplicateQuickSelect(
-                  _DuplicateQuickSelectKind.keepLargestFile,
-                ),
-              ),
-              child: const Text('保留最大文件，选择其余项'),
-            ),
-            ShadButton.ghost(
-              mainAxisAlignment: MainAxisAlignment.start,
-              onPressed: () => _applyDuplicateQuickSelection(
-                const _DuplicateQuickSelect(
-                  _DuplicateQuickSelectKind.keepNewestFile,
-                ),
-              ),
-              child: const Text('保留最新文件，选择其余项'),
+              onPressed: () =>
+                  _applyDuplicateQuickSelection(const _DuplicateQuickSelect(_DuplicateQuickSelectKind.keepNewestFile)),
+              child: const Text('保留最新文件'),
             ),
             const Divider(height: 14),
             ShadButton.ghost(
               mainAxisAlignment: MainAxisAlignment.start,
-              onPressed: () => _applyDuplicateQuickSelection(
-                _DuplicateQuickSelect(
-                  _DuplicateQuickSelectKind.largerThan,
-                  minimumBytes: _duplicateQuickSelectMinimumMB * 1024 * 1024,
-                ),
-              ),
-              child: Text('选择大于 $_duplicateQuickSelectMinimumMB MB 的文件'),
-            ),
-            const Divider(height: 14),
-            ShadButton.ghost(
-              mainAxisAlignment: MainAxisAlignment.start,
-              onPressed: () => _applyDuplicateQuickSelection(
-                const _DuplicateQuickSelect(_DuplicateQuickSelectKind.clear),
-              ),
+              onPressed: () =>
+                  _applyDuplicateQuickSelection(const _DuplicateQuickSelect(_DuplicateQuickSelectKind.clear)),
               child: const Text('清除快速选择'),
-            ),
-            const Divider(height: 14),
-            ShadButton.ghost(
-              mainAxisAlignment: MainAxisAlignment.start,
-              onPressed: _keepKeywords.trim().isEmpty ? null : _selectAllNonKeywordFiles,
-              leading: const Icon(Icons.filter_alt_rounded, size: 16),
-              child: const Text('选择保留关键字外的所有文件'),
             ),
           ],
         ),
@@ -5804,7 +5659,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
     height: 36,
     child: ShadInput(
       controller: _thresholdController,
-      placeholder: const Text('阈值 MB', style: TextStyle(fontSize: 11)),
+      placeholder: const Text('最小 MB', style: TextStyle(fontSize: 11)),
       style: const TextStyle(fontSize: 12),
       keyboardType: TextInputType.number,
       onChanged: (value) {
@@ -5817,13 +5672,25 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
   );
 
   Widget _duplicateKeepKeywordsControl() => SizedBox(
-    width: 180,
+    width: 246,
     height: 36,
-    child: ShadInput(
-      controller: _keepKeywordsController,
-      placeholder: const Text('保留关键字，逗号分隔', style: TextStyle(fontSize: 11)),
-      style: const TextStyle(fontSize: 12),
-      onChanged: (value) => _keepKeywords = value,
+    child: Row(
+      children: [
+        Expanded(
+          child: ShadInput(
+            controller: _keepKeywordsController,
+            placeholder: const Text('保留关键字，逗号分隔', style: TextStyle(fontSize: 11)),
+            style: const TextStyle(fontSize: 12),
+            onChanged: (value) => _keepKeywords = value,
+          ),
+        ),
+        const SizedBox(width: 6),
+        ShadButton.outline(
+          size: ShadButtonSize.sm,
+          onPressed: _keepKeywords.trim().isEmpty ? null : _selectAllNonKeywordFiles,
+          child: const Text('应用'),
+        ),
+      ],
     ),
   );
 
@@ -5832,15 +5699,12 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
     return _DuplicateGroup(
       key: ValueKey(groupKey),
       files: files,
-      quickSelection: _duplicateQuickSelection,
-      quickSelectionRevision: _duplicateQuickSelectionRevision,
-      keepKeywords: _keepKeywords,
       initialSelectedIDs: _duplicateSelections[groupKey] ?? const {},
-      onSelectionChanged: (selected) =>
-          _setDuplicateGroupSelection(groupKey, selected),
+      onSelectionChanged: (selected) => _setDuplicateGroupSelection(groupKey, selected),
+      onDeleted: (deletedIDs) => setState(() => _removeDuplicateFileCandidates(deletedIDs)),
       bulkDeletedIDs: _bulkDeletedDuplicateIDs,
       bulkFailedIDs: _bulkFailedDuplicateIDs,
-      bulkCurrentDeleteID: _bulkCurrentDeleteID,
+      bulkCurrentDeleteIDs: _bulkCurrentDeleteIDs,
       bulkDeleting: _bulkDeletingDuplicates,
     );
   }
@@ -5860,6 +5724,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
         child: Padding(
           padding: const EdgeInsets.only(top: 12),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               const AppLoadingIndicator(size: AppLoadingSize.inline),
               const SizedBox(width: 8),
@@ -5870,9 +5735,11 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
       );
     }
     if (!_hasScanned || _result == null) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 12),
-        child: Text('选择扫描范围后开始扫描。', style: TextStyle(color: cs.mutedForeground)),
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Text('选择扫描范围后开始扫描。', style: TextStyle(color: cs.mutedForeground)),
+        ),
       );
     }
 
@@ -5889,6 +5756,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
             ),
             _CleanupList(
               files: _pageItems('all-empty', result.emptyFolders),
+              allFiles: result.emptyFolders.length > _pageSize ? result.emptyFolders : null,
               emptyText: '没有发现空文件夹。',
               onRemoved: _removeEmptyFolderCandidates,
             ),
@@ -5901,51 +5769,42 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
                 ),
                 const Spacer(),
-                if (result.duplicateFiles.isNotEmpty)
-                  _pageControls('all-duplicates', result.duplicateFiles.length, cs),
-                if (result.duplicateFiles.isNotEmpty)
-                  const SizedBox(width: 8),
-                if (result.duplicateFiles.isNotEmpty)
-                  _pageSizeControl(),
-                if (result.duplicateFiles.isNotEmpty)
-                  const SizedBox(width: 8),
-                if (result.duplicateFiles.isNotEmpty)
-                  _duplicateThresholdControl(),
-                if (result.duplicateFiles.isNotEmpty)
-                  const SizedBox(width: 8),
-                if (result.duplicateFiles.isNotEmpty)
-                  _duplicateKeepKeywordsControl(),
-                if (result.duplicateFiles.isNotEmpty)
-                  const SizedBox(width: 8),
-                if (result.duplicateFiles.isNotEmpty)
-                  _duplicateQuickSelectControl(cs),
-                if (result.duplicateFiles.isNotEmpty)
-                  const SizedBox(width: 8),
-                if (result.duplicateFiles.isNotEmpty)
-                  _bulkDeleteDuplicatesButton(),
+                if (result.duplicateFiles.isNotEmpty) _pageControls('all-duplicates', result.duplicateFiles.length, cs),
+                if (result.duplicateFiles.isNotEmpty) const SizedBox(width: 8),
+                if (result.duplicateFiles.isNotEmpty) _pageSizeControl(),
+                if (result.duplicateFiles.isNotEmpty) const SizedBox(width: 8),
+                if (result.duplicateFiles.isNotEmpty) _duplicateThresholdControl(),
+                if (result.duplicateFiles.isNotEmpty) const SizedBox(width: 8),
+                if (result.duplicateFiles.isNotEmpty) _duplicateKeepKeywordsControl(),
+                if (result.duplicateFiles.isNotEmpty) const SizedBox(width: 8),
+                if (result.duplicateFiles.isNotEmpty) _duplicateQuickSelectControl(cs),
+                if (result.duplicateFiles.isNotEmpty) const SizedBox(width: 8),
+                if (result.duplicateFiles.isNotEmpty) _bulkDeleteDuplicatesButton(),
               ],
             ),
             if (result.duplicateFiles.isEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text('没有发现重复文件。', style: TextStyle(color: cs.mutedForeground)),
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text('没有发现重复文件。', style: TextStyle(color: cs.mutedForeground)),
+                ),
               )
             else
-              for (final group in _pageItems('all-duplicates', result.duplicateFiles))
-                _duplicateGroup(group),
+              for (final group in _pageItems('all-duplicates', result.duplicateFiles)) _duplicateGroup(group),
             const SizedBox(height: 14),
             Text(
               '相似文件夹 · ${result.similarFolders.length} 组',
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
             ),
             if (result.similarFolders.isEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text('没有发现相似文件夹。', style: TextStyle(color: cs.mutedForeground)),
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text('没有发现相似文件夹。', style: TextStyle(color: cs.mutedForeground)),
+                ),
               )
             else
-              for (final group in _pageItems('all-similar', result.similarFolders))
-                _SimilarFolderGroup(folders: group),
+              for (final group in _pageItems('all-similar', result.similarFolders)) _SimilarFolderGroup(folders: group),
             _pageControls('all-similar', result.similarFolders.length, cs),
           ],
         ),
@@ -5962,6 +5821,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
                 children: [
                   _CleanupList(
                     files: _pageItems('empty', result.emptyFolders),
+                    allFiles: result.emptyFolders.length > _pageSize ? result.emptyFolders : null,
                     emptyText: '没有发现空文件夹。',
                     onRemoved: _removeEmptyFolderCandidates,
                   ),
@@ -5980,28 +5840,17 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
             children: [
               Text('发现 ${result.duplicateFiles.length} 组重复文件', style: const TextStyle(fontSize: 12)),
               const Spacer(),
-              if (result.duplicateFiles.isNotEmpty)
-                _pageControls('duplicates', result.duplicateFiles.length, cs),
-              if (result.duplicateFiles.isNotEmpty)
-                const SizedBox(width: 8),
-              if (result.duplicateFiles.isNotEmpty)
-                _pageSizeControl(),
-              if (result.duplicateFiles.isNotEmpty)
-                const SizedBox(width: 8),
-              if (result.duplicateFiles.isNotEmpty)
-                _duplicateThresholdControl(),
-              if (result.duplicateFiles.isNotEmpty)
-                const SizedBox(width: 8),
-              if (result.duplicateFiles.isNotEmpty)
-                _duplicateKeepKeywordsControl(),
-              if (result.duplicateFiles.isNotEmpty)
-                const SizedBox(width: 8),
-              if (result.duplicateFiles.isNotEmpty)
-                _duplicateQuickSelectControl(cs),
-              if (result.duplicateFiles.isNotEmpty)
-                const SizedBox(width: 8),
-              if (result.duplicateFiles.isNotEmpty)
-                _bulkDeleteDuplicatesButton(),
+              if (result.duplicateFiles.isNotEmpty) _pageControls('duplicates', result.duplicateFiles.length, cs),
+              if (result.duplicateFiles.isNotEmpty) const SizedBox(width: 8),
+              if (result.duplicateFiles.isNotEmpty) _pageSizeControl(),
+              if (result.duplicateFiles.isNotEmpty) const SizedBox(width: 8),
+              if (result.duplicateFiles.isNotEmpty) _duplicateThresholdControl(),
+              if (result.duplicateFiles.isNotEmpty) const SizedBox(width: 8),
+              if (result.duplicateFiles.isNotEmpty) _duplicateKeepKeywordsControl(),
+              if (result.duplicateFiles.isNotEmpty) const SizedBox(width: 8),
+              if (result.duplicateFiles.isNotEmpty) _duplicateQuickSelectControl(cs),
+              if (result.duplicateFiles.isNotEmpty) const SizedBox(width: 8),
+              if (result.duplicateFiles.isNotEmpty) _bulkDeleteDuplicatesButton(),
             ],
           ),
           if (result.duplicateFiles.isEmpty)
@@ -6012,10 +5861,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
           else
             Expanded(
               child: ListView(
-                children: [
-                  for (final group in _pageItems('duplicates', result.duplicateFiles))
-                    _duplicateGroup(group),
-                ],
+                children: [for (final group in _pageItems('duplicates', result.duplicateFiles)) _duplicateGroup(group)],
               ),
             ),
         ],
@@ -6031,8 +5877,7 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
               child: Text('没有发现相似文件夹。', style: TextStyle(color: cs.mutedForeground)),
             )
           else
-            for (final group in _pageItems('similar', result.similarFolders))
-              _SimilarFolderGroup(folders: group),
+            for (final group in _pageItems('similar', result.similarFolders)) _SimilarFolderGroup(folders: group),
           _pageControls('similar', result.similarFolders.length, cs),
         ],
       ),
@@ -6067,7 +5912,12 @@ class _ScopedWorkspaceScanToolState extends ConsumerState<_ScopedWorkspaceScanTo
               size: ShadButtonSize.sm,
               onPressed: _scanning ? null : _pickDirectory,
               leading: const Icon(Icons.folder_open_rounded, size: 16),
-              child: Text(_selectedPath, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+              child: Text(
+                _selectedPath,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12),
+              ),
             ),
           ),
           ShadButton(
