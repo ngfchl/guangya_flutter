@@ -503,7 +503,26 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
       p.join(temporaryDirectory.path, 'guangya_app_upgrade'),
     );
     await packageDirectory.create(recursive: true);
+    await _clearOldInstallerFiles(packageDirectory);
     return p.join(packageDirectory.path, fileName);
+  }
+
+  Future<void> _clearOldInstallerFiles(Directory directory) async {
+    try {
+      await for (final entity in directory.list(followLinks: false)) {
+        try {
+          if (entity is File || entity is Link) {
+            await entity.delete();
+          } else if (entity is Directory) {
+            await entity.delete(recursive: true);
+          }
+        } catch (error) {
+          AppLogger.warning('Upgrade', '清理旧安装包失败：${entity.path} $error');
+        }
+      }
+    } catch (error) {
+      AppLogger.warning('Upgrade', '读取安装包缓存目录失败：$error');
+    }
   }
 
   Future<void> _handleDownloadedInstaller(String path, String fileName) async {
