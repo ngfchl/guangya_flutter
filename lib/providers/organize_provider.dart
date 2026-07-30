@@ -287,27 +287,31 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
     final actions = List<OrganizeAction>.from(state.actions);
     final total = actions.length;
 
-    for (var i = 0; i < actions.length; i++) {
-      if (_cancelled) {
-        _log('执行已取消');
-        break;
-      }
+    const concurrency = 6;
+    var nextIndex = 0;
 
-      final action = actions[i];
-      state = state.copyWith(
-        progressMessage: '[${i + 1}/$total] ${action.sourceName}',
-      );
-
-      try {
-        await _executeAction(action);
-        action.executed = true;
-      } catch (e) {
-        action.failed = true;
-        action.errorMessage = e.toString();
-        _log('  失败: ${action.sourceName} — $e');
+    Future<void> worker() async {
+      while (true) {
+        if (_cancelled) return;
+        final index = nextIndex++;
+        if (index >= total) return;
+        final action = actions[index];
+        state = state.copyWith(
+          progressMessage: '[${index + 1}/$total] ${action.sourceName}',
+        );
+        try {
+          await _executeAction(action);
+          action.executed = true;
+        } catch (e) {
+          action.failed = true;
+          action.errorMessage = e.toString();
+          _log('  失败: ${action.sourceName} — $e');
+        }
+        state = state.copyWith(actions: List.from(actions));
       }
-      state = state.copyWith(actions: List.from(actions));
     }
+
+    await Future.wait(List.generate(concurrency, (_) => worker()));
 
     final ok = actions.where((a) => a.executed && !a.failed).length;
     _log('执行完成: $ok/$total 成功');
@@ -469,6 +473,7 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
             sourceIsDir: false,
             sourceParentId: parentId,
             sourcePath: _joinPath(currentPath, dup.name),
+            targetParentId: parentId,
             targetPath: _joinPath(currentPath, dup.name),
             reason: '$currentPath/${dup.name} — 编号不同或缺失，仅移动不重命名',
           ));
