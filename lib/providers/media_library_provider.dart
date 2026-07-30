@@ -3285,9 +3285,23 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<List<CloudFile>> _allGlobalRemoteFiles() async {
     final concurrency = _cloudIndexConcurrency;
-    final files = await _allGlobalRemoteFilesByType(concurrency: concurrency);
-    AppLogger.info('CloudIndex', '_allGlobalRemoteFiles 结果：共 ${files.length} 项');
-    return files;
+    final files = await _allGlobalRemoteFilesByType(
+      resType: 1,
+      concurrency: concurrency,
+    );
+    final directories = await _allGlobalRemoteFilesByType(
+      resType: 2,
+      concurrency: concurrency,
+    );
+    final resources = <String, CloudFile>{
+      for (final file in files) file.id: file,
+      for (final directory in directories) directory.id: directory,
+    }.values.toList(growable: false);
+    AppLogger.info(
+      'CloudIndex',
+      '_allGlobalRemoteFiles 结果：文件 ${files.length} 项，目录 ${directories.length} 项',
+    );
+    return resources;
   }
 
   Future<List<CloudFile>> _allGlobalRemoteFilesByType({
