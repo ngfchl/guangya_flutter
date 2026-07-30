@@ -37,6 +37,7 @@ class _RemoteControlHandlerState extends State<RemoteControlHandler> {
     }
 
     final key = event.logicalKey;
+    final editingText = _isEditingText();
 
     if (key == LogicalKeyboardKey.goBack ||
         key == LogicalKeyboardKey.escape) {
@@ -53,6 +54,7 @@ class _RemoteControlHandlerState extends State<RemoteControlHandler> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowLeft) {
+      if (editingText) return KeyEventResult.ignored;
       Actions.invoke(
         context,
         const DirectionalFocusIntent(TraversalDirection.left),
@@ -60,6 +62,7 @@ class _RemoteControlHandlerState extends State<RemoteControlHandler> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowRight) {
+      if (editingText) return KeyEventResult.ignored;
       Actions.invoke(
         context,
         const DirectionalFocusIntent(TraversalDirection.right),
@@ -81,6 +84,13 @@ class _RemoteControlHandlerState extends State<RemoteControlHandler> {
     }
 
     return KeyEventResult.ignored;
+  }
+
+  bool _isEditingText() {
+    final context = FocusManager.instance.primaryFocus?.context;
+    if (context == null) return false;
+    if (context.widget is EditableText) return true;
+    return context.findAncestorWidgetOfExactType<EditableText>() != null;
   }
 
   void _activateFocused() {
