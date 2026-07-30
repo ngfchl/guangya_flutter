@@ -2106,8 +2106,10 @@ class FileNotifier extends StateNotifier<FileState> {
         selectedIDs: {},
       );
       await loadFiles(parentID: _currentParentID);
+      return true;
     } catch (e) {
       state = state.copyWith(errorMessage: e.toString());
+      return false;
     }
   }
 
