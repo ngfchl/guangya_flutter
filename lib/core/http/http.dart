@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:dio/dio.dart';
 
+import '../config/app_config.dart';
 import '../logging/app_logger.dart';
 import '../storage/storage_manager.dart';
 import 'dio_client.dart';
@@ -82,11 +83,25 @@ class Http {
       'traceparent': _generateTraceparent(),
       ...?headers,
     };
+    dynamic requestBody = body;
+    if (body is Map) {
+      requestBody = <String, dynamic>{
+        ...Map<String, dynamic>.from(body),
+        'clientId': AppConfig.clientID,
+      };
+    } else if (body is FormData &&
+        !body.fields.any((field) => field.key == 'clientId')) {
+      body.fields.add(const MapEntry('clientId', AppConfig.clientID));
+    } else if (body == null) {
+      requestBody = const <String, dynamic>{
+        'clientId': AppConfig.clientID,
+      };
+    }
 
     final data = await request<Map<String, dynamic>>(
       path,
       method: method,
-      data: body,
+      data: requestBody,
       headers: mergedHeaders,
       cancelToken: cancelToken,
       options: Options(extra: {ResponseInterceptor.skipCodeCheckKey: true}),

@@ -316,21 +316,21 @@ class GuangyaAPI {
   }) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/file/move_file',
-      body: {'fileIds': fileIDs, 'parentId': parentID ?? '', 'clientId': AppConfig.clientID},
+      body: {'fileIds': fileIDs, 'parentId': parentID ?? ''},
     );
   }
 
   Future<Map<String, dynamic>> fsDelete(List<String> fileIDs) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/file/delete_file',
-      body: {'fileIds': fileIDs, 'clientId': AppConfig.clientID},
+      body: {'fileIds': fileIDs},
     );
   }
 
   Future<Map<String, dynamic>> fsRecycle(List<String> fileIDs) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/file/recycle_file',
-      body: {'fileIds': fileIDs, 'clientId': AppConfig.clientID},
+      body: {'fileIds': fileIDs},
     );
   }
 
@@ -341,14 +341,14 @@ class GuangyaAPI {
   Future<Map<String, dynamic>> fsRename(String fileID, String newName) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/file/rename',
-      body: {'fileId': fileID, 'newName': newName, 'clientId': AppConfig.clientID},
+      body: {'fileId': fileID, 'newName': newName},
     );
   }
 
   Future<Map<String, dynamic>> fsDetail(String fileID) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/file/get_file_detail',
-      body: {'fileId': fileID, 'clientId': AppConfig.clientID},
+      body: {'fileId': fileID},
     );
   }
 
