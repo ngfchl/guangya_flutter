@@ -56,8 +56,7 @@ bool get _isMobilePlatform => switch (defaultTargetPlatform) {
   _ => false,
 };
 
-bool get _isDesktopWindow =>
-    Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+bool get _isDesktopWindow => Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
 double get _desktopSidebarTopGap => Platform.isMacOS ? 20 : 32;
 
@@ -95,25 +94,19 @@ class _CloudFileDraggable extends StatelessWidget {
   }
 }
 
-bool _hasPressedKey(LogicalKeyboardKey key) =>
-    HardwareKeyboard.instance.logicalKeysPressed.contains(key);
+bool _hasPressedKey(LogicalKeyboardKey key) => HardwareKeyboard.instance.logicalKeysPressed.contains(key);
 
 bool _sameCloudParentID(String? left, String? right) {
   final normalizedLeft = left?.trim();
   final normalizedRight = right?.trim();
-  final effectiveLeft = normalizedLeft == null || normalizedLeft.isEmpty
-      ? null
-      : normalizedLeft;
-  final effectiveRight = normalizedRight == null || normalizedRight.isEmpty
-      ? null
-      : normalizedRight;
+  final effectiveLeft = normalizedLeft == null || normalizedLeft.isEmpty ? null : normalizedLeft;
+  final effectiveRight = normalizedRight == null || normalizedRight.isEmpty ? null : normalizedRight;
   return effectiveLeft == effectiveRight;
 }
 
 const _desktopSelectAllShortcuts = <ShortcutActivator, Intent>{
   SingleActivator(LogicalKeyboardKey.keyA, meta: true): _SelectAllFilesIntent(),
-  SingleActivator(LogicalKeyboardKey.keyA, control: true):
-      _SelectAllFilesIntent(),
+  SingleActivator(LogicalKeyboardKey.keyA, control: true): _SelectAllFilesIntent(),
 };
 
 class _SelectAllFilesIntent extends Intent {
@@ -126,8 +119,7 @@ class _DeleteSelectedIntent extends Intent {
 
 const _desktopDeleteShortcuts = <ShortcutActivator, Intent>{
   SingleActivator(LogicalKeyboardKey.delete): _DeleteSelectedIntent(),
-  SingleActivator(LogicalKeyboardKey.backspace, meta: true):
-      _DeleteSelectedIntent(),
+  SingleActivator(LogicalKeyboardKey.backspace, meta: true): _DeleteSelectedIntent(),
 };
 
 void _selectDesktopFile(FileNotifier notifier, CloudFile file) {
@@ -138,9 +130,7 @@ void _selectDesktopFile(FileNotifier notifier, CloudFile file) {
         _hasPressedKey(LogicalKeyboardKey.metaRight) ||
         _hasPressedKey(LogicalKeyboardKey.controlLeft) ||
         _hasPressedKey(LogicalKeyboardKey.controlRight),
-    shift:
-        _hasPressedKey(LogicalKeyboardKey.shiftLeft) ||
-        _hasPressedKey(LogicalKeyboardKey.shiftRight),
+    shift: _hasPressedKey(LogicalKeyboardKey.shiftLeft) || _hasPressedKey(LogicalKeyboardKey.shiftRight),
   );
 }
 
@@ -186,18 +176,13 @@ class _FolderMoveTargetState extends State<_FolderMoveTarget> {
   }
 
   bool _canMove(_DraggedCloudFiles data) {
-    final targetPath = widget.file.cloudPath
-        .replaceAll('\\', '/')
-        .replaceAll(RegExp(r'/+$'), '');
+    final targetPath = widget.file.cloudPath.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
     return !data.files.any((source) {
-      if (source.id == widget.file.id ||
-          _sameCloudParentID(source.parentID, widget.file.id)) {
+      if (source.id == widget.file.id || _sameCloudParentID(source.parentID, widget.file.id)) {
         return true;
       }
       if (!source.isDirectory) return false;
-      final sourcePath = source.cloudPath
-          .replaceAll('\\', '/')
-          .replaceAll(RegExp(r'/+$'), '');
+      final sourcePath = source.cloudPath.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
       return sourcePath.isNotEmpty && targetPath.startsWith('$sourcePath/');
     });
   }
@@ -219,12 +204,7 @@ class _FolderMoveTargetState extends State<_FolderMoveTarget> {
       },
       builder: (context, candidates, _) => DecoratedBox(
         decoration: BoxDecoration(
-          border: candidates.isEmpty
-              ? null
-              : Border.all(
-                  color: ShadTheme.of(context).colorScheme.primary,
-                  width: 2,
-                ),
+          border: candidates.isEmpty ? null : Border.all(color: ShadTheme.of(context).colorScheme.primary, width: 2),
           borderRadius: BorderRadius.circular(6),
         ),
         child: widget.child,
@@ -286,17 +266,10 @@ Future<bool> _copyOrMoveFilesToDestination(
     builder: (_) => _CloudFolderDestinationPicker(move: move, files: files),
   );
   if (destination == null || !context.mounted) return false;
-  if (move &&
-      files.every(
-        (file) => _sameCloudParentID(file.parentID, destination.parentID),
-      )) {
-    ShadToaster.maybeOf(context)?.show(
-      const ShadToast(
-        title: Text('移动'),
-        description: Text('不能移动至相同目录'),
-        showCloseIconOnlyWhenHovered: false,
-      ),
-    );
+  if (move && files.every((file) => _sameCloudParentID(file.parentID, destination.parentID))) {
+    ShadToaster.maybeOf(
+      context,
+    )?.show(const ShadToast(title: Text('移动'), description: Text('不能移动至相同目录'), showCloseIconOnlyWhenHovered: false));
     return false;
   }
   final notifier = ref.read(fileProvider.notifier);
@@ -312,18 +285,13 @@ class _CloudFolderDestinationPicker extends ConsumerStatefulWidget {
   final bool move;
   final List<CloudFile> _files;
 
-  const _CloudFolderDestinationPicker({
-    required this.move,
-    required List<CloudFile> files,
-  }) : _files = files;
+  const _CloudFolderDestinationPicker({required this.move, required List<CloudFile> files}) : _files = files;
 
   @override
-  ConsumerState<_CloudFolderDestinationPicker> createState() =>
-      _CloudFolderDestinationPickerState();
+  ConsumerState<_CloudFolderDestinationPicker> createState() => _CloudFolderDestinationPickerState();
 }
 
-class _CloudFolderDestinationPickerState
-    extends ConsumerState<_CloudFolderDestinationPicker> {
+class _CloudFolderDestinationPickerState extends ConsumerState<_CloudFolderDestinationPicker> {
   final _path = <CloudFile>[];
   final _filterController = TextEditingController();
   var _folders = <CloudFile>[];
@@ -365,19 +333,11 @@ class _CloudFolderDestinationPickerState
       final response = await ref
           .read(authProvider.notifier)
           .api
-          .fsFiles(
-            parentID: _path.isEmpty ? null : _path.last.id,
-            pageSize: 1000,
-          );
+          .fsFiles(parentID: _path.isEmpty ? null : _path.last.id, pageSize: 1000);
       if (mounted) {
         setState(() {
-          _folders =
-              _cloudFilesFromResponse(
-                response,
-              ).where((file) => file.isDirectory).toList()..sort(
-                (left, right) =>
-                    left.name.toLowerCase().compareTo(right.name.toLowerCase()),
-              );
+          _folders = _cloudFilesFromResponse(response).where((file) => file.isDirectory).toList()
+            ..sort((left, right) => left.name.toLowerCase().compareTo(right.name.toLowerCase()));
         });
       }
     } catch (error) {
@@ -405,17 +365,13 @@ class _CloudFolderDestinationPickerState
       title: Text(widget.move ? '移动到' : '复制到'),
       description: Text('目标文件夹：$destinationName'),
       actions: [
-        ShadButton.outline(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
+        ShadButton.outline(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
         ShadButton(
           onPressed: _executing
               ? null
               : () async {
                   setState(() => _executing = true);
-                  final destinationID =
-                      _selectedFolder?.id ?? (_path.isEmpty ? null : _path.last.id);
+                  final destinationID = _selectedFolder?.id ?? (_path.isEmpty ? null : _path.last.id);
                   final notifier = ref.read(fileProvider.notifier);
                   try {
                     if (widget.move) {
@@ -430,10 +386,7 @@ class _CloudFolderDestinationPickerState
                   }
                 },
           child: _executing
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
               : const Text('选择'),
         ),
       ],
@@ -443,127 +396,106 @@ class _CloudFolderDestinationPickerState
         child: Material(
           type: MaterialType.transparency,
           child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              children: [
-                ShadButton.ghost(
-                  size: ShadButtonSize.sm,
-                  onPressed: _path.isEmpty
-                      ? null
-                      : () {
-                          setState(() {
-                            _path.clear();
-                            _selectedFolder = null;
-                            _clearFilter();
-                          });
-                          unawaited(_load());
-                        },
-                  child: const Text('根目录'),
-                ),
-                for (var index = 0; index < _path.length; index++)
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                children: [
                   ShadButton.ghost(
                     size: ShadButtonSize.sm,
-                    onPressed: () {
-                      setState(() {
-                        _path.removeRange(index + 1, _path.length);
-                        _selectedFolder = null;
-                        _clearFilter();
-                      });
-                      unawaited(_load());
-                    },
-                    child: Text(_path[index].name),
+                    onPressed: _path.isEmpty
+                        ? null
+                        : () {
+                            setState(() {
+                              _path.clear();
+                              _selectedFolder = null;
+                              _clearFilter();
+                            });
+                            unawaited(_load());
+                          },
+                    child: const Text('根目录'),
                   ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (!_loading && _error == null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: ShadInput(
-                  placeholder: const Text('筛选文件夹…'),
-                  controller: _filterController,
-                  onChanged: (value) => setState(() => _filterQuery = value),
-                  leading: const Icon(Icons.search, size: 16),
-                ),
+                  for (var index = 0; index < _path.length; index++)
+                    ShadButton.ghost(
+                      size: ShadButtonSize.sm,
+                      onPressed: () {
+                        setState(() {
+                          _path.removeRange(index + 1, _path.length);
+                          _selectedFolder = null;
+                          _clearFilter();
+                        });
+                        unawaited(_load());
+                      },
+                      child: Text(_path[index].name),
+                    ),
+                ],
               ),
-            Expanded(
-              child: _loading
-                  ? const Center(
-                      child: AppLoadingIndicator(
-                        size: AppLoadingSize.page,
-                        label: '正在读取文件夹',
-                      ),
-                    )
-                  : _error != null
-                  ? Center(
-                      child: Text(
-                        _error!,
-                        style: TextStyle(color: cs.destructive),
-                      ),
-                    )
-                  : _filteredFolders.isEmpty
-                  ? Center(
-                      child: Text(
-                        _folders.isEmpty ? '当前目录没有文件夹' : '没有匹配的文件夹',
-                        style: TextStyle(color: cs.mutedForeground),
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: _filteredFolders.length,
-                      itemBuilder: (context, index) {
-                        final folder = _filteredFolders[index];
-                        final selected = _selectedFolder?.id == folder.id;
-                        return InkWell(
-                          onTap: () => setState(() => _selectedFolder = folder),
-                          onDoubleTap: () => _enterFolder(folder),
-                          borderRadius: BorderRadius.circular(6),
-                          child: Container(
-                            height: 38,
-                            padding: const EdgeInsets.only(left: 10, right: 4),
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? cs.primary.withValues(alpha: 0.14)
-                                  : null,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.folder_rounded,
-                                  size: 18,
-                                  color: selected ? cs.primary : cs.foreground,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    folder.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                ShadTooltip(
-                                  builder: (_) => const Text('进入目录'),
-                                  child: ShadButton.ghost(
-                                    size: ShadButtonSize.sm,
-                                    onPressed: () => _enterFolder(folder),
-                                    child: const Icon(
-                                      Icons.chevron_right_rounded,
-                                      size: 18,
+              const SizedBox(height: 8),
+              if (!_loading && _error == null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: ShadInput(
+                    placeholder: const Text('筛选文件夹…'),
+                    controller: _filterController,
+                    onChanged: (value) => setState(() => _filterQuery = value),
+                    leading: const Icon(Icons.search, size: 16),
+                  ),
+                ),
+              Expanded(
+                child: _loading
+                    ? const Center(
+                        child: AppLoadingIndicator(size: AppLoadingSize.page, label: '正在读取文件夹'),
+                      )
+                    : _error != null
+                    ? Center(
+                        child: Text(_error!, style: TextStyle(color: cs.destructive)),
+                      )
+                    : _filteredFolders.isEmpty
+                    ? Center(
+                        child: Text(
+                          _folders.isEmpty ? '当前目录没有文件夹' : '没有匹配的文件夹',
+                          style: TextStyle(color: cs.mutedForeground),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: _filteredFolders.length,
+                        itemBuilder: (context, index) {
+                          final folder = _filteredFolders[index];
+                          final selected = _selectedFolder?.id == folder.id;
+                          return InkWell(
+                            onTap: () => setState(() => _selectedFolder = folder),
+                            onDoubleTap: () => _enterFolder(folder),
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              height: 38,
+                              padding: const EdgeInsets.only(left: 10, right: 4),
+                              decoration: BoxDecoration(
+                                color: selected ? cs.primary.withValues(alpha: 0.14) : null,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.folder_rounded, size: 18, color: selected ? cs.primary : cs.foreground),
+                                  const SizedBox(width: 8),
+                                  Expanded(child: Text(folder.name, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                  ShadTooltip(
+                                    builder: (_) => const Text('进入目录'),
+                                    child: ShadButton.ghost(
+                                      size: ShadButtonSize.sm,
+                                      onPressed: () => _enterFolder(folder),
+                                      child: const Icon(Icons.chevron_right_rounded, size: 18),
                                     ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -587,12 +519,7 @@ class _ClipboardPasteButton extends ConsumerWidget {
         await ref.read(fileProvider.notifier).pasteFromClipboardTo(parentID);
         await onCompleted?.call();
       },
-      leading: Icon(
-        state.clipboardIsMove
-            ? Icons.content_paste_go_rounded
-            : Icons.content_paste_rounded,
-        size: 15,
-      ),
+      leading: Icon(state.clipboardIsMove ? Icons.content_paste_go_rounded : Icons.content_paste_rounded, size: 15),
       child: Text('粘贴 $count'),
     );
   }
@@ -609,9 +536,7 @@ Future<void> _confirmDeleteCloudFiles(
     context,
     files,
     title: shareRecords ? '删除 ${files.length} 条分享？' : null,
-    description: shareRecords
-        ? (files.length == 1 ? files.first.name : '将删除所选分享记录。')
-        : null,
+    description: shareRecords ? (files.length == 1 ? files.first.name : '将删除所选分享记录。') : null,
     warning: shareRecords ? '删除后原分享链接将立即失效。' : '此操作会将项目移入回收站。',
   );
   if (confirmed) await onConfirm();
@@ -660,9 +585,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       text = data?.text?.trim();
     } catch (_) {
       if (mounted) {
-        ShadToaster.maybeOf(
-          context,
-        )?.show(const ShadToast(description: Text('无法读取剪贴板')));
+        ShadToaster.maybeOf(context)?.show(const ShadToast(description: Text('无法读取剪贴板')));
       }
       return;
     } finally {
@@ -674,16 +597,12 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     }
     if (!mounted) return;
     if (text == null || text.isEmpty) {
-      ShadToaster.maybeOf(
-        context,
-      )?.show(const ShadToast(description: Text('剪贴板为空')));
+      ShadToaster.maybeOf(context)?.show(const ShadToast(description: Text('剪贴板为空')));
       return;
     }
     final share = GuangyaShareLink.tryParse(text);
     if (share == null) {
-      ShadToaster.maybeOf(
-        context,
-      )?.show(const ShadToast(description: Text('未识别到分享链接')));
+      ShadToaster.maybeOf(context)?.show(const ShadToast(description: Text('未识别到分享链接')));
       return;
     }
     _shareDialogOpen = true;
@@ -696,9 +615,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
 
   Future<void> _scanShareQRCode() async {
     if (!Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS) {
-      ShadToaster.maybeOf(context)?.show(
-        const ShadToast(title: Text('扫一扫'), description: Text('当前平台暂不支持相机扫码')),
-      );
+      ShadToaster.maybeOf(context)?.show(const ShadToast(title: Text('扫一扫'), description: Text('当前平台暂不支持相机扫码')));
       return;
     }
     final share = await showShareQRScannerDialog(context);
@@ -747,23 +664,15 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     ref.listen<FileState>(fileProvider, (previous, next) {
       final message = next.errorMessage ?? next.statusMessage;
       final previousMessage = previous?.errorMessage ?? previous?.statusMessage;
-      final isProgressMessage =
-          next.errorMessage == null && message?.startsWith('正在') == true;
-      if (message == null ||
-          message.isEmpty ||
-          message == previousMessage ||
-          isProgressMessage) {
+      final isProgressMessage = next.errorMessage == null && message?.startsWith('正在') == true;
+      if (message == null || message.isEmpty || message == previousMessage || isProgressMessage) {
         return;
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         ShadToaster.maybeOf(context)?.show(
           next.errorMessage == null
-              ? ShadToast(
-                  title: const Text('云盘'),
-                  description: Text(message),
-                  showCloseIconOnlyWhenHovered: false,
-                )
+              ? ShadToast(title: const Text('云盘'), description: Text(message), showCloseIconOnlyWhenHovered: false)
               : ShadToast.destructive(
                   title: const Text('云盘操作失败'),
                   description: Text(message),
@@ -805,21 +714,13 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                   mediaLibrarySection: _mediaLibrarySection,
                   mediaHomeSelected: _mediaHomeSelected,
                   onMediaLibrarySectionChanged: _changeMediaLibrarySection,
-                  onMediaSortChanged: (sort) => unawaited(
-                    ref.read(mediaLibraryProvider.notifier).setSort(sort),
-                  ),
-                  onMediaSortDirectionChanged: (direction) => unawaited(
-                    ref
-                        .read(mediaLibraryProvider.notifier)
-                        .setSortDirection(direction),
-                  ),
-                  hideMediaIdentity:
-                      _mode == WorkspaceMode.media && _mediaActiveTool != null,
+                  onMediaSortChanged: (sort) => unawaited(ref.read(mediaLibraryProvider.notifier).setSort(sort)),
+                  onMediaSortDirectionChanged: (direction) =>
+                      unawaited(ref.read(mediaLibraryProvider.notifier).setSortDirection(direction)),
+                  hideMediaIdentity: _mode == WorkspaceMode.media && _mediaActiveTool != null,
                   uploadProgress: fp.uploadProgress,
                   mediaDetail: mediaDetail,
-                  onCloseMediaDetail: () =>
-                      ref.read(activeMediaDetailHeaderProvider.notifier).state =
-                          null,
+                  onCloseMediaDetail: () => ref.read(activeMediaDetailHeaderProvider.notifier).state = null,
                 );
                 final rawContent = IndexedStack(
                   index: _mode == WorkspaceMode.cloud ? 0 : 1,
@@ -832,10 +733,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                         padding: EdgeInsets.zero,
                         child: Column(
                           children: [
-                            if (_mediaActiveTool == null) ...[
-                              topBar,
-                              const ShadSeparator.horizontal(),
-                            ],
+                            if (_mediaActiveTool == null) ...[topBar, const ShadSeparator.horizontal()],
                             Expanded(child: rawContent),
                           ],
                         ),
@@ -848,10 +746,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
                       child: Column(
                         children: [
-                          if (_mode == WorkspaceMode.cloud) ...[
-                            topBar,
-                            const SizedBox(height: 8),
-                          ],
+                          if (_mode == WorkspaceMode.cloud) ...[topBar, const SizedBox(height: 8)],
                           Expanded(child: content),
                         ],
                       ),
@@ -865,23 +760,18 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       _mode == WorkspaceMode.cloud
                           ? _CloudSidebar(
                               state: fp,
-                              onSection: (section) => ref
-                                  .read(fileProvider.notifier)
-                                  .setSection(section),
+                              onSection: (section) => ref.read(fileProvider.notifier).setSection(section),
                               onSettings: () => _showSettings(context),
                               onModeChanged: _changeMode,
-                              onSignOut: () =>
-                                  ref.read(authProvider.notifier).signOut(),
+                              onSignOut: () => ref.read(authProvider.notifier).signOut(),
                               onTool: _openTool,
                               activeTool: _cloudActiveTool,
                             )
                           : _MediaSidebar(
                               onModeChanged: _changeMode,
                               onSettings: () => _showSettings(context),
-                              onScanTasks: () =>
-                                  _showScanTaskManagement(context),
-                              onManage: () =>
-                                  _showMediaLibraryManagement(context),
+                              onScanTasks: () => _showScanTaskManagement(context),
+                              onManage: () => _showMediaLibraryManagement(context),
                               onTool: _openTool,
                               activeTool: _mediaActiveTool,
                               selectedFilter: _mediaBrowseFilter,
@@ -894,10 +784,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       Expanded(
                         child: Column(
                           children: [
-                            if (_mode == WorkspaceMode.cloud) ...[
-                              topBar,
-                              const SizedBox(height: 6),
-                            ],
+                            if (_mode == WorkspaceMode.cloud) ...[topBar, const SizedBox(height: 6)],
                             Expanded(child: content),
                           ],
                         ),
@@ -925,9 +812,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     });
     unawaited(StorageManager.set(StorageKeys.workspaceMode, mode.name));
     if (mode == WorkspaceMode.media) {
-      ref.read(mediaLibraryProvider.notifier).api = ref
-          .read(authProvider.notifier)
-          .api;
+      ref.read(mediaLibraryProvider.notifier).api = ref.read(authProvider.notifier).api;
       ref.read(mediaLibraryProvider.notifier).load();
     }
   }
@@ -955,14 +840,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
         title: const Text('退出应用'),
         description: const Text('确定要退出小黄鸭吗？'),
         actions: [
-          ShadButton.outline(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          ShadButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('退出'),
-          ),
+          ShadButton.outline(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
+          ShadButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('退出')),
         ],
       ),
     );
@@ -1057,15 +936,11 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       _searchController.clear();
       return;
     }
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _searchFocusNode.requestFocus(),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocusNode.requestFocus());
   }
 
   void _showMobileMenu(BuildContext context) {
-    final width = (MediaQuery.sizeOf(context).width * 0.72)
-        .clamp(236.0, 280.0)
-        .toDouble();
+    final width = (MediaQuery.sizeOf(context).width * 0.72).clamp(236.0, 280.0).toDouble();
     showShadSheet(
       context: context,
       side: ShadSheetSide.left,
@@ -1087,22 +962,12 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
                     child: _SidebarBrand(
-                      icon: _mode == WorkspaceMode.cloud
-                          ? Icons.cloud_sync_rounded
-                          : Icons.play_circle_fill_rounded,
+                      icon: _mode == WorkspaceMode.cloud ? Icons.cloud_sync_rounded : Icons.play_circle_fill_rounded,
                       title: _mode == WorkspaceMode.cloud ? '光鸭云盘' : '光鸭影视',
-                      subtitle: _mode == WorkspaceMode.cloud
-                          ? 'Cloud Workspace'
-                          : 'Media Center',
-                      imageAsset: _mode == WorkspaceMode.cloud
-                          ? 'assets/branding/guangya_icon.png'
-                          : null,
+                      subtitle: _mode == WorkspaceMode.cloud ? 'Cloud Workspace' : 'Media Center',
+                      imageAsset: _mode == WorkspaceMode.cloud ? 'assets/branding/guangya_icon.png' : null,
                       onSwitchMode: () {
-                        _changeMode(
-                          _mode == WorkspaceMode.cloud
-                              ? WorkspaceMode.media
-                              : WorkspaceMode.cloud,
-                        );
+                        _changeMode(_mode == WorkspaceMode.cloud ? WorkspaceMode.media : WorkspaceMode.cloud);
                         setSheetState(() {});
                       },
                       onSettings: () {
@@ -1121,9 +986,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                             onModeChanged: _changeMode,
                             onSection: (section) {
                               Navigator.of(sheetContext).pop();
-                              ref
-                                  .read(fileProvider.notifier)
-                                  .setSection(section);
+                              ref.read(fileProvider.notifier).setSection(section);
                             },
                             onSettings: () {
                               Navigator.of(sheetContext).pop();
@@ -1176,10 +1039,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   }
 
   void _showSettings(BuildContext context) {
-    showShadDialog<void>(
-      context: context,
-      builder: (_) => const SettingsDialog(),
-    );
+    showShadDialog<void>(context: context, builder: (_) => const SettingsDialog());
   }
 
   Widget _buildCloudContent(FileState state) {
@@ -1228,11 +1088,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
           cachedResults: _fileSearchResultsCache,
           onResultsLoaded: (results) {
             if (!mounted || _fileSearchQuery == null) return;
-            setState(
-              () => _fileSearchResultsCache = List<CloudFile>.unmodifiable(
-                results,
-              ),
-            );
+            setState(() => _fileSearchResultsCache = List<CloudFile>.unmodifiable(results));
           },
         ),
       );
@@ -1240,8 +1096,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     return _CloudWorkspace(
       state: state,
       sidePanelOpen: _isSidePanelOpen,
-      onToggleSidePanel: () =>
-          setState(() => _isSidePanelOpen = !_isSidePanelOpen),
+      onToggleSidePanel: () => setState(() => _isSidePanelOpen = !_isSidePanelOpen),
       onReturnToSearch: _fileSearchReturnQuery == null
           ? null
           : () => setState(() {
@@ -1351,40 +1206,24 @@ class _TopBar extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.search_rounded,
-                      size: 18,
-                      color: cs.mutedForeground,
-                    ),
+                    Icon(Icons.search_rounded, size: 18, color: cs.mutedForeground),
                     const SizedBox(width: 8),
                     Expanded(
                       child: TextField(
                         controller: searchController,
                         focusNode: searchFocusNode,
-                        style: TextStyle(
-                          color: cs.foreground,
-                          fontSize: 13,
-                        ),
+                        style: TextStyle(color: cs.foreground, fontSize: 13),
                         decoration: InputDecoration(
                           border: InputBorder.none,
                           isDense: true,
-                          hintText: mode == WorkspaceMode.cloud
-                              ? '搜索文件'
-                              : '搜索影视资源',
-                          hintStyle: TextStyle(
-                            color: cs.mutedForeground,
-                            fontSize: 13,
-                          ),
+                          hintText: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
+                          hintStyle: TextStyle(color: cs.mutedForeground, fontSize: 13),
                         ),
                         textInputAction: TextInputAction.search,
                         onSubmitted: onSearch,
                       ),
                     ),
-                    _TopBarIconButton(
-                      tooltip: '关闭搜索',
-                      icon: Icons.close_rounded,
-                      onTap: onToggleSearch,
-                    ),
+                    _TopBarIconButton(tooltip: '关闭搜索', icon: Icons.close_rounded, onTap: onToggleSearch),
                   ],
                 ),
               )
@@ -1394,25 +1233,13 @@ class _TopBar extends StatelessWidget {
                     radius: 12,
                     opacity: 0.42,
                     padding: const EdgeInsets.all(3),
-                    child: _TopBarIconButton(
-                      tooltip: '打开菜单',
-                      icon: Icons.menu_rounded,
-                      onTap: onOpenMenu,
-                    ),
+                    child: _TopBarIconButton(tooltip: '打开菜单', icon: Icons.menu_rounded, onTap: onOpenMenu),
                   ),
                   const Spacer(),
                   if (mode == WorkspaceMode.cloud) ...[
-                    _TopBarIconButton(
-                      tooltip: '粘贴分享链接',
-                      icon: Icons.content_paste_rounded,
-                      onTap: onPasteShare,
-                    ),
+                    _TopBarIconButton(tooltip: '粘贴分享链接', icon: Icons.content_paste_rounded, onTap: onPasteShare),
                     const SizedBox(width: 6),
-                    _TopBarIconButton(
-                      tooltip: '扫描分享二维码',
-                      icon: Icons.qr_code_scanner_rounded,
-                      onTap: onScanShare,
-                    ),
+                    _TopBarIconButton(tooltip: '扫描分享二维码', icon: Icons.qr_code_scanner_rounded, onTap: onScanShare),
                     const SizedBox(width: 6),
                   ],
                   _TopBarIconButton(
@@ -1431,17 +1258,9 @@ class _TopBar extends StatelessWidget {
           const SizedBox(width: 78),
           const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
           if (mode == WorkspaceMode.cloud) ...[
-            _TopBarIconButton(
-              tooltip: '粘贴分享链接',
-              icon: Icons.content_paste_rounded,
-              onTap: onPasteShare,
-            ),
+            _TopBarIconButton(tooltip: '粘贴分享链接', icon: Icons.content_paste_rounded, onTap: onPasteShare),
             const SizedBox(width: 8),
-            _TopBarIconButton(
-              tooltip: '扫描分享二维码',
-              icon: Icons.qr_code_scanner_rounded,
-              onTap: onScanShare,
-            ),
+            _TopBarIconButton(tooltip: '扫描分享二维码', icon: Icons.qr_code_scanner_rounded, onTap: onScanShare),
             const SizedBox(width: 8),
             _UploadListTopButton(progress: uploadProgress),
             const SizedBox(width: 8),
@@ -1457,30 +1276,18 @@ class _TopBar extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Row(
                       children: [
-                        Icon(
-                          Icons.search_rounded,
-                          size: 18,
-                          color: cs.foreground,
-                        ),
+                        Icon(Icons.search_rounded, size: 18, color: cs.foreground),
                         const SizedBox(width: 8),
                         Expanded(
                           child: TextField(
                             controller: searchController,
                             focusNode: searchFocusNode,
-                            style: TextStyle(
-                              color: cs.foreground,
-                              fontSize: 13,
-                            ),
+                            style: TextStyle(color: cs.foreground, fontSize: 13),
                             decoration: InputDecoration(
                               border: InputBorder.none,
                               isDense: true,
-                              hintText: mode == WorkspaceMode.cloud
-                                  ? '搜索文件'
-                                  : '搜索影视资源',
-                              hintStyle: TextStyle(
-                                color: cs.mutedForeground,
-                                fontSize: 13,
-                              ),
+                              hintText: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
+                              hintStyle: TextStyle(color: cs.mutedForeground, fontSize: 13),
                             ),
                             textInputAction: TextInputAction.search,
                             onSubmitted: onSearch,
@@ -1489,11 +1296,7 @@ class _TopBar extends StatelessWidget {
                         InkWell(
                           borderRadius: BorderRadius.circular(12),
                           onTap: onToggleSearch,
-                          child: Icon(
-                            Icons.close_rounded,
-                            size: 18,
-                            color: cs.mutedForeground,
-                          ),
+                          child: Icon(Icons.close_rounded, size: 18, color: cs.mutedForeground),
                         ),
                       ],
                     ),
@@ -1512,16 +1315,10 @@ class _TopBar extends StatelessWidget {
   Widget _buildMediaTopBar(BuildContext context, ShadColorScheme cs) {
     final detail = mediaDetail;
     if (detail != null) {
-      return _MediaDetailTopBar(
-        compact: compact,
-        detail: detail,
-        onBack: onCloseMediaDetail,
-      );
+      return _MediaDetailTopBar(compact: compact, detail: detail, onBack: onCloseMediaDetail);
     }
-    final showLibraryScan =
-        !mediaHomeSelected && mediaFilter == MediaLibraryBrowseFilter.all;
-    final showLibrarySections =
-        showLibraryScan && !searchOpen && mediaState.statistics.total > 0;
+    final showLibraryScan = !mediaHomeSelected && mediaFilter == MediaLibraryBrowseFilter.all;
+    final showLibrarySections = showLibraryScan && !searchOpen && mediaState.statistics.total > 0;
     final identity = compact && showLibrarySections
         ? _MediaLibrarySectionPopover(
             state: mediaState,
@@ -1554,28 +1351,18 @@ class _TopBar extends StatelessWidget {
             child: TextField(
               controller: searchController,
               focusNode: searchFocusNode,
-              style: TextStyle(
-                color: cs.foreground,
-                fontSize: 13,
-              ),
+              style: TextStyle(color: cs.foreground, fontSize: 13),
               decoration: InputDecoration(
                 border: InputBorder.none,
                 isDense: true,
                 hintText: '搜索影视资源',
-                hintStyle: TextStyle(
-                  color: cs.mutedForeground,
-                  fontSize: 13,
-                ),
+                hintStyle: TextStyle(color: cs.mutedForeground, fontSize: 13),
               ),
               textInputAction: TextInputAction.search,
               onSubmitted: onSearch,
             ),
           ),
-          _TopBarIconButton(
-            tooltip: '关闭搜索',
-            icon: Icons.close_rounded,
-            onTap: onToggleSearch,
-          ),
+          _TopBarIconButton(tooltip: '关闭搜索', icon: Icons.close_rounded, onTap: onToggleSearch),
         ],
       ),
     );
@@ -1586,11 +1373,7 @@ class _TopBar extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(10, 5, 10, 0),
           child: Row(
             children: [
-              _TopBarIconButton(
-                tooltip: '打开菜单',
-                icon: Icons.menu_rounded,
-                onTap: onOpenMenu,
-              ),
+              _TopBarIconButton(tooltip: '打开菜单', icon: Icons.menu_rounded, onTap: onOpenMenu),
               const SizedBox(width: 6),
               if (showLibraryScan) ...[
                 _MediaLibraryScanTopAction(compact: true, state: mediaState),
@@ -1615,11 +1398,7 @@ class _TopBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 4),
                 ],
-                _TopBarIconButton(
-                  tooltip: '搜索影视资源',
-                  icon: Icons.search_rounded,
-                  onTap: onToggleSearch,
-                ),
+                _TopBarIconButton(tooltip: '搜索影视资源', icon: Icons.search_rounded, onTap: onToggleSearch),
               ],
             ],
           ),
@@ -1651,10 +1430,7 @@ class _TopBar extends StatelessWidget {
                 ],
                 if (showLibraryScan) ...[
                   const SizedBox(width: 8),
-                  _MediaLibraryScanTopAction(
-                    compact: compactActions,
-                    state: mediaState,
-                  ),
+                  _MediaLibraryScanTopAction(compact: compactActions, state: mediaState),
                 ],
                 const SizedBox(width: 8),
                 if (mediaHomeSelected ||
@@ -1679,11 +1455,7 @@ class _TopBar extends StatelessWidget {
                   height: 38,
                   child: searchOpen
                       ? searchField
-                      : _TopBarIconButton(
-                          tooltip: '搜索影视资源',
-                          icon: Icons.search_rounded,
-                          onTap: onToggleSearch,
-                        ),
+                      : _TopBarIconButton(tooltip: '搜索影视资源', icon: Icons.search_rounded, onTap: onToggleSearch),
                 ),
               ],
             ),
@@ -1699,11 +1471,7 @@ class _MediaDetailTopBar extends StatelessWidget {
   final MediaDetailHeader detail;
   final VoidCallback onBack;
 
-  const _MediaDetailTopBar({
-    required this.compact,
-    required this.detail,
-    required this.onBack,
-  });
+  const _MediaDetailTopBar({required this.compact, required this.detail, required this.onBack});
 
   @override
   Widget build(BuildContext context) {
@@ -1712,29 +1480,18 @@ class _MediaDetailTopBar extends StatelessWidget {
     return SizedBox(
       height: compact ? 48 : 46,
       child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          compact ? 10 : 14,
-          compact ? 5 : 4,
-          compact ? 10 : 14,
-          compact ? 3 : 0,
-        ),
+        padding: EdgeInsets.fromLTRB(compact ? 10 : 14, compact ? 5 : 4, compact ? 10 : 14, compact ? 3 : 0),
         child: Center(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               ShadTooltip(
                 builder: (_) => const Text('返回影视库'),
-                child: _TopBarIconButton(
-                  tooltip: '返回影视库',
-                  icon: Icons.arrow_back_rounded,
-                  onTap: onBack,
-                ),
+                child: _TopBarIconButton(tooltip: '返回影视库', icon: Icons.arrow_back_rounded, onTap: onBack),
               ),
               const SizedBox(width: 8),
               Icon(
-                detail.mediaKind == TMDBMediaKind.tv
-                    ? Icons.tv_rounded
-                    : Icons.movie_rounded,
+                detail.mediaKind == TMDBMediaKind.tv ? Icons.tv_rounded : Icons.movie_rounded,
                 size: compact ? 19 : 20,
                 color: cs.primary,
               ),
@@ -1744,19 +1501,12 @@ class _MediaDetailTopBar extends StatelessWidget {
                   detail.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: compact ? 15 : 16,
-                    fontWeight: FontWeight.w700,
-                    color: cs.foreground,
-                  ),
+                  style: TextStyle(fontSize: compact ? 15 : 16, fontWeight: FontWeight.w700, color: cs.foreground),
                 ),
               ),
               const SizedBox(width: 8),
               ShadBadge(child: Text(type)),
-              if (detail.year.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                ShadBadge.outline(child: Text(detail.year)),
-              ],
+              if (detail.year.isNotEmpty) ...[const SizedBox(width: 6), ShadBadge.outline(child: Text(detail.year))],
             ],
           ),
         ),
@@ -1813,12 +1563,9 @@ class _MediaLibraryTopIdentity extends StatelessWidget {
         : switch (filter) {
             MediaLibraryBrowseFilter.movies => '${statistics.movies} 部电影',
             MediaLibraryBrowseFilter.series => '${statistics.series} 部剧集',
-            MediaLibraryBrowseFilter.unmatched =>
-              '${statistics.unmatched} 个未识别资源',
+            MediaLibraryBrowseFilter.unmatched => '${statistics.unmatched} 个未识别资源',
             MediaLibraryBrowseFilter.collections => '自动整理的媒体合集',
-            MediaLibraryBrowseFilter.all => _mediaLibraryStatisticsLabel(
-              statistics,
-            ),
+            MediaLibraryBrowseFilter.all => _mediaLibraryStatisticsLabel(statistics),
           };
     return Semantics(
       button: onTap != null,
@@ -1832,11 +1579,7 @@ class _MediaLibraryTopIdentity extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
             child: Row(
               children: [
-                Icon(
-                  Icons.video_library_rounded,
-                  size: compact ? 20 : 19,
-                  color: cs.primary,
-                ),
+                Icon(Icons.video_library_rounded, size: compact ? 20 : 19, color: cs.primary),
                 const SizedBox(width: 7),
                 Expanded(
                   child: Column(
@@ -1859,20 +1602,12 @@ class _MediaLibraryTopIdentity extends StatelessWidget {
                         subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: cs.mutedForeground,
-                        ),
+                        style: TextStyle(fontSize: 11, color: cs.mutedForeground),
                       ),
                     ],
                   ),
                 ),
-                if (onTap != null)
-                  Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    size: 18,
-                    color: cs.mutedForeground,
-                  ),
+                if (onTap != null) Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: cs.mutedForeground),
               ],
             ),
           ),
@@ -1902,12 +1637,10 @@ class _MediaLibrarySectionPopover extends StatefulWidget {
   });
 
   @override
-  State<_MediaLibrarySectionPopover> createState() =>
-      _MediaLibrarySectionPopoverState();
+  State<_MediaLibrarySectionPopover> createState() => _MediaLibrarySectionPopoverState();
 }
 
-class _MediaLibrarySectionPopoverState
-    extends State<_MediaLibrarySectionPopover> {
+class _MediaLibrarySectionPopoverState extends State<_MediaLibrarySectionPopover> {
   final _controller = ShadPopoverController();
 
   @override
@@ -1930,9 +1663,7 @@ class _MediaLibrarySectionPopoverState
     return ShadPopover(
       controller: _controller,
       popover: (_) => SizedBox(
-        width: (MediaQuery.sizeOf(context).width - 24)
-            .clamp(300.0, 520.0)
-            .toDouble(),
+        width: (MediaQuery.sizeOf(context).width - 24).clamp(300.0, 520.0).toDouble(),
         child: Padding(
           padding: const EdgeInsets.all(6),
           child: Column(
@@ -1943,11 +1674,7 @@ class _MediaLibrarySectionPopoverState
                 padding: const EdgeInsets.fromLTRB(8, 3, 8, 7),
                 child: Text(
                   '资源分类',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: cs.mutedForeground,
-                  ),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.mutedForeground),
                 ),
               ),
               _MediaLibrarySectionSelector(
@@ -1972,34 +1699,15 @@ class _MediaLibrarySectionSelector extends StatelessWidget {
   final MediaLibraryBrowseFilter selected;
   final ValueChanged<MediaLibraryBrowseFilter> onSelected;
 
-  const _MediaLibrarySectionSelector({
-    required this.statistics,
-    required this.selected,
-    required this.onSelected,
-  });
+  const _MediaLibrarySectionSelector({required this.statistics, required this.selected, required this.onSelected});
 
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final sections = [
-      (
-        filter: MediaLibraryBrowseFilter.all,
-        icon: Icons.video_library_rounded,
-        label: '全部',
-        count: statistics.total,
-      ),
-      (
-        filter: MediaLibraryBrowseFilter.movies,
-        icon: Icons.movie_rounded,
-        label: '电影',
-        count: statistics.movies,
-      ),
-      (
-        filter: MediaLibraryBrowseFilter.series,
-        icon: Icons.live_tv_rounded,
-        label: '剧集',
-        count: statistics.series,
-      ),
+      (filter: MediaLibraryBrowseFilter.all, icon: Icons.video_library_rounded, label: '全部', count: statistics.total),
+      (filter: MediaLibraryBrowseFilter.movies, icon: Icons.movie_rounded, label: '电影', count: statistics.movies),
+      (filter: MediaLibraryBrowseFilter.series, icon: Icons.live_tv_rounded, label: '剧集', count: statistics.series),
       (
         filter: MediaLibraryBrowseFilter.unmatched,
         icon: Icons.help_outline_rounded,
@@ -2030,17 +1738,13 @@ class _MediaLibrarySectionSelector extends StatelessWidget {
                         size: ShadButtonSize.sm,
                         onPressed: () => onSelected(sections[index].filter),
                         leading: Icon(sections[index].icon, size: 15),
-                        child: Text(
-                          '${sections[index].label} ${sections[index].count}',
-                        ),
+                        child: Text('${sections[index].label} ${sections[index].count}'),
                       )
                     : ShadButton.ghost(
                         size: ShadButtonSize.sm,
                         onPressed: () => onSelected(sections[index].filter),
                         leading: Icon(sections[index].icon, size: 15),
-                        child: Text(
-                          '${sections[index].label} ${sections[index].count}',
-                        ),
+                        child: Text('${sections[index].label} ${sections[index].count}'),
                       ),
               ],
             ],
@@ -2057,12 +1761,7 @@ class _TopBarIconButton extends StatelessWidget {
   final VoidCallback? onTap;
   final Color? color;
 
-  const _TopBarIconButton({
-    required this.tooltip,
-    required this.icon,
-    required this.onTap,
-    this.color,
-  });
+  const _TopBarIconButton({required this.tooltip, required this.icon, required this.onTap, this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -2127,18 +1826,11 @@ class _MediaSortTopActionState extends State<_MediaSortTopAction> {
                       widget.onSelected(value);
                     },
                     leading: Icon(
-                      value == widget.selected
-                          ? Icons.check_rounded
-                          : Icons.sort_rounded,
+                      value == widget.selected ? Icons.check_rounded : Icons.sort_rounded,
                       size: 16,
-                      color: value == widget.selected
-                          ? cs.primary
-                          : cs.mutedForeground,
+                      color: value == widget.selected ? cs.primary : cs.mutedForeground,
                     ),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(value.title),
-                    ),
+                    child: Align(alignment: Alignment.centerLeft, child: Text(value.title)),
                   ),
                 ),
               const Divider(height: 12),
@@ -2155,14 +1847,9 @@ class _MediaSortTopActionState extends State<_MediaSortTopAction> {
                           ? Icons.arrow_upward_rounded
                           : Icons.arrow_downward_rounded,
                       size: 16,
-                      color: direction == widget.direction
-                          ? cs.primary
-                          : cs.mutedForeground,
+                      color: direction == widget.direction ? cs.primary : cs.mutedForeground,
                     ),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(direction.title),
-                    ),
+                    child: Align(alignment: Alignment.centerLeft, child: Text(direction.title)),
                   ),
                 ),
             ],
@@ -2182,18 +1869,13 @@ class _MediaLibraryScanTopAction extends ConsumerStatefulWidget {
   final bool compact;
   final MediaLibraryState state;
 
-  const _MediaLibraryScanTopAction({
-    required this.compact,
-    required this.state,
-  });
+  const _MediaLibraryScanTopAction({required this.compact, required this.state});
 
   @override
-  ConsumerState<_MediaLibraryScanTopAction> createState() =>
-      _MediaLibraryScanTopActionState();
+  ConsumerState<_MediaLibraryScanTopAction> createState() => _MediaLibraryScanTopActionState();
 }
 
-class _MediaLibraryScanTopActionState
-    extends ConsumerState<_MediaLibraryScanTopAction> {
+class _MediaLibraryScanTopActionState extends ConsumerState<_MediaLibraryScanTopAction> {
   final _controller = ShadPopoverController();
 
   @override
@@ -2214,10 +1896,7 @@ class _MediaLibraryScanTopActionState
             padding: EdgeInsets.zero,
             onPressed: () => ref
                 .read(mediaLibraryProvider.notifier)
-                .cancelScan(
-                  libraryID:
-                      widget.state.selectedLibrary?.id ?? globalMediaLibraryID,
-                ),
+                .cancelScan(libraryID: widget.state.selectedLibrary?.id ?? globalMediaLibraryID),
             child: const Icon(Icons.stop_rounded, size: 18),
           ),
         );
@@ -2228,10 +1907,7 @@ class _MediaLibraryScanTopActionState
         padding: EdgeInsets.zero,
         onPressed: () => ref
             .read(mediaLibraryProvider.notifier)
-            .cancelScan(
-              libraryID:
-                  widget.state.selectedLibrary?.id ?? globalMediaLibraryID,
-            ),
+            .cancelScan(libraryID: widget.state.selectedLibrary?.id ?? globalMediaLibraryID),
         child: const Icon(Icons.stop_rounded, size: 18),
       );
     }
@@ -2241,34 +1917,17 @@ class _MediaLibraryScanTopActionState
       disabled: widget.state.selectedLibrary == null,
       controller: _controller,
       onScanUnrecognized: widget.state.selectedLibrary == null
-          ? () => ref
-                .read(mediaLibraryProvider.notifier)
-                .scanGlobalLibrary(
-                  mode: MediaLibraryScanMode.unrecognizedOnly,
-                )
+          ? () => ref.read(mediaLibraryProvider.notifier).scanGlobalLibrary(mode: MediaLibraryScanMode.unrecognizedOnly)
           : () => ref
                 .read(mediaLibraryProvider.notifier)
-                .rescanSelectedLibrary(
-                  mode: MediaLibraryScanMode.unrecognizedOnly,
-                ),
+                .rescanSelectedLibrary(mode: MediaLibraryScanMode.unrecognizedOnly),
       onScanUnindexed: widget.state.selectedLibrary == null
-          ? () => ref
-                .read(mediaLibraryProvider.notifier)
-                .scanGlobalLibrary(
-                  mode: MediaLibraryScanMode.unindexedOnly,
-                )
-          : () => ref
-                .read(mediaLibraryProvider.notifier)
-                .rescanSelectedLibrary(
-                  mode: MediaLibraryScanMode.unindexedOnly,
-                ),
+          ? () => ref.read(mediaLibraryProvider.notifier).scanGlobalLibrary(mode: MediaLibraryScanMode.unindexedOnly)
+          : () =>
+                ref.read(mediaLibraryProvider.notifier).rescanSelectedLibrary(mode: MediaLibraryScanMode.unindexedOnly),
       onForceAll: widget.state.selectedLibrary == null
-          ? () => ref
-                .read(mediaLibraryProvider.notifier)
-                .scanGlobalLibrary(mode: MediaLibraryScanMode.forceAll)
-          : () => ref
-                .read(mediaLibraryProvider.notifier)
-                .rescanSelectedLibrary(mode: MediaLibraryScanMode.forceAll),
+          ? () => ref.read(mediaLibraryProvider.notifier).scanGlobalLibrary(mode: MediaLibraryScanMode.forceAll)
+          : () => ref.read(mediaLibraryProvider.notifier).rescanSelectedLibrary(mode: MediaLibraryScanMode.forceAll),
     );
   }
 }
@@ -2279,8 +1938,7 @@ class _GlobalScanTopAction extends ConsumerStatefulWidget {
   const _GlobalScanTopAction({required this.compact});
 
   @override
-  ConsumerState<_GlobalScanTopAction> createState() =>
-      _GlobalScanTopActionState();
+  ConsumerState<_GlobalScanTopAction> createState() => _GlobalScanTopActionState();
 }
 
 class _GlobalScanTopActionState extends ConsumerState<_GlobalScanTopAction> {
@@ -2290,15 +1948,11 @@ class _GlobalScanTopActionState extends ConsumerState<_GlobalScanTopAction> {
       compact: widget.compact,
       iconOnly: true,
       disabled: false,
-      onScanUnrecognized: () => ref
-          .read(mediaLibraryProvider.notifier)
-          .scanGlobalLibrary(mode: MediaLibraryScanMode.unrecognizedOnly),
-      onScanUnindexed: () => ref
-          .read(mediaLibraryProvider.notifier)
-          .scanGlobalLibrary(mode: MediaLibraryScanMode.unindexedOnly),
-      onForceAll: () => ref
-          .read(mediaLibraryProvider.notifier)
-          .scanGlobalLibrary(mode: MediaLibraryScanMode.forceAll),
+      onScanUnrecognized: () =>
+          ref.read(mediaLibraryProvider.notifier).scanGlobalLibrary(mode: MediaLibraryScanMode.unrecognizedOnly),
+      onScanUnindexed: () =>
+          ref.read(mediaLibraryProvider.notifier).scanGlobalLibrary(mode: MediaLibraryScanMode.unindexedOnly),
+      onForceAll: () => ref.read(mediaLibraryProvider.notifier).scanGlobalLibrary(mode: MediaLibraryScanMode.forceAll),
     );
   }
 }
@@ -2325,11 +1979,7 @@ class _UploadListTopButtonState extends State<_UploadListTopButton> {
   Widget build(BuildContext context) => ShadPopover(
     controller: _controller,
     popover: (_) => _UploadProgressPopover(progress: widget.progress),
-    child: _TopBarIconButton(
-      tooltip: '上传列表',
-      icon: Icons.upload_file_rounded,
-      onTap: _controller.toggle,
-    ),
+    child: _TopBarIconButton(tooltip: '上传列表', icon: Icons.upload_file_rounded, onTap: _controller.toggle),
   );
 }
 
@@ -2415,9 +2065,7 @@ class _MobileWorkspaceMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final isCloud = mode == WorkspaceMode.cloud;
-    final width = (MediaQuery.sizeOf(context).width * 0.86)
-        .clamp(280.0, 340.0)
-        .toDouble();
+    final width = (MediaQuery.sizeOf(context).width * 0.86).clamp(280.0, 340.0).toDouble();
     return ShadSheet(
       constraints: BoxConstraints.tightFor(width: width),
       title: const Text('小黄鸭'),
@@ -2440,13 +2088,8 @@ class _MobileWorkspaceMenu extends StatelessWidget {
                   radius: 21,
                   backgroundColor: cs.primary,
                   child: Text(
-                    userName.isEmpty
-                        ? '小'
-                        : userName.substring(0, 1).toUpperCase(),
-                    style: TextStyle(
-                      color: cs.primaryForeground,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    userName.isEmpty ? '小' : userName.substring(0, 1).toUpperCase(),
+                    style: TextStyle(color: cs.primaryForeground, fontWeight: FontWeight.w700),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -2458,20 +2101,14 @@ class _MobileWorkspaceMenu extends StatelessWidget {
                         userName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: cs.foreground,
-                        ),
+                        style: TextStyle(fontWeight: FontWeight.w700, color: cs.foreground),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         capacityText,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: cs.mutedForeground,
-                        ),
+                        style: TextStyle(fontSize: 12, color: cs.mutedForeground),
                       ),
                     ],
                   ),
@@ -2483,16 +2120,8 @@ class _MobileWorkspaceMenu extends StatelessWidget {
           _MobileMenuGroup(
             title: '常用入口',
             children: [
-              _MobileMenuRow(
-                icon: Icons.search_rounded,
-                label: '全局搜索',
-                onTap: onSearch,
-              ),
-              _MobileMenuRow(
-                icon: Icons.folder_rounded,
-                label: '文件管理',
-                onTap: () => onSection(WorkspaceSection.files),
-              ),
+              _MobileMenuRow(icon: Icons.search_rounded, label: '全局搜索', onTap: onSearch),
+              _MobileMenuRow(icon: Icons.folder_rounded, label: '文件管理', onTap: () => onSection(WorkspaceSection.files)),
               _MobileMenuRow(
                 icon: Icons.movie_rounded,
                 label: '光鸭影视',
@@ -2524,13 +2153,9 @@ class _MobileWorkspaceMenu extends StatelessWidget {
             title: isCloud ? '文件工具' : '影视工具',
             children: [
               _MobileMenuRow(
-                icon: isCloud
-                    ? Icons.manage_search_rounded
-                    : Icons.movie_filter_rounded,
+                icon: isCloud ? Icons.manage_search_rounded : Icons.movie_filter_rounded,
                 label: isCloud ? '文件扫描与清理' : '媒体库管理',
-                onTap: isCloud
-                    ? () => onTool(WorkspaceTool.scan)
-                    : onManageLibrary,
+                onTap: isCloud ? () => onTool(WorkspaceTool.scan) : onManageLibrary,
               ),
               if (isCloud) ...[
                 _MobileMenuRow(
@@ -2548,21 +2173,10 @@ class _MobileWorkspaceMenu extends StatelessWidget {
           ),
           _MobileMenuGroup(
             title: '系统维护',
-            children: [
-              _MobileMenuRow(
-                icon: Icons.settings_rounded,
-                label: '设置中心',
-                onTap: onSettings,
-              ),
-            ],
+            children: [_MobileMenuRow(icon: Icons.settings_rounded, label: '设置中心', onTap: onSettings)],
           ),
           const ShadSeparator.horizontal(),
-          _MobileMenuRow(
-            icon: Icons.logout_rounded,
-            label: '退出登录',
-            destructive: true,
-            onTap: onSignOut,
-          ),
+          _MobileMenuRow(icon: Icons.logout_rounded, label: '退出登录', destructive: true, onTap: onSignOut),
         ],
       ),
     );
@@ -2618,12 +2232,7 @@ class _MobileMenuRow extends StatelessWidget {
   final VoidCallback onTap;
   final bool destructive;
 
-  const _MobileMenuRow({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.destructive = false,
-  });
+  const _MobileMenuRow({required this.icon, required this.label, required this.onTap, this.destructive = false});
 
   @override
   Widget build(BuildContext context) {
@@ -2635,11 +2244,7 @@ class _MobileMenuRow extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.start,
       foregroundColor: color,
       textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-      leading: Icon(
-        icon,
-        size: 20,
-        color: destructive ? cs.destructive : cs.mutedForeground,
-      ),
+      leading: Icon(icon, size: 20, color: destructive ? cs.destructive : cs.mutedForeground),
       onPressed: onTap,
       child: Text(label),
     );
@@ -2671,9 +2276,7 @@ class _CloudSidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sections = WorkspaceSection.values
-        .where((section) => section != WorkspaceSection.mediaLibrary)
-        .toList();
+    final sections = WorkspaceSection.values.where((section) => section != WorkspaceSection.mediaLibrary).toList();
     return SizedBox(
       width: width,
       child: Column(
@@ -2684,10 +2287,7 @@ class _CloudSidebar extends StatelessWidget {
               child: !Platform.isMacOS
                   ? const Align(
                       alignment: Alignment.centerLeft,
-                      child: Padding(
-                        padding: EdgeInsets.only(left: 2),
-                        child: WindowControls(),
-                      ),
+                      child: Padding(padding: EdgeInsets.only(left: 2), child: WindowControls()),
                     )
                   : null,
             ),
@@ -2725,25 +2325,25 @@ class _CloudSidebar extends StatelessWidget {
                         const Divider(height: 24),
                         _SidebarTile(
                           icon: Icons.folder_off_rounded,
-                          label: '空文件夹扫描',
+                          label: '空文件夹',
                           selected: activeTool == WorkspaceTool.emptyFolderScan,
                           onTap: () => onTool(WorkspaceTool.emptyFolderScan),
                         ),
                         _SidebarTile(
                           icon: Icons.content_copy_rounded,
-                          label: '重复文件扫描',
+                          label: '重复文件',
                           selected: activeTool == WorkspaceTool.duplicateFileScan,
                           onTap: () => onTool(WorkspaceTool.duplicateFileScan),
                         ),
                         _SidebarTile(
                           icon: Icons.folder_special_rounded,
-                          label: '相似文件夹扫描',
+                          label: '目录整理',
                           selected: activeTool == WorkspaceTool.similarFolderScan,
                           onTap: () => onTool(WorkspaceTool.similarFolderScan),
                         ),
                         _SidebarTile(
                           icon: Icons.text_fields_rounded,
-                          label: '批量重命名',
+                          label: '批量命名',
                           selected: activeTool == WorkspaceTool.rename,
                           onTap: () => onTool(WorkspaceTool.rename),
                         ),
@@ -2756,12 +2356,7 @@ class _CloudSidebar extends StatelessWidget {
                       ],
                     ),
                   ),
-                  _SidebarTile(
-                    icon: Icons.logout_rounded,
-                    label: '退出登录',
-                    selected: false,
-                    onTap: onSignOut,
-                  ),
+                  _SidebarTile(icon: Icons.logout_rounded, label: '退出登录', selected: false, onTap: onSignOut),
                 ],
               ),
             ),
@@ -2843,10 +2438,7 @@ class _MediaSidebar extends ConsumerWidget {
               child: !Platform.isMacOS
                   ? const Align(
                       alignment: Alignment.centerLeft,
-                      child: Padding(
-                        padding: EdgeInsets.only(left: 2),
-                        child: WindowControls(),
-                      ),
+                      child: Padding(padding: EdgeInsets.only(left: 2), child: WindowControls()),
                     )
                   : null,
             ),
@@ -2871,12 +2463,7 @@ class _MediaSidebar extends ConsumerWidget {
                     const SizedBox(height: 16),
                   ],
                   const _SidebarSectionLabel('浏览'),
-                  _SidebarTile(
-                    icon: Icons.home_rounded,
-                    label: '首页',
-                    selected: homeSelected,
-                    onTap: onHome,
-                  ),
+                  _SidebarTile(icon: Icons.home_rounded, label: '首页', selected: homeSelected, onTap: onHome),
                   _SidebarTile(
                     icon: Icons.movie_creation_rounded,
                     label: '电影',
@@ -2895,8 +2482,7 @@ class _MediaSidebar extends ConsumerWidget {
                     icon: Icons.help_outline_rounded,
                     label: '未识别',
                     count: state.globalStatistics.unmatched,
-                    selected:
-                        selectedFilter == MediaLibraryBrowseFilter.unmatched,
+                    selected: selectedFilter == MediaLibraryBrowseFilter.unmatched,
                     onTap: () => onFilter(MediaLibraryBrowseFilter.unmatched),
                   ),
                   const SizedBox(height: 8),
@@ -2909,20 +2495,16 @@ class _MediaSidebar extends ConsumerWidget {
                             Builder(
                               builder: (context) {
                                 final statistics =
-                                    state.libraryStatistics[library.id] ??
-                                    const MediaLibraryStatistics();
+                                    state.libraryStatistics[library.id] ?? const MediaLibraryStatistics();
                                 return _SidebarTile(
                                   icon: library.kind == MediaLibraryKind.series
                                       ? Icons.live_tv_rounded
                                       : Icons.smart_display_rounded,
                                   label: library.name,
-                                  subtitle: _mediaLibraryStatisticsLabel(
-                                    statistics,
-                                  ),
+                                  subtitle: _mediaLibraryStatisticsLabel(statistics),
                                   selected:
                                       !homeSelected &&
-                                      selectedFilter ==
-                                          MediaLibraryBrowseFilter.all &&
+                                      selectedFilter == MediaLibraryBrowseFilter.all &&
                                       state.selectedLibrary?.id == library.id,
                                   onTap: () => onSelectLibrary(library.id),
                                 );
@@ -2932,10 +2514,7 @@ class _MediaSidebar extends ConsumerWidget {
                       ),
                     ),
                   ],
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8, bottom: 10),
-                    child: ShadSeparator.horizontal(),
-                  ),
+                  const Padding(padding: EdgeInsets.only(top: 8, bottom: 10), child: ShadSeparator.horizontal()),
                   const _SidebarSectionLabel('管理'),
                   _SidebarTile(
                     icon: Icons.assignment_rounded,
@@ -2956,12 +2535,7 @@ class _MediaSidebar extends ConsumerWidget {
                     selected: activeTool == WorkspaceTool.categories,
                     onTap: () => onTool(WorkspaceTool.categories),
                   ),
-                  _SidebarTile(
-                    icon: Icons.video_library_rounded,
-                    label: '媒体库管理',
-                    selected: false,
-                    onTap: onManage,
-                  ),
+                  _SidebarTile(icon: Icons.video_library_rounded, label: '媒体库管理', selected: false, onTap: onManage),
                 ],
               ),
             ),
@@ -2974,8 +2548,7 @@ class _MediaSidebar extends ConsumerWidget {
 
 bool _shouldShowLibrarySection(MediaLibraryState state) {
   if (state.libraries.isEmpty) return false;
-  if (state.libraries.length == 1 &&
-      state.libraries.first.id == globalMediaLibraryID) {
+  if (state.libraries.length == 1 && state.libraries.first.id == globalMediaLibraryID) {
     return false;
   }
   return true;
@@ -2993,11 +2566,7 @@ class _SidebarSectionLabel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(10, 0, 10, 7),
       child: Text(
         label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: cs.mutedForeground,
-        ),
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: cs.mutedForeground),
       ),
     );
   }
@@ -3023,8 +2592,7 @@ class _SidebarBrand extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = ShadTheme.of(context).colorScheme;
-    final hasAppUpgrade =
-        ref.watch(appUpgradeStatusProvider).value?.hasNewVersion == true;
+    final hasAppUpgrade = ref.watch(appUpgradeStatusProvider).value?.hasNewVersion == true;
     final brand = Row(
       children: [
         Container(
@@ -3033,27 +2601,17 @@ class _SidebarBrand extends ConsumerWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             boxShadow: [
-              BoxShadow(
-                color: cs.primary.withValues(alpha: 0.24),
-                blurRadius: 16,
-                offset: const Offset(0, 8),
-              ),
+              BoxShadow(color: cs.primary.withValues(alpha: 0.24), blurRadius: 16, offset: const Offset(0, 8)),
             ],
           ),
           child: imageAsset == null
               ? DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: cs.primary,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  decoration: BoxDecoration(color: cs.primary, borderRadius: BorderRadius.circular(12)),
                   child: Icon(icon, color: Colors.white, size: 26),
                 )
               : ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.asset(
-                    imageAsset!,
-                    filterQuality: FilterQuality.high,
-                  ),
+                  child: Image.asset(imageAsset!, filterQuality: FilterQuality.high),
                 ),
         ),
         const SizedBox(width: 12),
@@ -3063,11 +2621,7 @@ class _SidebarBrand extends ConsumerWidget {
             children: [
               Text(
                 title,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                  color: cs.foreground,
-                ),
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: cs.foreground),
               ),
               Text(
                 subtitle,
@@ -3094,10 +2648,7 @@ class _SidebarBrand extends ConsumerWidget {
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
                 onTap: onSwitchMode,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: brand,
-                ),
+                child: Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: brand),
               ),
             ),
           ),
@@ -3110,11 +2661,7 @@ class _SidebarBrand extends ConsumerWidget {
               color: cs.primary,
               onTap: () => showAppUpgradeDialog(context),
             ),
-          _TopBarIconButton(
-            tooltip: '设置',
-            icon: Icons.settings_rounded,
-            onTap: onSettings!,
-          ),
+          _TopBarIconButton(tooltip: '设置', icon: Icons.settings_rounded, onTap: onSettings!),
         ],
       ],
     );
@@ -3142,11 +2689,7 @@ class _SidebarTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final visibleCount = count != null && count! > 0;
-    final semanticsLabel = [
-      label,
-      ?subtitle,
-      if (visibleCount) '$count',
-    ].join('，');
+    final semanticsLabel = [label, ?subtitle, if (visibleCount) '$count'].join('，');
     return Semantics(
       button: true,
       selected: selected,
@@ -3157,18 +2700,14 @@ class _SidebarTile extends StatelessWidget {
           color: Colors.transparent,
           child: InkWell(
             borderRadius: BorderRadius.circular(7),
-            overlayColor: WidgetStatePropertyAll(
-              cs.foreground.withValues(alpha: 0.05),
-            ),
+            overlayColor: WidgetStatePropertyAll(cs.foreground.withValues(alpha: 0.05)),
             onTap: onTap,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
               height: subtitle == null ? 40 : 52,
               padding: const EdgeInsets.symmetric(horizontal: 9),
               decoration: BoxDecoration(
-                color: selected
-                    ? cs.primary.withValues(alpha: 0.12)
-                    : Colors.transparent,
+                color: selected ? cs.primary.withValues(alpha: 0.12) : Colors.transparent,
                 borderRadius: BorderRadius.circular(7),
               ),
               child: Row(
@@ -3177,16 +2716,10 @@ class _SidebarTile extends StatelessWidget {
                     width: 26,
                     height: 26,
                     decoration: BoxDecoration(
-                      color: selected
-                          ? cs.primary.withValues(alpha: 0.16)
-                          : cs.muted.withValues(alpha: 0.72),
+                      color: selected ? cs.primary.withValues(alpha: 0.16) : cs.muted.withValues(alpha: 0.72),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Icon(
-                      icon,
-                      size: 16,
-                      color: selected ? cs.primary : cs.mutedForeground,
-                    ),
+                    child: Icon(icon, size: 16, color: selected ? cs.primary : cs.mutedForeground),
                   ),
                   const SizedBox(width: 9),
                   Expanded(
@@ -3200,9 +2733,7 @@ class _SidebarTile extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 13,
-                            fontWeight: selected
-                                ? FontWeight.w700
-                                : FontWeight.w600,
+                            fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                             color: cs.foreground,
                           ),
                         ),
@@ -3212,10 +2743,7 @@ class _SidebarTile extends StatelessWidget {
                             subtitle!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              color: cs.mutedForeground,
-                            ),
+                            style: TextStyle(fontSize: 10.5, color: cs.mutedForeground),
                           ),
                         ],
                       ],
@@ -3228,9 +2756,7 @@ class _SidebarTile extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 6),
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: selected
-                            ? cs.primary.withValues(alpha: 0.16)
-                            : cs.muted,
+                        color: selected ? cs.primary.withValues(alpha: 0.16) : cs.muted,
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
@@ -3285,8 +2811,7 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
             !compact &&
             !_isMobilePlatform &&
             state.section == WorkspaceSection.files &&
-            (_primaryViewMode == _FileViewMode.columns ||
-                paneMode == _PaneLayoutMode.dual);
+            (_primaryViewMode == _FileViewMode.columns || paneMode == _PaneLayoutMode.dual);
         final workspace = OS26Glass(
           radius: compact ? 8 : 18,
           opacity: 0.42,
@@ -3299,12 +2824,9 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                 paneMode: paneMode,
                 onPaneModeChanged: (mode) => setState(() => _paneMode = mode),
                 viewMode: _primaryViewMode,
-                onViewModeChanged: (mode) =>
-                    setState(() => _primaryViewMode = mode),
+                onViewModeChanged: (mode) => setState(() => _primaryViewMode = mode),
                 sidePanelOpen: widget.sidePanelOpen,
-                onToggleSidePanel: compact
-                    ? () => _showMobileDetails(context)
-                    : widget.onToggleSidePanel,
+                onToggleSidePanel: compact ? () => _showMobileDetails(context) : widget.onToggleSidePanel,
                 onReturnToSearch: widget.onReturnToSearch,
               ),
               SizedBox(height: compact ? 8 : 12),
@@ -3319,8 +2841,7 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                                     state: state,
                                     viewMode: _primaryViewMode,
                                     enableCloudDrag: enableCloudDrag,
-                                    onViewModeChanged: (mode) =>
-                                        setState(() => _primaryViewMode = mode),
+                                    onViewModeChanged: (mode) => setState(() => _primaryViewMode = mode),
                                   ),
                                 ),
                                 const SizedBox(width: 10),
@@ -3332,16 +2853,14 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                               state: state,
                               viewMode: _primaryViewMode,
                               enableCloudDrag: enableCloudDrag,
-                              onViewModeChanged: (mode) =>
-                                  setState(() => _primaryViewMode = mode),
+                              onViewModeChanged: (mode) => setState(() => _primaryViewMode = mode),
                             )
                     : _PrimaryFilePane(
                         title: state.section.label,
                         state: state,
                         viewMode: _primaryViewMode,
                         enableCloudDrag: enableCloudDrag,
-                        onViewModeChanged: (mode) =>
-                            setState(() => _primaryViewMode = mode),
+                        onViewModeChanged: (mode) => setState(() => _primaryViewMode = mode),
                       ),
               ),
             ],
@@ -3355,12 +2874,7 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
               const SizedBox(width: 12),
               SizedBox(
                 width: 280,
-                child: OS26Glass(
-                  radius: 18,
-                  opacity: 0.48,
-                  padding: EdgeInsets.zero,
-                  child: const SidePanel(),
-                ),
+                child: OS26Glass(radius: 18, opacity: 0.48, padding: EdgeInsets.zero, child: const SidePanel()),
               ),
             ],
           ],
@@ -3412,12 +2926,7 @@ class _CloudToolbar extends ConsumerWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (onReturnToSearch != null) ...[
-          _ToolbarButton(
-            icon: Icons.arrow_back_rounded,
-            label: '返回搜索结果',
-            compact: compact,
-            onTap: onReturnToSearch,
-          ),
+          _ToolbarButton(icon: Icons.arrow_back_rounded, label: '返回搜索结果', compact: compact, onTap: onReturnToSearch),
           const SizedBox(width: 8),
         ],
         SortMenu(
@@ -3433,27 +2942,20 @@ class _CloudToolbar extends ConsumerWidget {
               _ToolbarSegment(value: paneMode, onChanged: onPaneModeChanged),
               const _ToolbarGroupDivider(),
             ],
-            _FileViewButtons(
-              value: viewMode,
-              compact: compact,
-              onChanged: onViewModeChanged,
-            ),
+            _FileViewButtons(value: viewMode, compact: compact, onChanged: onViewModeChanged),
           ],
         ),
         const SizedBox(width: 8),
         ShadPopover(
           visible: state.uploadProgress?.isActive == true,
           closeOnTapOutside: false,
-          popover: (_) =>
-              _UploadProgressPopover(progress: state.uploadProgress),
+          popover: (_) => _UploadProgressPopover(progress: state.uploadProgress),
           child: _ToolbarButton(
             icon: Icons.upload_rounded,
             label: '上传',
             primary: true,
             compact: compact,
-            onTap: state.uploadProgress?.isActive == true
-                ? null
-                : () => _pickAndUpload(ref),
+            onTap: state.uploadProgress?.isActive == true ? null : () => _pickAndUpload(ref),
           ),
         ),
         const SizedBox(width: 8),
@@ -3488,10 +2990,7 @@ class _CloudToolbar extends ConsumerWidget {
     if (compact) {
       return SizedBox(
         height: 40,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: controls,
-        ),
+        child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: controls),
       );
     }
     return Row(children: [const Spacer(), controls]);
@@ -3511,10 +3010,7 @@ class _CloudToolbar extends ConsumerWidget {
       builder: (ctx) => ShadDialog(
         title: const Text('新建文件夹'),
         actions: [
-          ShadButton.outline(
-            child: const Text('取消'),
-            onPressed: () => Navigator.of(ctx).pop(),
-          ),
+          ShadButton.outline(child: const Text('取消'), onPressed: () => Navigator.of(ctx).pop()),
           ShadButton(
             child: const Text('创建'),
             onPressed: () {
@@ -3528,11 +3024,7 @@ class _CloudToolbar extends ConsumerWidget {
         ],
         child: Padding(
           padding: const EdgeInsets.only(top: 12),
-          child: ShadInput(
-            controller: controller,
-            placeholder: const Text('文件夹名称'),
-            autofocus: true,
-          ),
+          child: ShadInput(controller: controller, placeholder: const Text('文件夹名称'), autofocus: true),
         ),
       ),
     );
@@ -3553,8 +3045,7 @@ class _ToolbarSegment extends StatelessWidget {
       label: isDual ? '切换单面板' : '切换双面板',
       grouped: true,
       selected: isDual,
-      onTap: () =>
-          onChanged(isDual ? _PaneLayoutMode.single : _PaneLayoutMode.dual),
+      onTap: () => onChanged(isDual ? _PaneLayoutMode.single : _PaneLayoutMode.dual),
     );
   }
 }
@@ -3564,11 +3055,7 @@ class _FileViewButtons extends StatelessWidget {
   final bool compact;
   final ValueChanged<_FileViewMode> onChanged;
 
-  const _FileViewButtons({
-    required this.value,
-    required this.compact,
-    required this.onChanged,
-  });
+  const _FileViewButtons({required this.value, required this.compact, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -3635,13 +3122,9 @@ class _ToolbarButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
           child: Container(
-            constraints: BoxConstraints(
-              minWidth: compact ? 40 : (primary ? 72 : 36),
-            ),
+            constraints: BoxConstraints(minWidth: compact ? 40 : (primary ? 72 : 36)),
             height: compact ? 40 : 32,
-            padding: EdgeInsets.symmetric(
-              horizontal: compact ? 0 : (primary ? 10 : 0),
-            ),
+            padding: EdgeInsets.symmetric(horizontal: compact ? 0 : (primary ? 10 : 0)),
             decoration: BoxDecoration(
               color: primary
                   ? cs.primary.withValues(alpha: disabled ? 0.55 : 1)
@@ -3677,11 +3160,7 @@ class _ToolbarButton extends StatelessWidget {
                   const SizedBox(width: 6),
                   Text(
                     label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: cs.primaryForeground,
-                    ),
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.primaryForeground),
                   ),
                 ],
               ],
@@ -3709,16 +3188,9 @@ class _UploadProgressPopover extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: Row(
             children: [
-              Icon(
-                Icons.cloud_done_rounded,
-                size: 17,
-                color: cs.mutedForeground,
-              ),
+              Icon(Icons.cloud_done_rounded, size: 17, color: cs.mutedForeground),
               const SizedBox(width: 8),
-              Text(
-                '暂无上传任务',
-                style: TextStyle(fontSize: 13, color: cs.mutedForeground),
-              ),
+              Text('暂无上传任务', style: TextStyle(fontSize: 13, color: cs.mutedForeground)),
             ],
           ),
         ),
@@ -3747,28 +3219,18 @@ class _UploadProgressPopover extends StatelessWidget {
                 Expanded(
                   child: Text(
                     '正在上传',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: cs.foreground,
-                    ),
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: cs.foreground),
                   ),
                 ),
                 Text(
                   '$percentage%',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: cs.primary,
-                  ),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.primary),
                 ),
               ],
             ),
             const SizedBox(height: 9),
             Text(
-              value.currentFileName.isEmpty
-                  ? '正在整理上传结果'
-                  : value.currentFileName,
+              value.currentFileName.isEmpty ? '正在整理上传结果' : value.currentFileName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 12, color: cs.foreground),
@@ -3778,18 +3240,11 @@ class _UploadProgressPopover extends StatelessWidget {
               '已完成 ${value.completedFiles} / ${value.totalFiles} · ${_formatUploadBytes(value.transferredBytes)} / ${_formatUploadBytes(value.totalBytes)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 10,
-                height: 1.05,
-                color: cs.mutedForeground,
-              ),
+              style: TextStyle(fontSize: 10, height: 1.05, color: cs.mutedForeground),
             ),
             if (value.failedFiles > 0) ...[
               const SizedBox(height: 4),
-              Text(
-                '${value.failedFiles} 个文件上传失败，队列会继续处理其余文件。',
-                style: TextStyle(fontSize: 11, color: cs.destructive),
-              ),
+              Text('${value.failedFiles} 个文件上传失败，队列会继续处理其余文件。', style: TextStyle(fontSize: 11, color: cs.destructive)),
             ],
           ],
         ),
@@ -3837,12 +3292,7 @@ class _ToolbarGroupDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    return Container(
-      width: 1,
-      height: 20,
-      margin: const EdgeInsets.symmetric(horizontal: 2),
-      color: cs.border,
-    );
+    return Container(width: 1, height: 20, margin: const EdgeInsets.symmetric(horizontal: 2), color: cs.border);
   }
 }
 
@@ -3875,10 +3325,7 @@ class _PrimaryFilePane extends ConsumerWidget {
       );
     }
     final notifier = ref.read(fileProvider.notifier);
-    final files = _filterCurrentFolderFiles(
-      state.files,
-      state.currentListSearchQuery,
-    );
+    final files = _filterCurrentFolderFiles(state.files, state.currentListSearchQuery);
     return _FilePaneFrame(
       title: title,
       itemCount: files.length,
@@ -3890,35 +3337,24 @@ class _PrimaryFilePane extends ConsumerWidget {
           ? '没有文件'
           : '当前文件夹没有匹配项',
       breadcrumbPath: state.folderPath,
-      onBreadcrumbNavigate: (index) =>
-          ref.read(fileProvider.notifier).navigateToPathIndex(index),
+      onBreadcrumbNavigate: (index) => ref.read(fileProvider.notifier).navigateToPathIndex(index),
       header: _FilePaneHeader(
         trailing: isShareSection
             ? const SizedBox.shrink()
-            : _ClipboardPasteButton(
-                parentID: state.folderPath.isEmpty
-                    ? null
-                    : state.folderPath.last.id,
-              ),
+            : _ClipboardPasteButton(parentID: state.folderPath.isEmpty ? null : state.folderPath.last.id),
       ),
       dropParentID: state.folderPath.isEmpty ? null : state.folderPath.last.id,
-      onMoveCloudFiles: isShareSection
-          ? null
-          : (files, parentID) =>
-                notifier.moveFilesTo(files, parentID: parentID),
+      onMoveCloudFiles: isShareSection ? null : (files, parentID) => notifier.moveFilesTo(files, parentID: parentID),
       onUploadLocalFiles: isShareSection
           ? null
-          : (files, parentID) =>
-                notifier.uploadLocalFiles(files, parentID: parentID),
+          : (files, parentID) => notifier.uploadLocalFiles(files, parentID: parentID),
       currentPage: state.currentPage,
       pageSize: state.pageSize,
       totalPages: state.totalPages,
       fileCount: files.where((file) => !file.isDirectory).length,
       folderCount: files.where((file) => file.isDirectory).length,
       onPreviousPage: state.currentPage == 0 ? null : notifier.prevPage,
-      onNextPage: state.currentPage >= state.totalPages - 1
-          ? null
-          : notifier.nextPage,
+      onNextPage: state.currentPage >= state.totalPages - 1 ? null : notifier.nextPage,
       onPageSizeChanged: notifier.setPageSize,
       // The global toolbar already owns the view switch. Keep the pane header
       // focused on the current folder by using its trailing slot for search.
@@ -3938,9 +3374,7 @@ class _PrimaryFilePane extends ConsumerWidget {
           onDeleteSelected: state.section == WorkspaceSection.recycle
               ? null
               : () {
-                  final selected = files
-                      .where((file) => state.selectedIDs.contains(file.id))
-                      .toList();
+                  final selected = files.where((file) => state.selectedIDs.contains(file.id)).toList();
                   unawaited(
                     _confirmDeleteCloudFiles(
                       context,
@@ -3961,12 +3395,7 @@ class _PrimaryFilePane extends ConsumerWidget {
                 isSelected: selected,
                 onSelect: () => _selectDesktopFile(notifier, file),
                 onDelete: () => unawaited(
-                  _confirmDeleteCloudFiles(
-                    context,
-                    [file],
-                    () => notifier.deleteFiles([file]),
-                    shareRecords: true,
-                  ),
+                  _confirmDeleteCloudFiles(context, [file], () => notifier.deleteFiles([file]), shareRecords: true),
                 ),
               );
               return tile;
@@ -3975,65 +3404,37 @@ class _PrimaryFilePane extends ConsumerWidget {
             final tile = FileListTile(
               file: file,
               isSelected: selected,
-              onVisible: file.isDirectory
-                  ? () => notifier.requestFolderStats(file.id)
-                  : null,
+              onVisible: file.isDirectory ? () => notifier.requestFolderStats(file.id) : null,
               onSelect: () => _selectDesktopFile(notifier, file),
               onOpen: file.isDirectory
                   ? () => notifier.navigateToFolder(file)
                   : () => _openCloudFile(context, ref, file),
-              onPreview: canPreviewCloudFile(file)
-                  ? () => _previewCloudFile(context, ref, file)
-                  : null,
+              onPreview: canPreviewCloudFile(file) ? () => _previewCloudFile(context, ref, file) : null,
               onRenameConfirm: (name) async {
                 final renamed = await notifier.renameFile(file, name);
                 if (renamed) {
-                  await ref
-                      .read(mediaLibraryProvider.notifier)
-                      .synchronizeRenamedFiles([file.copyWith(name: name)]);
+                  await ref.read(mediaLibraryProvider.notifier).synchronizeRenamedFiles([file.copyWith(name: name)]);
                 }
               },
-              onCopy: _isMobilePlatform
-                  ? null
-                  : () => notifier.copyToClipboard([file]),
-              onCut: _isMobilePlatform
-                  ? null
-                  : () => notifier.cutToClipboard([file]),
-              onCopyTo: () => unawaited(
-                _copyOrMoveFilesToDestination(context, ref, [
-                  file,
-                ], move: false),
-              ),
-              onMoveTo: () => unawaited(
-                _copyOrMoveFilesToDestination(context, ref, [file], move: true),
-              ),
+              onCopy: _isMobilePlatform ? null : () => notifier.copyToClipboard([file]),
+              onCut: _isMobilePlatform ? null : () => notifier.cutToClipboard([file]),
+              onCopyTo: () => unawaited(_copyOrMoveFilesToDestination(context, ref, [file], move: false)),
+              onMoveTo: () => unawaited(_copyOrMoveFilesToDestination(context, ref, [file], move: true)),
               onDownload: () => notifier.downloadFile(file),
               onShare: () => unawaited(
-                showShareLinkDialog(
-                  context,
-                  title: file.name,
-                  createLink: () => notifier.createShare(file),
-                ),
+                showShareLinkDialog(context, title: file.name, createLink: () => notifier.createShare(file)),
               ),
               onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
               onDetail: () => showFileDetailDialog(context, file),
               isRecycleItem: state.section == WorkspaceSection.recycle,
               onDelete: () => state.section == WorkspaceSection.recycle
                   ? notifier.restoreFiles([file])
-                  : unawaited(
-                      _confirmDeleteCloudFiles(context, [
-                        file,
-                      ], () => notifier.deleteFiles([file])),
-                    ),
+                  : unawaited(_confirmDeleteCloudFiles(context, [file], () => notifier.deleteFiles([file]))),
             );
             final item = _CloudFileDraggable(
               enabled: enableCloudDrag,
               data: _DraggedCloudFiles(
-                selected
-                    ? files
-                          .where((item) => state.selectedIDs.contains(item.id))
-                          .toList()
-                    : [file],
+                selected ? files.where((item) => state.selectedIDs.contains(item.id)).toList() : [file],
                 _PaneIdentity.primary,
               ),
               feedback: _DragFeedback(label: file.name),
@@ -4041,8 +3442,7 @@ class _PrimaryFilePane extends ConsumerWidget {
               child: _FolderMoveTarget(
                 enabled: enableCloudDrag,
                 file: file,
-                onMove: (sources, parentID) =>
-                    notifier.moveFilesTo(sources, parentID: parentID),
+                onMove: (sources, parentID) => notifier.moveFilesTo(sources, parentID: parentID),
                 onOpen: () => notifier.navigateToFolder(file),
                 child: tile,
               ),
@@ -4051,11 +3451,7 @@ class _PrimaryFilePane extends ConsumerWidget {
             return _CloudFileDraggable(
               enabled: enableCloudDrag,
               data: _DraggedCloudFiles(
-                selected
-                    ? files
-                          .where((item) => state.selectedIDs.contains(item.id))
-                          .toList()
-                    : [file],
+                selected ? files.where((item) => state.selectedIDs.contains(item.id)).toList() : [file],
                 _PaneIdentity.primary,
               ),
               feedback: _DragFeedback(label: file.name),
@@ -4073,28 +3469,15 @@ class _PrimaryFilePane extends ConsumerWidget {
               child: _FolderMoveTarget(
                 enabled: enableCloudDrag,
                 file: file,
-                onMove: (sources, parentID) =>
-                    notifier.moveFilesTo(sources, parentID: parentID),
+                onMove: (sources, parentID) => notifier.moveFilesTo(sources, parentID: parentID),
                 onOpen: () => notifier.navigateToFolder(file),
                 child: _FastTransferContextMenu(
                   file: file,
                   onCopyFastTransfer: () => notifier.copyFastTransferJSON(file),
-                  onCopy: _isMobilePlatform
-                      ? null
-                      : () => notifier.copyToClipboard([file]),
-                  onCut: _isMobilePlatform
-                      ? null
-                      : () => notifier.cutToClipboard([file]),
-                  onCopyTo: () => unawaited(
-                    _copyOrMoveFilesToDestination(context, ref, [
-                      file,
-                    ], move: false),
-                  ),
-                  onMoveTo: () => unawaited(
-                    _copyOrMoveFilesToDestination(context, ref, [
-                      file,
-                    ], move: true),
-                  ),
+                  onCopy: _isMobilePlatform ? null : () => notifier.copyToClipboard([file]),
+                  onCut: _isMobilePlatform ? null : () => notifier.cutToClipboard([file]),
+                  onCopyTo: () => unawaited(_copyOrMoveFilesToDestination(context, ref, [file], move: false)),
+                  onMoveTo: () => unawaited(_copyOrMoveFilesToDestination(context, ref, [file], move: true)),
                   child: _FileGridCard(
                     file: file,
                     isSelected: selected,
@@ -4118,9 +3501,7 @@ List<CloudFile> _filterCurrentFolderFiles(List<CloudFile> files, String query) {
   if (normalized.isEmpty) return files;
   return files
       .where(
-        (file) =>
-            file.name.toLowerCase().contains(normalized) ||
-            file.cloudPath.toLowerCase().contains(normalized),
+        (file) => file.name.toLowerCase().contains(normalized) || file.cloudPath.toLowerCase().contains(normalized),
       )
       .toList();
 }
@@ -4131,12 +3512,10 @@ class _CurrentFolderFileSearch extends ConsumerStatefulWidget {
   const _CurrentFolderFileSearch({required this.value});
 
   @override
-  ConsumerState<_CurrentFolderFileSearch> createState() =>
-      _CurrentFolderFileSearchState();
+  ConsumerState<_CurrentFolderFileSearch> createState() => _CurrentFolderFileSearchState();
 }
 
-class _CurrentFolderFileSearchState
-    extends ConsumerState<_CurrentFolderFileSearch> {
+class _CurrentFolderFileSearchState extends ConsumerState<_CurrentFolderFileSearch> {
   late final TextEditingController _controller;
   late final FocusNode _focusNode;
 
@@ -4150,9 +3529,7 @@ class _CurrentFolderFileSearchState
   @override
   void didUpdateWidget(covariant _CurrentFolderFileSearch oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.value != widget.value &&
-        _controller.text != widget.value &&
-        !_focusNode.hasFocus) {
+    if (oldWidget.value != widget.value && _controller.text != widget.value && !_focusNode.hasFocus) {
       _controller.value = TextEditingValue(
         text: widget.value,
         selection: TextSelection.collapsed(offset: widget.value.length),
@@ -4177,11 +3554,7 @@ class _CurrentFolderFileSearchState
         controller: _controller,
         focusNode: _focusNode,
         placeholder: const Text('搜索当前文件夹'),
-        leading: Icon(
-          Icons.search_rounded,
-          size: 16,
-          color: cs.mutedForeground,
-        ),
+        leading: Icon(Icons.search_rounded, size: 16, color: cs.mutedForeground),
         trailing: widget.value.isEmpty
             ? null
             : ShadButton.ghost(
@@ -4259,14 +3632,9 @@ class _FilePaneCollectionState extends State<_FilePaneCollection> {
   bool _additive = false;
 
   bool get _canMarquee =>
-      widget.itemIDs != null &&
-      widget.selectedIDs != null &&
-      widget.onMarqueeSelectionChanged != null;
+      widget.itemIDs != null && widget.selectedIDs != null && widget.onMarqueeSelectionChanged != null;
 
-  GlobalKey _itemKey(int index) => _itemKeys.putIfAbsent(
-    index,
-    () => GlobalKey(debugLabel: 'file-item-$index'),
-  );
+  GlobalKey _itemKey(int index) => _itemKeys.putIfAbsent(index, () => GlobalKey(debugLabel: 'file-item-$index'));
 
   void _pointerDown(PointerDownEvent event) {
     if (!_canMarquee || event.kind != PointerDeviceKind.mouse) return;
@@ -4282,9 +3650,7 @@ class _FilePaneCollectionState extends State<_FilePaneCollection> {
 
   void _pointerMove(PointerMoveEvent event) {
     final start = _start;
-    if (start == null ||
-        !_canMarquee ||
-        (event.localPosition - start).distance < 4) {
+    if (start == null || !_canMarquee || (event.localPosition - start).distance < 4) {
       return;
     }
     setState(() => _current = event.localPosition);
@@ -4293,17 +3659,14 @@ class _FilePaneCollectionState extends State<_FilePaneCollection> {
     final selection = Rect.fromPoints(start, event.localPosition);
     final hitIDs = <String>{};
     for (var index = 0; index < widget.itemCount; index++) {
-      final itemBox =
-          _itemKeys[index]?.currentContext?.findRenderObject() as RenderBox?;
+      final itemBox = _itemKeys[index]?.currentContext?.findRenderObject() as RenderBox?;
       if (itemBox == null) continue;
       final origin = pane.globalToLocal(itemBox.localToGlobal(Offset.zero));
       if (selection.overlaps(origin & itemBox.size)) {
         hitIDs.add(widget.itemIDs![index]);
       }
     }
-    widget.onMarqueeSelectionChanged!(
-      _additive ? {..._selectionBefore, ...hitIDs} : hitIDs,
-    );
+    widget.onMarqueeSelectionChanged!(_additive ? {..._selectionBefore, ...hitIDs} : hitIDs);
   }
 
   void _pointerEnd(PointerEvent event) {
@@ -4327,17 +3690,13 @@ class _FilePaneCollectionState extends State<_FilePaneCollection> {
             physics: const AlwaysScrollableScrollPhysics(),
             padding: EdgeInsets.zero,
             itemCount: widget.itemCount,
-            itemBuilder: (context, index) => KeyedSubtree(
-              key: _itemKey(index),
-              child: widget.itemBuilder(context, index),
-            ),
+            itemBuilder: (context, index) =>
+                KeyedSubtree(key: _itemKey(index), child: widget.itemBuilder(context, index)),
           )
         : LayoutBuilder(
             builder: (context, constraints) {
               final width = constraints.maxWidth;
-              final columns = width < 400
-                  ? (width / 120).floor().clamp(2, 4)
-                  : (width / 160).floor().clamp(3, 8);
+              final columns = width < 400 ? (width / 120).floor().clamp(2, 4) : (width / 160).floor().clamp(3, 8);
               return GridView.builder(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(10),
@@ -4348,17 +3707,14 @@ class _FilePaneCollectionState extends State<_FilePaneCollection> {
                   childAspectRatio: 1.35,
                 ),
                 itemCount: widget.itemCount,
-                itemBuilder: (context, index) => KeyedSubtree(
-                  key: _itemKey(index),
-                  child: widget.itemBuilder(context, index),
-                ),
+                itemBuilder: (context, index) =>
+                    KeyedSubtree(key: _itemKey(index), child: widget.itemBuilder(context, index)),
               );
             },
           );
     final start = _start;
     final current = _current;
-    final showMarquee =
-        start != null && current != null && (current - start).distance >= 4;
+    final showMarquee = start != null && current != null && (current - start).distance >= 4;
     return FocusableActionDetector(
       focusNode: _focusNode,
       actions: {
@@ -4462,12 +3818,8 @@ class _ColumnListing {
       files: files ?? this.files,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
-      selectedIDs: clearSelection
-          ? const {}
-          : (selectedIDs ?? this.selectedIDs),
-      selectionAnchorID: clearSelection
-          ? null
-          : (selectionAnchorID ?? this.selectionAnchorID),
+      selectedIDs: clearSelection ? const {} : (selectedIDs ?? this.selectedIDs),
+      selectionAnchorID: clearSelection ? null : (selectionAnchorID ?? this.selectionAnchorID),
     );
   }
 }
@@ -4478,10 +3830,8 @@ class _ColumnFileBrowser extends ConsumerStatefulWidget {
   final List<CloudFile> initialFiles;
   final ValueChanged<_FileViewMode> onViewModeChanged;
   final _PaneIdentity source;
-  final Future<void> Function(List<CloudFile> files, String? parentID)?
-  onMoveCloudFiles;
-  final Future<void> Function(List<File> files, String? parentID)?
-  onUploadLocalFiles;
+  final Future<void> Function(List<CloudFile> files, String? parentID)? onMoveCloudFiles;
+  final Future<void> Function(List<File> files, String? parentID)? onUploadLocalFiles;
   final bool allowDelete;
   final bool enableCloudDrag;
   final ValueChanged<List<CloudFile>>? onPathChanged;
@@ -4508,6 +3858,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
   List<CloudFile> _path = const [];
   var _generation = 0;
   final _scrollController = ScrollController();
+
   /// One tracker per column index, so folder statistics are fetched only for
   /// the rows that scroll into view.
   final _statsTrackers = <int, VisibleFolderStatsTracker>{};
@@ -4535,19 +3886,12 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
       final generation = _generation;
       return VisibleFolderStatsTracker(
         api: () => ref.read(authProvider.notifier).api,
-        currentFiles: () =>
-            index < _columns.length ? _columns[index].files : const [],
-        parentID: () =>
-            index < _columns.length ? _columns[index].parentID : null,
-        isCancelled: () =>
-            !mounted || generation != _generation || index >= _columns.length,
+        currentFiles: () => index < _columns.length ? _columns[index].files : const [],
+        parentID: () => index < _columns.length ? _columns[index].parentID : null,
+        isCancelled: () => !mounted || generation != _generation || index >= _columns.length,
         onUpdated: (enriched) {
           if (index >= _columns.length) return;
-          _replaceColumn(
-            index,
-            _columns[index].copyWith(files: enriched),
-            _generation,
-          );
+          _replaceColumn(index, _columns[index].copyWith(files: enriched), _generation);
         },
       );
     });
@@ -4563,9 +3907,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
       _statsTrackers.clear();
       return;
     }
-    final stale = _statsTrackers.keys
-        .where((index) => index >= _columns.length)
-        .toList();
+    final stale = _statsTrackers.keys.where((index) => index >= _columns.length).toList();
     for (final index in stale) {
       _statsTrackers.remove(index)?.dispose();
     }
@@ -4582,10 +3924,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
   }
 
   bool _samePath(List<CloudFile> a, List<CloudFile> b) {
-    return a.length == b.length &&
-        Iterable.generate(
-          a.length,
-        ).every((index) => a[index].id == b[index].id);
+    return a.length == b.length && Iterable.generate(a.length).every((index) => a[index].id == b[index].id);
   }
 
   bool _sameFiles(List<CloudFile> a, List<CloudFile> b) {
@@ -4608,28 +3947,19 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     ++_generation;
     setState(() {
       final columns = _columns.toList();
-      columns[targetIndex] = columns[targetIndex].copyWith(
-        files: files,
-        isLoading: false,
-        clearError: true,
-      );
+      columns[targetIndex] = columns[targetIndex].copyWith(files: files, isLoading: false, clearError: true);
       _columns = columns;
     });
   }
 
-  Future<void> _restorePath(
-    List<CloudFile> path, {
-    List<CloudFile>? initialFiles,
-  }) async {
+  Future<void> _restorePath(List<CloudFile> path, {List<CloudFile>? initialFiles}) async {
     final generation = ++_generation;
     final restoredPath = List<CloudFile>.unmodifiable(path);
     // Every column is rebuilt from scratch here.
     _pruneStatsTrackers(all: true);
     setState(() {
       _path = restoredPath;
-      _columns = [
-        const _ColumnListing(parentID: null, title: '全部文件', isLoading: true),
-      ];
+      _columns = [const _ColumnListing(parentID: null, title: '全部文件', isLoading: true)];
     });
     _scrollToStart();
     await _loadColumn(0, generation: generation);
@@ -4638,27 +3968,14 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
       final folder = restoredPath[index];
       setState(() {
         final columns = _columns.toList();
-        columns[index] = columns[index].copyWith(
-          selectedIDs: {folder.id},
-          selectionAnchorID: folder.id,
-        );
-        columns.add(
-          _ColumnListing(
-            parentID: folder.id,
-            title: folder.name,
-            isLoading: true,
-          ),
-        );
+        columns[index] = columns[index].copyWith(selectedIDs: {folder.id}, selectionAnchorID: folder.id);
+        columns.add(_ColumnListing(parentID: folder.id, title: folder.name, isLoading: true));
         _columns = columns;
       });
       if (index == restoredPath.length - 1 && initialFiles != null) {
         _replaceColumn(
           index + 1,
-          _columns[index + 1].copyWith(
-            files: initialFiles,
-            isLoading: false,
-            clearError: true,
-          ),
+          _columns[index + 1].copyWith(files: initialFiles, isLoading: false, clearError: true),
           generation,
         );
       } else {
@@ -4670,30 +3987,16 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
   Future<void> _loadColumn(int index, {int? generation}) async {
     final requestGeneration = generation ?? _generation;
     if (index >= _columns.length) return;
-    _replaceColumn(
-      index,
-      _columns[index].copyWith(isLoading: true, clearError: true),
-      requestGeneration,
-    );
+    _replaceColumn(index, _columns[index].copyWith(isLoading: true, clearError: true), requestGeneration);
     try {
       final api = ref.read(authProvider.notifier).api;
-      final result = await api.fsFiles(
-        parentID: _columns[index].parentID,
-        page: 0,
-        pageSize: 200,
-      );
+      final result = await api.fsFiles(parentID: _columns[index].parentID, page: 0, pageSize: 200);
       // The list endpoint omits per-folder child counts; apply whatever is
       // already memoised so cached columns render complete immediately.
-      final files = FolderStatsLoader.instance.applyCached(
-        _cloudFilesFromResponse(result),
-      );
+      final files = FolderStatsLoader.instance.applyCached(_cloudFilesFromResponse(result));
       _replaceColumn(
         index,
-        _columns[index].copyWith(
-          files: files,
-          isLoading: false,
-          clearError: true,
-        ),
+        _columns[index].copyWith(files: files, isLoading: false, clearError: true),
         requestGeneration,
       );
       // Pull anything already in the persistent cache — one local query for the
@@ -4705,27 +4008,17 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
           api: api,
           parentID: _columns[index].parentID,
           visibleIDs: const {},
-          isCancelled: () =>
-              !mounted ||
-              requestGeneration != _generation ||
-              index >= _columns.length,
+          isCancelled: () => !mounted || requestGeneration != _generation || index >= _columns.length,
           onUpdated: (enriched) {
             if (index >= _columns.length) return;
-            _replaceColumn(
-              index,
-              _columns[index].copyWith(files: enriched),
-              requestGeneration,
-            );
+            _replaceColumn(index, _columns[index].copyWith(files: enriched), requestGeneration);
           },
         ),
       );
     } catch (error) {
       _replaceColumn(
         index,
-        _columns[index].copyWith(
-          isLoading: false,
-          errorMessage: error.toString(),
-        ),
+        _columns[index].copyWith(isLoading: false, errorMessage: error.toString()),
         requestGeneration,
       );
     }
@@ -4753,17 +4046,8 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     setState(() {
       _path = List<CloudFile>.unmodifiable(path);
       final columns = _columns.take(index + 1).toList();
-      columns[index] = columns[index].copyWith(
-        selectedIDs: {folder.id},
-        selectionAnchorID: folder.id,
-      );
-      columns.add(
-        _ColumnListing(
-          parentID: folder.id,
-          title: folder.name,
-          isLoading: true,
-        ),
-      );
+      columns[index] = columns[index].copyWith(selectedIDs: {folder.id}, selectionAnchorID: folder.id);
+      columns.add(_ColumnListing(parentID: folder.id, title: folder.name, isLoading: true));
       _columns = columns;
     });
     unawaited(_loadColumn(index + 1, generation: generation));
@@ -4796,29 +4080,20 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
         _hasPressedKey(LogicalKeyboardKey.metaRight) ||
         _hasPressedKey(LogicalKeyboardKey.controlLeft) ||
         _hasPressedKey(LogicalKeyboardKey.controlRight);
-    final shift =
-        _hasPressedKey(LogicalKeyboardKey.shiftLeft) ||
-        _hasPressedKey(LogicalKeyboardKey.shiftRight);
+    final shift = _hasPressedKey(LogicalKeyboardKey.shiftLeft) || _hasPressedKey(LogicalKeyboardKey.shiftRight);
     final selected = Set<String>.from(column.selectedIDs);
     if (shift && column.selectionAnchorID != null) {
-      final anchor = column.files.indexWhere(
-        (item) => item.id == column.selectionAnchorID,
-      );
+      final anchor = column.files.indexWhere((item) => item.id == column.selectionAnchorID);
       if (anchor >= 0) {
         if (!command) selected.clear();
         selected.addAll(
           column.files
-              .sublist(
-                anchor < index ? anchor : index,
-                anchor > index ? anchor + 1 : index + 1,
-              )
+              .sublist(anchor < index ? anchor : index, anchor > index ? anchor + 1 : index + 1)
               .map((item) => item.id),
         );
       }
     } else if (command) {
-      selected.contains(file.id)
-          ? selected.remove(file.id)
-          : selected.add(file.id);
+      selected.contains(file.id) ? selected.remove(file.id) : selected.add(file.id);
     } else {
       selected
         ..clear()
@@ -4826,10 +4101,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     }
     setState(() {
       final columns = _columns.toList();
-      columns[columnIndex] = column.copyWith(
-        selectedIDs: selected,
-        selectionAnchorID: file.id,
-      );
+      columns[columnIndex] = column.copyWith(selectedIDs: selected, selectionAnchorID: file.id);
       _columns = columns;
     });
     // A plain folder click in Finder column view reveals its children.
@@ -4858,22 +4130,13 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
   void _scrollToColumn(int index) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
-      final target = (index * 244.0).clamp(
-        0.0,
-        _scrollController.position.maxScrollExtent,
-      );
-      _scrollController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-      );
+      final target = (index * 244.0).clamp(0.0, _scrollController.position.maxScrollExtent);
+      _scrollController.animateTo(target, duration: const Duration(milliseconds: 180), curve: Curves.easeOutCubic);
     });
   }
 
   void _navigateBreadcrumb(int index) {
-    final path = index < 0
-        ? const <CloudFile>[]
-        : _path.take(index + 1).toList();
+    final path = index < 0 ? const <CloudFile>[] : _path.take(index + 1).toList();
     unawaited(_restorePath(path));
     _notifyPathChanged(path);
   }
@@ -4887,11 +4150,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     unawaited(ref.read(fileProvider.notifier).navigateToFolderPath(path));
   }
 
-  Future<void> _moveFiles(
-    List<CloudFile> files,
-    String? parentID,
-    int index,
-  ) async {
+  Future<void> _moveFiles(List<CloudFile> files, String? parentID, int index) async {
     final refreshIndexes = <int>{index};
     for (var columnIndex = 0; columnIndex < _columns.length; columnIndex++) {
       final ids = _columns[columnIndex].files.map((file) => file.id).toSet();
@@ -4906,9 +4165,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     if (onMoveCloudFiles != null) {
       await onMoveCloudFiles(files, parentID);
     } else {
-      await ref
-          .read(fileProvider.notifier)
-          .moveFilesTo(files, parentID: parentID);
+      await ref.read(fileProvider.notifier).moveFilesTo(files, parentID: parentID);
     }
     if (mounted) {
       await Future.wait(refreshIndexes.map(_loadColumn));
@@ -4923,15 +4180,8 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
         title: const Text('重命名'),
         description: Text(file.name),
         actions: [
-          ShadButton.outline(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('取消'),
-          ),
-          ShadButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(controller.text.trim()),
-            child: const Text('确认'),
-          ),
+          ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('取消')),
+          ShadButton(onPressed: () => Navigator.of(dialogContext).pop(controller.text.trim()), child: const Text('确认')),
         ],
         child: ShadInput(controller: controller, autofocus: true),
       ),
@@ -4939,9 +4189,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     controller.dispose();
     if (newName == null || newName.isEmpty || newName == file.name) return;
     await ref.read(authProvider.notifier).api.fsRename(file.id, newName);
-    await ref.read(mediaLibraryProvider.notifier).synchronizeRenamedFiles([
-      file.copyWith(name: newName),
-    ]);
+    await ref.read(mediaLibraryProvider.notifier).synchronizeRenamedFiles([file.copyWith(name: newName)]);
     final affected = <int>{};
     for (var index = 0; index < _columns.length; index++) {
       if (_columns[index].files.any((item) => item.id == file.id)) {
@@ -4951,18 +4199,12 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     if (mounted) await Future.wait(affected.map(_loadColumn));
   }
 
-  Future<void> _uploadFiles(
-    List<File> files,
-    String? parentID,
-    int index,
-  ) async {
+  Future<void> _uploadFiles(List<File> files, String? parentID, int index) async {
     final onUploadLocalFiles = widget.onUploadLocalFiles;
     if (onUploadLocalFiles != null) {
       await onUploadLocalFiles(files, parentID);
     } else {
-      await ref
-          .read(fileProvider.notifier)
-          .uploadLocalFiles(files, parentID: parentID);
+      await ref.read(fileProvider.notifier).uploadLocalFiles(files, parentID: parentID);
     }
     if (mounted) await _loadColumn(index);
   }
@@ -4972,9 +4214,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     setState(() {
       final columns = _columns.toList();
       final column = columns[index];
-      columns[index] = column.copyWith(
-        selectedIDs: column.files.map((file) => file.id).toSet(),
-      );
+      columns[index] = column.copyWith(selectedIDs: column.files.map((file) => file.id).toSet());
       _columns = columns;
     });
   }
@@ -5005,16 +4245,9 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
       currentPage: 0,
       pageSize: 200,
       totalPages: 1,
-      fileCount: _columns.isEmpty
-          ? 0
-          : _columns.last.files.where((file) => !file.isDirectory).length,
-      folderCount: _columns.isEmpty
-          ? 0
-          : _columns.last.files.where((file) => file.isDirectory).length,
-      trailing: _PaneViewToggle(
-        value: _FileViewMode.columns,
-        onChanged: widget.onViewModeChanged,
-      ),
+      fileCount: _columns.isEmpty ? 0 : _columns.last.files.where((file) => !file.isDirectory).length,
+      folderCount: _columns.isEmpty ? 0 : _columns.last.files.where((file) => file.isDirectory).length,
+      trailing: _PaneViewToggle(value: _FileViewMode.columns, onChanged: widget.onViewModeChanged),
       child: LayoutBuilder(
         builder: (context, constraints) => Scrollbar(
           controller: _scrollController,
@@ -5044,36 +4277,23 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
                         onActivate: () => _collapseToColumn(index),
                         onSelect: (file) => _selectColumnFile(index, file),
                         onSelectAll: () => _selectAllColumn(index),
-                        onDeleteSelected: (files) =>
-                            _deleteColumnFiles(index, files),
+                        onDeleteSelected: (files) => _deleteColumnFiles(index, files),
                         onRename: _renameColumnFile,
-                        onCopy: (file) => ref
-                            .read(fileProvider.notifier)
-                            .copyToClipboard([file]),
-                        onCut: (file) => ref
-                            .read(fileProvider.notifier)
-                            .cutToClipboard([file]),
-                        onDownload: (file) =>
-                            ref.read(fileProvider.notifier).downloadFile(file),
+                        onCopy: (file) => ref.read(fileProvider.notifier).copyToClipboard([file]),
+                        onCut: (file) => ref.read(fileProvider.notifier).cutToClipboard([file]),
+                        onDownload: (file) => ref.read(fileProvider.notifier).downloadFile(file),
                         onShare: (file) => unawaited(
                           showShareLinkDialog(
                             context,
                             title: file.name,
-                            createLink: () => ref
-                                .read(fileProvider.notifier)
-                                .createShare(file),
+                            createLink: () => ref.read(fileProvider.notifier).createShare(file),
                           ),
                         ),
                         onOpenFolder: (folder) => _openFolder(index, folder),
-                        onOpenFile: (file) =>
-                            _openCloudFile(context, ref, file),
-                        onMoveCloudFiles: (files, parentID) =>
-                            _moveFiles(files, parentID, index),
-                        onUploadLocalFiles: (files, parentID) =>
-                            _uploadFiles(files, parentID, index),
-                        onCopyFastTransfer: (file) => ref
-                            .read(fileProvider.notifier)
-                            .copyFastTransferJSON(file),
+                        onOpenFile: (file) => _openCloudFile(context, ref, file),
+                        onMoveCloudFiles: (files, parentID) => _moveFiles(files, parentID, index),
+                        onUploadLocalFiles: (files, parentID) => _uploadFiles(files, parentID, index),
+                        onCopyFastTransfer: (file) => ref.read(fileProvider.notifier).copyFastTransferJSON(file),
                       ),
                   ],
                 ),
@@ -5096,11 +4316,7 @@ class _ColumnPaneHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Text(
         'Finder 分栏浏览',
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w800,
-          color: cs.mutedForeground,
-        ),
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: cs.mutedForeground),
       ),
     );
   }
@@ -5110,6 +4326,7 @@ class _FinderColumn extends StatefulWidget {
   final _ColumnListing column;
   final _PaneIdentity source;
   final bool enableCloudDrag;
+
   /// Reports rows as the list builds them, so folder statistics are only
   /// fetched for what the user can actually see.
   final void Function(CloudFile file)? onItemVisible;
@@ -5125,10 +4342,8 @@ class _FinderColumn extends StatefulWidget {
   final ValueChanged<CloudFile> onOpenFolder;
   final ValueChanged<CloudFile> onOpenFile;
   final ValueChanged<CloudFile> onCopyFastTransfer;
-  final Future<void> Function(List<CloudFile> files, String? parentID)
-  onMoveCloudFiles;
-  final Future<void> Function(List<File> files, String? parentID)
-  onUploadLocalFiles;
+  final Future<void> Function(List<CloudFile> files, String? parentID) onMoveCloudFiles;
+  final Future<void> Function(List<File> files, String? parentID) onUploadLocalFiles;
 
   const _FinderColumn({
     super.key,
@@ -5182,9 +4397,7 @@ class _FinderColumnState extends State<_FinderColumn> {
         ),
         _DeleteSelectedIntent: CallbackAction<_DeleteSelectedIntent>(
           onInvoke: (_) {
-            final selected = widget.column.files
-                .where((file) => widget.column.selectedIDs.contains(file.id))
-                .toList();
+            final selected = widget.column.files.where((file) => widget.column.selectedIDs.contains(file.id)).toList();
             widget.onDeleteSelected(selected);
             return null;
           },
@@ -5224,30 +4437,20 @@ class _FinderColumnState extends State<_FinderColumn> {
             child: DragTarget<_DraggedCloudFiles>(
               onWillAcceptWithDetails: (details) =>
                   widget.enableCloudDrag &&
-                  !details.data.files.every(
-                    (file) =>
-                        _sameCloudParentID(file.parentID, column.parentID),
-                  ),
+                  !details.data.files.every((file) => _sameCloudParentID(file.parentID, column.parentID)),
               onAcceptWithDetails: (details) async {
                 setState(() => _dragActive = false);
-                await widget.onMoveCloudFiles(
-                  details.data.files,
-                  column.parentID,
-                );
+                await widget.onMoveCloudFiles(details.data.files, column.parentID);
               },
               onLeave: (_) => setState(() => _dragActive = false),
               builder: (context, candidates, rejected) => AnimatedContainer(
                 duration: const Duration(milliseconds: 120),
                 decoration: BoxDecoration(
-                  color: _dragActive || candidates.isNotEmpty
-                      ? cs.primary.withValues(alpha: 0.10)
-                      : cs.secondary,
+                  color: _dragActive || candidates.isNotEmpty ? cs.primary.withValues(alpha: 0.10) : cs.secondary,
                   border: Border(
                     right: BorderSide(color: cs.border.withValues(alpha: 0.70)),
                     left: BorderSide(
-                      color: _dragActive || candidates.isNotEmpty
-                          ? cs.primary
-                          : Colors.transparent,
+                      color: _dragActive || candidates.isNotEmpty ? cs.primary : Colors.transparent,
                       width: 2,
                     ),
                   ),
@@ -5264,29 +4467,19 @@ class _FinderColumnState extends State<_FinderColumn> {
                               column.title,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                                color: cs.foreground,
-                              ),
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: cs.foreground),
                             ),
                           ),
                           const SizedBox(width: 6),
                           Text(
                             '${column.files.where((file) => file.isDirectory).length} 夹 · '
                             '${column.files.where((file) => !file.isDirectory).length} 件',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: cs.mutedForeground,
-                            ),
+                            style: TextStyle(fontSize: 10, color: cs.mutedForeground),
                           ),
                         ],
                       ),
                     ),
-                    Divider(
-                      height: 1,
-                      color: cs.border.withValues(alpha: 0.60),
-                    ),
+                    Divider(height: 1, color: cs.border.withValues(alpha: 0.60)),
                     Expanded(
                       child: column.isLoading
                           ? const _ShadLoading()
@@ -5297,10 +4490,7 @@ class _FinderColumnState extends State<_FinderColumn> {
                                 child: Text(
                                   column.errorMessage!,
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: cs.destructive,
-                                  ),
+                                  style: TextStyle(fontSize: 11, color: cs.destructive),
                                 ),
                               ),
                             )
@@ -5313,9 +4503,7 @@ class _FinderColumnState extends State<_FinderColumn> {
                                 // viewport, making this an accurate signal for
                                 // lazily loading folder statistics.
                                 widget.onItemVisible?.call(file);
-                                final selected = column.selectedIDs.contains(
-                                  file.id,
-                                );
+                                final selected = column.selectedIDs.contains(file.id);
                                 final row = _FinderColumnContextMenu(
                                   file: file,
                                   onOpen: () {
@@ -5328,14 +4516,10 @@ class _FinderColumnState extends State<_FinderColumn> {
                                   onRename: () => widget.onRename(file),
                                   onCopy: () => widget.onCopy(file),
                                   onCut: () => widget.onCut(file),
-                                  onDownload: file.isDirectory
-                                      ? null
-                                      : () => widget.onDownload(file),
+                                  onDownload: file.isDirectory ? null : () => widget.onDownload(file),
                                   onShare: () => widget.onShare(file),
-                                  onCopyFastTransfer: () =>
-                                      widget.onCopyFastTransfer(file),
-                                  onDelete: () =>
-                                      widget.onDeleteSelected([file]),
+                                  onCopyFastTransfer: () => widget.onCopyFastTransfer(file),
+                                  onDelete: () => widget.onDeleteSelected([file]),
                                   child: _FinderColumnItem(
                                     file: file,
                                     selected: selected,
@@ -5353,20 +4537,12 @@ class _FinderColumnState extends State<_FinderColumn> {
                                   enabled: widget.enableCloudDrag,
                                   data: _DraggedCloudFiles(
                                     selected
-                                        ? column.files
-                                              .where(
-                                                (item) => column.selectedIDs
-                                                    .contains(item.id),
-                                              )
-                                              .toList()
+                                        ? column.files.where((item) => column.selectedIDs.contains(item.id)).toList()
                                         : [file],
                                     widget.source,
                                   ),
                                   feedback: _DragFeedback(label: file.name),
-                                  childWhenDragging: Opacity(
-                                    opacity: 0.35,
-                                    child: row,
-                                  ),
+                                  childWhenDragging: Opacity(opacity: 0.35, child: row),
                                   child: _FolderMoveTarget(
                                     enabled: widget.enableCloudDrag,
                                     file: file,
@@ -5422,10 +4598,7 @@ class _FinderColumnContextMenu extends StatelessWidget {
       constraints: const BoxConstraints(minWidth: 190),
       items: [
         ShadContextMenuItem.inset(
-          leading: Icon(
-            file.isDirectory ? LucideIcons.folderOpen : LucideIcons.eye,
-            size: 16,
-          ),
+          leading: Icon(file.isDirectory ? LucideIcons.folderOpen : LucideIcons.eye, size: 16),
           onPressed: onOpen,
           child: Text(file.isDirectory ? '打开文件夹' : '打开'),
         ),
@@ -5484,12 +4657,7 @@ class _FinderColumnItem extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onOpen;
 
-  const _FinderColumnItem({
-    required this.file,
-    required this.selected,
-    required this.onTap,
-    required this.onOpen,
-  });
+  const _FinderColumnItem({required this.file, required this.selected, required this.onTap, required this.onOpen});
 
   @override
   Widget build(BuildContext context) {
@@ -5517,12 +4685,7 @@ class _FinderColumnItem extends StatelessWidget {
                 style: TextStyle(fontSize: 12, color: cs.foreground),
               ),
             ),
-            if (file.isDirectory)
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 17,
-                color: cs.mutedForeground,
-              ),
+            if (file.isDirectory) Icon(Icons.chevron_right_rounded, size: 17, color: cs.mutedForeground),
           ],
         ),
       ),
@@ -5561,20 +4724,14 @@ class _FileGridCard extends StatelessWidget {
   final VoidCallback onSelect;
   final VoidCallback onOpen;
 
-  const _FileGridCard({
-    required this.file,
-    required this.onSelect,
-    required this.onOpen,
-    this.isSelected = false,
-  });
+  const _FileGridCard({required this.file, required this.onSelect, required this.onOpen, this.isSelected = false});
 
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     return Semantics(
       button: true,
-      label:
-          '${file.name}，${file.isDirectory ? '文件夹' : file.typeName}，${file.formattedSize}',
+      label: '${file.name}，${file.isDirectory ? '文件夹' : file.typeName}，${file.formattedSize}',
       child: GestureDetector(
         onTap: onSelect,
         onDoubleTap: onOpen,
@@ -5584,9 +4741,7 @@ class _FileGridCard extends StatelessWidget {
             color: isSelected ? cs.primary.withValues(alpha: 0.12) : cs.card,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: isSelected
-                  ? cs.primary.withValues(alpha: 0.65)
-                  : cs.border.withValues(alpha: 0.58),
+              color: isSelected ? cs.primary.withValues(alpha: 0.65) : cs.border.withValues(alpha: 0.58),
             ),
           ),
           child: Column(
@@ -5598,11 +4753,7 @@ class _FileGridCard extends StatelessWidget {
                 file.name,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: cs.foreground,
-                ),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.foreground),
               ),
               const SizedBox(height: 3),
               Text(
@@ -5719,11 +4870,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
     });
     try {
       final api = ref.read(authProvider.notifier).api;
-      final result = await api.fsFiles(
-        parentID: parentID,
-        page: _page,
-        pageSize: _pageSize,
-      );
+      final result = await api.fsFiles(parentID: parentID, page: _page, pageSize: _pageSize);
       final files = _extractFiles(result);
       setState(() {
         _files = files;
@@ -5741,15 +4888,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
     final cache = _readFolderSizeCache();
     final now = DateTime.now().millisecondsSinceEpoch;
     final ttl = Duration(
-      minutes:
-          (int.tryParse(
-                    StorageManager.get<String>(
-                          StorageKeys.fileCacheTTLMinutes,
-                        ) ??
-                        '3',
-                  ) ??
-                  3)
-              .clamp(1, 60),
+      minutes: (int.tryParse(StorageManager.get<String>(StorageKeys.fileCacheTTLMinutes) ?? '3') ?? 3).clamp(1, 60),
     ).inMilliseconds;
     final queue = <CloudFile>[];
     final cached = <String, int>{};
@@ -5757,10 +4896,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
       final entry = cache[file.id];
       final cachedAt = int.tryParse(entry?['cachedAt']?.toString() ?? '');
       final size = int.tryParse(entry?['size']?.toString() ?? '');
-      if (cachedAt != null &&
-          size != null &&
-          size > 0 &&
-          now - cachedAt <= ttl) {
+      if (cachedAt != null && size != null && size > 0 && now - cachedAt <= ttl) {
         cached[file.id] = size;
       } else {
         queue.add(file);
@@ -5770,13 +4906,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
     void apply(Map<String, int> sizes) {
       if (!mounted || generation != _detailGeneration || sizes.isEmpty) return;
       setState(() {
-        _files = _files
-            .map(
-              (file) => sizes.containsKey(file.id)
-                  ? file.copyWith(size: sizes[file.id])
-                  : file,
-            )
-            .toList();
+        _files = _files.map((file) => sizes.containsKey(file.id) ? file.copyWith(size: sizes[file.id]) : file).toList();
       });
     }
 
@@ -5817,10 +4947,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
     final raw = StorageManager.get<dynamic>(StorageKeys.fileMetadataCache);
     if (raw is! Map) return <String, Map<String, dynamic>>{};
     return raw.map(
-      (key, value) => MapEntry(
-        key.toString(),
-        value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{},
-      ),
+      (key, value) => MapEntry(key.toString(), value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{}),
     );
   }
 
@@ -5831,10 +4958,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
         if (parsed != null) return parsed;
       }
       if (entry.value is Map) {
-        final found = _findIntDeep(
-          Map<String, dynamic>.from(entry.value),
-          keys,
-        );
+        final found = _findIntDeep(Map<String, dynamic>.from(entry.value), keys);
         if (found != null) return found;
       } else if (entry.value is List) {
         for (final child in entry.value as List) {
@@ -5858,26 +4982,19 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
         _hasPressedKey(LogicalKeyboardKey.metaRight) ||
         _hasPressedKey(LogicalKeyboardKey.controlLeft) ||
         _hasPressedKey(LogicalKeyboardKey.controlRight);
-    final shift =
-        _hasPressedKey(LogicalKeyboardKey.shiftLeft) ||
-        _hasPressedKey(LogicalKeyboardKey.shiftRight);
+    final shift = _hasPressedKey(LogicalKeyboardKey.shiftLeft) || _hasPressedKey(LogicalKeyboardKey.shiftRight);
     final selected = Set<String>.from(_selectedIDs);
     if (shift && _selectionAnchorID != null) {
       final anchor = _files.indexWhere((item) => item.id == _selectionAnchorID);
       if (anchor >= 0) {
         final range = _files
-            .sublist(
-              anchor < index ? anchor : index,
-              anchor > index ? anchor + 1 : index + 1,
-            )
+            .sublist(anchor < index ? anchor : index, anchor > index ? anchor + 1 : index + 1)
             .map((item) => item.id);
         if (!command) selected.clear();
         selected.addAll(range);
       }
     } else if (command) {
-      selected.contains(file.id)
-          ? selected.remove(file.id)
-          : selected.add(file.id);
+      selected.contains(file.id) ? selected.remove(file.id) : selected.add(file.id);
       _selectionAnchorID = file.id;
     } else {
       selected
@@ -5908,17 +5025,11 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
 
   Future<void> _moveCloudFiles(List<CloudFile> files, String? parentID) async {
     if (files.isEmpty) return;
-    final movable = files
-        .where((file) => !_sameCloudParentID(file.parentID, parentID))
-        .toList(growable: false);
+    final movable = files.where((file) => !_sameCloudParentID(file.parentID, parentID)).toList(growable: false);
     if (movable.isEmpty) {
-      ShadToaster.maybeOf(context)?.show(
-        const ShadToast(
-          title: Text('移动'),
-          description: Text('不能移动至相同目录'),
-          showCloseIconOnlyWhenHovered: false,
-        ),
-      );
+      ShadToaster.maybeOf(
+        context,
+      )?.show(const ShadToast(title: Text('移动'), description: Text('不能移动至相同目录'), showCloseIconOnlyWhenHovered: false));
       return;
     }
     setState(() {
@@ -5927,10 +5038,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
     });
     try {
       final api = ref.read(authProvider.notifier).api;
-      await api.fsMove(
-        movable.map((file) => file.id).toList(),
-        parentID: parentID,
-      );
+      await api.fsMove(movable.map((file) => file.id).toList(), parentID: parentID);
       await _load(parentID: _currentParentID);
       await ref.read(fileProvider.notifier).loadFiles();
     } catch (e) {
@@ -5947,9 +5055,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
       _error = null;
     });
     try {
-      await ref
-          .read(fileProvider.notifier)
-          .uploadLocalFiles(files, parentID: parentID);
+      await ref.read(fileProvider.notifier).uploadLocalFiles(files, parentID: parentID);
       await _load(parentID: _currentParentID);
     } catch (e) {
       setState(() => _error = e.toString());
@@ -6043,10 +5149,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
         });
         _load(parentID: _currentParentID);
       },
-      trailing: _PaneViewToggle(
-        value: _viewMode,
-        onChanged: (mode) => setState(() => _viewMode = mode),
-      ),
+      trailing: _PaneViewToggle(value: _viewMode, onChanged: (mode) => setState(() => _viewMode = mode)),
       child: RefreshIndicator(
         onRefresh: () => _load(parentID: _currentParentID),
         child: _FilePaneCollection(
@@ -6065,9 +5168,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
               ..addAll(_files.map((file) => file.id));
           }),
           onDeleteSelected: () {
-            final selected = _files
-                .where((file) => _selectedIDs.contains(file.id))
-                .toList();
+            final selected = _files.where((file) => _selectedIDs.contains(file.id)).toList();
             unawaited(
               _confirmDeleteCloudFiles(context, selected, () async {
                 await ref.read(fileProvider.notifier).deleteFiles(selected);
@@ -6081,72 +5182,43 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
             final row = FileListTile(
               file: file,
               isSelected: selected,
-              onVisible: file.isDirectory
-                  ? () => ref.read(fileProvider.notifier).requestFolderStats(file.id)
-                  : null,
+              onVisible: file.isDirectory ? () => ref.read(fileProvider.notifier).requestFolderStats(file.id) : null,
               onSelect: () => _selectWithModifiers(file),
               onOpen: () => _open(file),
-              onPreview: canPreviewCloudFile(file)
-                  ? () => _previewCloudFile(context, ref, file)
-                  : null,
-              onCopy: () =>
-                  ref.read(fileProvider.notifier).copyToClipboard([file]),
-              onCut: () =>
-                  ref.read(fileProvider.notifier).cutToClipboard([file]),
+              onPreview: canPreviewCloudFile(file) ? () => _previewCloudFile(context, ref, file) : null,
+              onCopy: () => ref.read(fileProvider.notifier).copyToClipboard([file]),
+              onCut: () => ref.read(fileProvider.notifier).cutToClipboard([file]),
               onCopyTo: () => unawaited(() async {
-                final completed = await _copyOrMoveFilesToDestination(
-                  context,
-                  ref,
-                  [file],
-                  move: false,
-                );
+                final completed = await _copyOrMoveFilesToDestination(context, ref, [file], move: false);
                 if (completed && mounted) {
                   await _load(parentID: _currentParentID);
                 }
               }()),
               onMoveTo: () => unawaited(() async {
-                final completed = await _copyOrMoveFilesToDestination(
-                  context,
-                  ref,
-                  [file],
-                  move: true,
-                );
+                final completed = await _copyOrMoveFilesToDestination(context, ref, [file], move: true);
                 if (completed && mounted) {
                   await _load(parentID: _currentParentID);
                 }
               }()),
               onRenameConfirm: (name) async {
-                final renamed = await ref
-                    .read(fileProvider.notifier)
-                    .renameFile(file, name);
+                final renamed = await ref.read(fileProvider.notifier).renameFile(file, name);
                 if (renamed) {
-                  await ref
-                      .read(mediaLibraryProvider.notifier)
-                      .synchronizeRenamedFiles([file.copyWith(name: name)]);
+                  await ref.read(mediaLibraryProvider.notifier).synchronizeRenamedFiles([file.copyWith(name: name)]);
                 }
                 if (!mounted) return;
                 setState(() {
-                  _files = _files
-                      .map(
-                        (item) => item.id == file.id
-                            ? item.copyWith(name: name)
-                            : item,
-                      )
-                      .toList();
+                  _files = _files.map((item) => item.id == file.id ? item.copyWith(name: name) : item).toList();
                 });
               },
-              onDownload: () =>
-                  ref.read(fileProvider.notifier).downloadFile(file),
+              onDownload: () => ref.read(fileProvider.notifier).downloadFile(file),
               onShare: () => unawaited(
                 showShareLinkDialog(
                   context,
                   title: file.name,
-                  createLink: () =>
-                      ref.read(fileProvider.notifier).createShare(file),
+                  createLink: () => ref.read(fileProvider.notifier).createShare(file),
                 ),
               ),
-              onCopyFastTransfer: () =>
-                  ref.read(fileProvider.notifier).copyFastTransferJSON(file),
+              onCopyFastTransfer: () => ref.read(fileProvider.notifier).copyFastTransferJSON(file),
               onDelete: () => unawaited(
                 _confirmDeleteCloudFiles(context, [file], () async {
                   await ref.read(fileProvider.notifier).deleteFiles([file]);
@@ -6157,50 +5229,28 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
             if (_viewMode == _FileViewMode.list) {
               return _CloudFileDraggable(
                 data: _DraggedCloudFiles(
-                  selected
-                      ? _files
-                            .where((item) => _selectedIDs.contains(item.id))
-                            .toList()
-                      : [file],
+                  selected ? _files.where((item) => _selectedIDs.contains(item.id)).toList() : [file],
                   _PaneIdentity.secondary,
                 ),
                 feedback: _DragFeedback(label: file.name),
                 childWhenDragging: Opacity(opacity: 0.35, child: row),
-                child: _FolderMoveTarget(
-                  file: file,
-                  onMove: _moveCloudFiles,
-                  onOpen: () => _open(file),
-                  child: row,
-                ),
+                child: _FolderMoveTarget(file: file, onMove: _moveCloudFiles, onOpen: () => _open(file), child: row),
               );
             }
 
             final card = _FastTransferContextMenu(
               file: file,
-              onCopyFastTransfer: () =>
-                  ref.read(fileProvider.notifier).copyFastTransferJSON(file),
-              onCopy: () =>
-                  ref.read(fileProvider.notifier).copyToClipboard([file]),
-              onCut: () =>
-                  ref.read(fileProvider.notifier).cutToClipboard([file]),
+              onCopyFastTransfer: () => ref.read(fileProvider.notifier).copyFastTransferJSON(file),
+              onCopy: () => ref.read(fileProvider.notifier).copyToClipboard([file]),
+              onCut: () => ref.read(fileProvider.notifier).cutToClipboard([file]),
               onCopyTo: () => unawaited(() async {
-                final completed = await _copyOrMoveFilesToDestination(
-                  context,
-                  ref,
-                  [file],
-                  move: false,
-                );
+                final completed = await _copyOrMoveFilesToDestination(context, ref, [file], move: false);
                 if (completed && mounted) {
                   await _load(parentID: _currentParentID);
                 }
               }()),
               onMoveTo: () => unawaited(() async {
-                final completed = await _copyOrMoveFilesToDestination(
-                  context,
-                  ref,
-                  [file],
-                  move: true,
-                );
+                final completed = await _copyOrMoveFilesToDestination(context, ref, [file], move: true);
                 if (completed && mounted) {
                   await _load(parentID: _currentParentID);
                 }
@@ -6214,21 +5264,12 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
             );
             return _CloudFileDraggable(
               data: _DraggedCloudFiles(
-                selected
-                    ? _files
-                          .where((item) => _selectedIDs.contains(item.id))
-                          .toList()
-                    : [file],
+                selected ? _files.where((item) => _selectedIDs.contains(item.id)).toList() : [file],
                 _PaneIdentity.secondary,
               ),
               feedback: _DragFeedback(label: file.name),
               childWhenDragging: Opacity(opacity: 0.35, child: card),
-              child: _FolderMoveTarget(
-                file: file,
-                onMove: _moveCloudFiles,
-                onOpen: () => _open(file),
-                child: card,
-              ),
+              child: _FolderMoveTarget(file: file, onMove: _moveCloudFiles, onOpen: () => _open(file), child: card),
             );
           },
         ),
@@ -6278,14 +5319,7 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
 
   int _extractTotalPages(Map<String, dynamic> json, int itemCount) {
     int? find(Map<String, dynamic> value) {
-      for (final key in const [
-        'totalPages',
-        'pages',
-        'pageCount',
-        'total',
-        'totalCount',
-        'count',
-      ]) {
+      for (final key in const ['totalPages', 'pages', 'pageCount', 'total', 'totalCount', 'count']) {
         final raw = value[key];
         final parsed = raw is int ? raw : int.tryParse(raw?.toString() ?? '');
         if (parsed != null && parsed >= 0) return parsed;
@@ -6303,28 +5337,13 @@ class _SecondaryFilePaneState extends ConsumerState<_SecondaryFilePane> {
     if (result == null) return itemCount < _pageSize ? 1 : _page + 2;
     if (result <= 0) return 1;
     final hasExplicitPageCount =
-        json.containsKey('totalPages') ||
-        json.containsKey('pages') ||
-        json.containsKey('pageCount');
-    return hasExplicitPageCount
-        ? result
-        : (result / _pageSize).ceil().clamp(1, 1 << 31).toInt();
+        json.containsKey('totalPages') || json.containsKey('pages') || json.containsKey('pageCount');
+    return hasExplicitPageCount ? result : (result / _pageSize).ceil().clamp(1, 1 << 31).toInt();
   }
 }
 
 class _PanePagination extends StatelessWidget {
-  static const _pageSizes = [
-    10,
-    20,
-    50,
-    100,
-    200,
-    500,
-    1000,
-    2000,
-    5000,
-    10000,
-  ];
+  static const _pageSizes = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
 
   final int currentPage;
   final int pageSize;
@@ -6353,16 +5372,11 @@ class _PanePagination extends StatelessWidget {
       height: 38,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(color: cs.border.withValues(alpha: 0.62)),
-        ),
+        border: Border(top: BorderSide(color: cs.border.withValues(alpha: 0.62))),
       ),
       child: Row(
         children: [
-          Text(
-            '文件 $fileCount，文件夹 $folderCount',
-            style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-          ),
+          Text('文件 $fileCount，文件夹 $folderCount', style: TextStyle(fontSize: 11, color: cs.mutedForeground)),
           const SizedBox(width: 14),
           Text(
             '第 ${currentPage + 1} / ${totalPages.clamp(1, 1 << 31)} 页',
@@ -6374,26 +5388,15 @@ class _PanePagination extends StatelessWidget {
             enabled: onPageSizeChanged != null,
             minWidth: 80,
             selectedOptionBuilder: (context, value) => Text('$value / 页'),
-            options: [
-              for (final size in _pageSizes)
-                ShadOption(value: size, child: Text('$size / 页')),
-            ],
+            options: [for (final size in _pageSizes) ShadOption(value: size, child: Text('$size / 页'))],
             onChanged: (value) {
               if (value != null) onPageSizeChanged?.call(value);
             },
           ),
           const SizedBox(width: 6),
-          _PaneIconButton(
-            icon: Icons.chevron_left_rounded,
-            tooltip: '上一页',
-            onTap: onPreviousPage,
-          ),
+          _PaneIconButton(icon: Icons.chevron_left_rounded, tooltip: '上一页', onTap: onPreviousPage),
           const SizedBox(width: 3),
-          _PaneIconButton(
-            icon: Icons.chevron_right_rounded,
-            tooltip: '下一页',
-            onTap: onNextPage,
-          ),
+          _PaneIconButton(icon: Icons.chevron_right_rounded, tooltip: '下一页', onTap: onNextPage),
         ],
       ),
     );
@@ -6405,11 +5408,7 @@ class _PaneIconButton extends StatelessWidget {
   final String tooltip;
   final VoidCallback? onTap;
 
-  const _PaneIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-  });
+  const _PaneIconButton({required this.icon, required this.tooltip, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -6425,9 +5424,7 @@ class _PaneIconButton extends StatelessWidget {
           child: Icon(
             icon,
             size: 16,
-            color: onTap == null
-                ? cs.mutedForeground.withValues(alpha: 0.45)
-                : cs.foreground,
+            color: onTap == null ? cs.mutedForeground.withValues(alpha: 0.45) : cs.foreground,
           ),
         ),
       ),
@@ -6446,10 +5443,8 @@ class _FilePaneFrame extends StatelessWidget {
   final String? dropParentID;
   final List<CloudFile> breadcrumbPath;
   final ValueChanged<int>? onBreadcrumbNavigate;
-  final Future<void> Function(List<CloudFile> files, String? parentID)?
-  onMoveCloudFiles;
-  final Future<void> Function(List<File> files, String? parentID)?
-  onUploadLocalFiles;
+  final Future<void> Function(List<CloudFile> files, String? parentID)? onMoveCloudFiles;
+  final Future<void> Function(List<File> files, String? parentID)? onUploadLocalFiles;
   final Widget header;
   final Widget child;
   final int currentPage;
@@ -6519,21 +5514,14 @@ class _FilePaneFrame extends StatelessWidget {
                                 title,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w800,
-                                  color: cs.foreground,
-                                ),
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: cs.foreground),
                               ),
                             ),
                             if (!compactHeader) ...[
                               const SizedBox(width: 8),
                               Text(
                                 '$folderCount 个文件夹 · $fileCount 个文件',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: cs.mutedForeground,
-                                ),
+                                style: TextStyle(fontSize: 11, color: cs.mutedForeground),
                               ),
                             ],
                           ],
@@ -6548,10 +5536,7 @@ class _FilePaneFrame extends StatelessWidget {
             Divider(height: 1, color: cs.border.withValues(alpha: 0.62)),
             SizedBox(
               height: 36,
-              child: BreadcrumbBar(
-                path: breadcrumbPath,
-                onNavigate: onBreadcrumbNavigate ?? (_) {},
-              ),
+              child: BreadcrumbBar(path: breadcrumbPath, onNavigate: onBreadcrumbNavigate ?? (_) {}),
             ),
             Divider(height: 1, color: cs.border.withValues(alpha: 0.62)),
             SizedBox(height: 34, child: header),
@@ -6572,10 +5557,7 @@ class _FilePaneFrame extends StatelessWidget {
                     )
                   : itemCount == 0 && !showChildWhenEmpty
                   ? Center(
-                      child: Text(
-                        emptyLabel,
-                        style: TextStyle(color: cs.mutedForeground),
-                      ),
+                      child: Text(emptyLabel, style: TextStyle(color: cs.mutedForeground)),
                     )
                   : child,
             ),
@@ -6602,21 +5584,15 @@ class _ShadLoading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Center(
-      child: AppLoadingIndicator(
-        size: AppLoadingSize.page,
-        label: '正在加载文件夹内容',
-        description: '正在同步文件、大小和修改时间',
-      ),
+      child: AppLoadingIndicator(size: AppLoadingSize.page, label: '正在加载文件夹内容', description: '正在同步文件、大小和修改时间'),
     );
   }
 }
 
 class _PaneDropSurface extends StatefulWidget {
   final String? parentID;
-  final Future<void> Function(List<CloudFile> files, String? parentID)?
-  onMoveCloudFiles;
-  final Future<void> Function(List<File> files, String? parentID)?
-  onUploadLocalFiles;
+  final Future<void> Function(List<CloudFile> files, String? parentID)? onMoveCloudFiles;
+  final Future<void> Function(List<File> files, String? parentID)? onUploadLocalFiles;
   final Widget child;
 
   const _PaneDropSurface({
@@ -6655,10 +5631,7 @@ class _PaneDropSurfaceState extends State<_PaneDropSurface> {
         onWillAcceptWithDetails: (_) => widget.onMoveCloudFiles != null,
         onAcceptWithDetails: (details) async {
           setState(() => _active = false);
-          await widget.onMoveCloudFiles?.call(
-            details.data.files,
-            widget.parentID,
-          );
+          await widget.onMoveCloudFiles?.call(details.data.files, widget.parentID);
         },
         onMove: (_) {
           if (!_active) setState(() => _active = true);
@@ -6684,17 +5657,10 @@ class _PaneDropSurfaceState extends State<_PaneDropSurface> {
                         child: OS26Glass(
                           radius: 12,
                           opacity: 0.7,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 12,
-                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                           child: Text(
                             '松开以上传或移动到此面板',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w800,
-                              color: cs.primary,
-                            ),
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: cs.primary),
                           ),
                         ),
                       ),
@@ -6734,10 +5700,7 @@ class _DragFeedback extends StatelessWidget {
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
               ),
             ),
           ],
@@ -6755,11 +5718,7 @@ class _FilePaneHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
-    final style = TextStyle(
-      fontSize: 11,
-      fontWeight: FontWeight.w800,
-      color: cs.mutedForeground,
-    );
+    final style = TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: cs.mutedForeground);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
@@ -6775,10 +5734,7 @@ class _FilePaneHeader extends StatelessWidget {
             width: 116,
             child: Text('修改时间', textAlign: TextAlign.right, style: style),
           ),
-          if (trailing case final Widget trailing) ...[
-            const SizedBox(width: 8),
-            trailing,
-          ],
+          if (trailing case final Widget trailing) ...[const SizedBox(width: 8), trailing],
         ],
       ),
     );
