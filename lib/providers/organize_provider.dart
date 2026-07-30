@@ -443,23 +443,36 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
       } else {
         final ext = _ext(dup.name);
         final base = _base(dup.name);
-        final newName = _uniqueName(base, ext, usedNames);
-        usedNames.add(newName);
-
-        final note =
-        (gcidA == null || gcidB == null) ? 'GCID 缺失' : 'GCID 不同';
-
-        _addAction(OrganizeAction(
-          type: OrganizeActionType.renameConflict,
-          sourceId: dup.id,
-          sourceName: dup.name,
-          sourceIsDir: false,
-          sourceParentId: parentId,
-          sourcePath: _joinPath(currentPath, dup.name),
-          newFileName: newName,
-          targetPath: _joinPath(currentPath, newName),
-          reason: '$currentPath/${dup.name} — $note，重命名为 $newName',
-        ));
+        final dupNum = _dupNumber(dup.name);
+        final baseNum = _dupNumber(baseFile.name);
+        final sameNumber = dupNum != null && baseNum != null && dupNum == baseNum;
+        if (sameNumber) {
+          final newName = _uniqueName(base, ext, usedNames);
+          usedNames.add(newName);
+          final note = (gcidA == null || gcidB == null) ? 'GCID 缺失' : 'GCID 不同';
+          _addAction(OrganizeAction(
+            type: OrganizeActionType.renameConflict,
+            sourceId: dup.id,
+            sourceName: dup.name,
+            sourceIsDir: false,
+            sourceParentId: parentId,
+            sourcePath: _joinPath(currentPath, dup.name),
+            newFileName: newName,
+            targetPath: _joinPath(currentPath, newName),
+            reason: '$currentPath/${dup.name} — $note，重命名为 $newName',
+          ));
+        } else {
+          _addAction(OrganizeAction(
+            type: OrganizeActionType.moveToBase,
+            sourceId: dup.id,
+            sourceName: dup.name,
+            sourceIsDir: false,
+            sourceParentId: parentId,
+            sourcePath: _joinPath(currentPath, dup.name),
+            targetPath: _joinPath(currentPath, dup.name),
+            reason: '$currentPath/${dup.name} — 编号不同或缺失，仅移动不重命名',
+          ));
+        }
       }
     }
   }
@@ -599,25 +612,40 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
         } else {
           final ext = _ext(dupChild.name);
           final nameBase = _base(dupChild.name);
-          final newName = _uniqueName(nameBase, ext, usedNames);
-          usedNames.add(newName);
-
-          final note =
-          (gcidA == null || gcidB == null) ? 'GCID 缺失' : 'GCID 不同';
-
-          _addAction(OrganizeAction(
-            type: OrganizeActionType.renameConflict,
-            sourceId: dupChild.id,
-            sourceName: dupChild.name,
-            sourceIsDir: false,
-            sourceParentId: dupDir.id,
-            sourcePath: _joinPath(dupPath, dupChild.name),
-            targetParentId: baseDir.id,
-            targetParentName: basePath,
-            newFileName: newName,
-            targetPath: _joinPath(basePath, newName),
-            reason: '$dupPath/${dupChild.name} — $note，重命名为 $newName 后移入 $basePath/',
-          ));
+          final dupNum = _dupNumber(dupChild.name);
+          final baseNum = _dupNumber(existing.name);
+          final sameNumber = dupNum != null && baseNum != null && dupNum == baseNum;
+          if (sameNumber) {
+            final newName = _uniqueName(nameBase, ext, usedNames);
+            usedNames.add(newName);
+            final note = (gcidA == null || gcidB == null) ? 'GCID 缺失' : 'GCID 不同';
+            _addAction(OrganizeAction(
+              type: OrganizeActionType.renameConflict,
+              sourceId: dupChild.id,
+              sourceName: dupChild.name,
+              sourceIsDir: false,
+              sourceParentId: dupDir.id,
+              sourcePath: _joinPath(dupPath, dupChild.name),
+              targetParentId: baseDir.id,
+              targetParentName: basePath,
+              newFileName: newName,
+              targetPath: _joinPath(basePath, newName),
+              reason: '$dupPath/${dupChild.name} — $note，重命名为 $newName 后移入 $basePath/',
+            ));
+          } else {
+            _addAction(OrganizeAction(
+              type: OrganizeActionType.moveToBase,
+              sourceId: dupChild.id,
+              sourceName: dupChild.name,
+              sourceIsDir: false,
+              sourceParentId: dupDir.id,
+              sourcePath: _joinPath(dupPath, dupChild.name),
+              targetParentId: baseDir.id,
+              targetParentName: basePath,
+              targetPath: _joinPath(basePath, dupChild.name),
+              reason: '$dupPath/${dupChild.name} — 编号不同或缺失，仅移动不重命名',
+            ));
+          }
         }
       } else {
         final ext = dupChild.isDirectory ? '' : _ext(dupChild.name);
@@ -831,6 +859,12 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   String _base(String name) {
     final dot = name.lastIndexOf('.');
     return dot > 0 ? name.substring(0, dot) : name;
+  }
+
+  /// 从文件名中提取 (N) 编号，没有则返回 null
+  int? _dupNumber(String name) {
+    final parsed = _parseDup(name, false);
+    return parsed?.number;
   }
 
   String _uniqueName(String base, String ext, Set<String> existing) {
