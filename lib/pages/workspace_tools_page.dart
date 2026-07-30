@@ -29,6 +29,7 @@ import '../widgets/file_detail_dialog.dart';
 import '../widgets/file_preview_dialog.dart';
 import '../widgets/media_player_dialog.dart';
 import 'media_library_page.dart';
+import 'organize_page.dart';
 
 enum WorkspaceTool {
   scan,
@@ -65,7 +66,7 @@ extension WorkspaceToolDetails on WorkspaceTool {
       case WorkspaceTool.duplicateFileScan:
         return '重复文件扫描';
       case WorkspaceTool.similarFolderScan:
-        return '相似文件夹扫描';
+        return '文件整理';
     }
   }
 
@@ -110,7 +111,8 @@ class WorkspaceToolsPage extends StatelessWidget {
       WorkspaceTool.categories => const _CategoryManagementTool(),
       WorkspaceTool.emptyFolderScan => const _ScopedWorkspaceScanTool(kind: _WorkspaceScanKind.emptyFolders),
       WorkspaceTool.duplicateFileScan => const _ScopedWorkspaceScanTool(kind: _WorkspaceScanKind.duplicateFiles),
-      WorkspaceTool.similarFolderScan => const _ScopedWorkspaceScanTool(kind: _WorkspaceScanKind.similarFolders),
+      // WorkspaceTool.similarFolderScan => const _ScopedWorkspaceScanTool(kind: _WorkspaceScanKind.similarFolders),
+      WorkspaceTool.similarFolderScan => const OrganizeView(),
     };
     return Column(
       children: [
