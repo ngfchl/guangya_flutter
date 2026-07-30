@@ -16,6 +16,9 @@ class FileMetadataCache {
   static Future<void> cacheFiles(List<CloudFile> files) =>
       _store.cacheFiles(files);
 
+  static Future<void> cacheResourceMetadata(Iterable<CloudFile> files) =>
+      _store.cacheResourceMetadata(files);
+
   static Future<void> cacheFolderChildrenBatch(
     Map<String?, List<CloudFile>> folders,
   ) => _store.cacheFolderChildrenBatch(folders);
@@ -35,6 +38,11 @@ class FileMetadataCache {
 
   static Future<List<CloudFile>> allCachedFolderChildren() =>
       _store.allCachedFolderChildren();
+
+  static Future<List<CloudFile>> searchCachedDirectories(
+    String query, {
+    int limit = 200,
+  }) => _store.searchCachedDirectories(query, limit: limit);
 
   /// Loads the complete directory snapshot index in one SQLite read.
   ///

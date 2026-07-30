@@ -918,6 +918,7 @@ class MediaLibraryStore {
   ) async {
     final db = await _db;
     await db.transaction((txn) async {
+      await _cacheResourceMetadata(txn, files);
       await _removeStaleFolderFileIndex(txn, folderID, files);
       final folderKey = _folderID(folderID);
       for (final file in files) {
@@ -946,6 +947,7 @@ class MediaLibraryStore {
   Future<void> cacheFiles(List<CloudFile> files) async {
     final db = await _db;
     await db.transaction((txn) async {
+      await _cacheResourceMetadata(txn, files);
       for (final file in files) {
         final gcid = file.gcid?.trim();
         if (gcid == null || gcid.isEmpty) continue;
@@ -961,38 +963,63 @@ class MediaLibraryStore {
     });
   }
 
+  Future<void> cacheResourceMetadata(Iterable<CloudFile> files) async {
+    final values = <String, CloudFile>{
+      for (final file in files) file.id: file,
+    }.values.toList(growable: false);
+    if (values.isEmpty) return;
+    final db = await _db;
+    const batchSize = 500;
+    for (var offset = 0; offset < values.length; offset += batchSize) {
+      final end = (offset + batchSize).clamp(0, values.length);
+      await db.transaction(
+        (txn) => _cacheResourceMetadata(txn, values.sublist(offset, end)),
+      );
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
   Future<void> cacheFolderChildrenBatch(
     Map<String?, List<CloudFile>> folders,
   ) async {
     if (folders.isEmpty) return;
     final db = await _db;
-    await db.transaction((txn) async {
-      for (final entry in folders.entries) {
-        final files = entry.value;
-        await _removeStaleFolderFileIndex(txn, entry.key, files);
-        final folderKey = _folderID(entry.key);
-        for (final file in files) {
-          final gcid = file.gcid?.trim();
-          if (gcid == null || gcid.isEmpty) continue;
-          await txn.insert('file_index', {
-            'file_id': file.id,
-            'gcid': gcid,
+    final entries = folders.entries.toList(growable: false);
+    const folderBatchSize = 100;
+    for (var offset = 0; offset < entries.length; offset += folderBatchSize) {
+      final end = (offset + folderBatchSize).clamp(0, entries.length);
+      await db.transaction((txn) async {
+        final batch = txn.batch();
+        for (final entry in entries.sublist(offset, end)) {
+          final files = entry.value;
+          await _cacheResourceMetadata(txn, files);
+          await _removeStaleFolderFileIndex(txn, entry.key, files);
+          final folderKey = _folderID(entry.key);
+          for (final file in files) {
+            final gcid = file.gcid?.trim();
+            if (gcid == null || gcid.isEmpty) continue;
+            batch.insert('file_index', {
+              'file_id': file.id,
+              'gcid': gcid,
+              'folder_id': folderKey,
+            }, conflictAlgorithm: ConflictAlgorithm.replace);
+            batch.insert('gcid_details', {
+              'gcid': gcid,
+              'file_json': jsonEncode(file.toJson()),
+            }, conflictAlgorithm: ConflictAlgorithm.replace);
+          }
+          batch.insert('folder_children', {
             'folder_id': folderKey,
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
-          await txn.insert('gcid_details', {
-            'gcid': gcid,
-            'file_json': jsonEncode(file.toJson()),
+            'child_ids': jsonEncode(files.map((file) => file.id).toList()),
+            'children_json': jsonEncode(
+              files.map((file) => file.toJson()).toList(),
+            ),
           }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
-        await txn.insert('folder_children', {
-          'folder_id': folderKey,
-          'child_ids': jsonEncode(files.map((file) => file.id).toList()),
-          'children_json': jsonEncode(
-            files.map((file) => file.toJson()).toList(),
-          ),
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
-      }
-    });
+        await batch.commit(noResult: true);
+      });
+      await Future<void>.delayed(Duration.zero);
+    }
   }
 
   /// Removes traversal snapshots and the current file-id mapping. The GCID
@@ -1002,7 +1029,36 @@ class MediaLibraryStore {
     await db.transaction((txn) async {
       await txn.delete('folder_children');
       await txn.delete('file_index');
+      await txn.delete('resource_metadata');
     });
+  }
+
+  Future<void> _cacheResourceMetadata(
+    DatabaseExecutor txn,
+    Iterable<CloudFile> files,
+  ) async {
+    final resources = <String, CloudFile>{};
+    for (final file in files) {
+      resources[file.id] = file;
+    }
+
+    final batch = txn.batch();
+    for (final file in resources.values) {
+      batch.insert(
+        'resource_metadata',
+        {
+          'resource_id': file.id,
+          'resource_name': file.name,
+          'is_directory': file.isDirectory ? 1 : 0,
+          'parent_id': file.parentID,
+          'full_parent_ids': file.fullParentIDs,
+          'cloud_path': file.cloudPath,
+          'resource_json': jsonEncode(file.toJson()),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
   }
 
   Future<Map<String, List<CloudFile>>> liveFilesByGCIDs(
@@ -1041,6 +1097,11 @@ class MediaLibraryStore {
     await db.transaction((txn) async {
       for (final id in ids) {
         await txn.delete('file_index', where: 'file_id = ?', whereArgs: [id]);
+        await txn.delete(
+          'resource_metadata',
+          where: 'resource_id = ?',
+          whereArgs: [id],
+        );
       }
     });
   }
@@ -1067,6 +1128,11 @@ class MediaLibraryStore {
         await txn.delete(
           'file_index',
           where: 'file_id = ?',
+          whereArgs: [oldID],
+        );
+        await txn.delete(
+          'resource_metadata',
+          where: 'resource_id = ?',
           whereArgs: [oldID],
         );
       }
@@ -1108,6 +1174,11 @@ class MediaLibraryStore {
                   where: 'file_id = ?',
                   whereArgs: [child.id],
                 );
+                await txn.delete(
+                  'resource_metadata',
+                  where: 'resource_id = ?',
+                  whereArgs: [child.id],
+                );
                 if (child.isDirectory) pending.add(child.id);
               }
             }
@@ -1119,6 +1190,11 @@ class MediaLibraryStore {
           'folder_children',
           where: 'folder_id = ?',
           whereArgs: [_folderID(folderID)],
+        );
+        await txn.delete(
+          'resource_metadata',
+          where: 'resource_id = ?',
+          whereArgs: [folderID],
         );
       }
     });
@@ -1198,6 +1274,39 @@ class MediaLibraryStore {
     await allCachedFolderChildrenBatched((batch) async {
       result.addAll(batch);
     });
+    return result;
+  }
+
+  Future<List<CloudFile>> searchCachedDirectories(
+    String query, {
+    int limit = 200,
+  }) async {
+    final normalized = query.trim();
+    if (normalized.isEmpty) return const [];
+    final escaped = normalized
+        .replaceAll('\\', '\\\\')
+        .replaceAll('%', '\\%')
+        .replaceAll('_', '\\_');
+    final rows = await (await _db).query(
+      'resource_metadata',
+      columns: const ['resource_json'],
+      where:
+          "is_directory = 1 AND resource_name LIKE ? ESCAPE '\\' COLLATE NOCASE",
+      whereArgs: ['%$escaped%'],
+      orderBy: 'LENGTH(resource_name), resource_name COLLATE NOCASE',
+      limit: limit.clamp(1, 500),
+    );
+    final result = <CloudFile>[];
+    for (final row in rows) {
+      try {
+        final raw = jsonDecode(row['resource_json']?.toString() ?? '{}');
+        if (raw is! Map) continue;
+        final folder = CloudFile.fromJson(Map<String, dynamic>.from(raw));
+        if (folder.isDirectory) result.add(folder);
+      } catch (_) {
+        // Ignore an individual malformed resource row.
+      }
+    }
     return result;
   }
 
@@ -1622,7 +1731,6 @@ class MediaLibraryStore {
         if (retained.length != children.length) updates[folderID] = retained;
       } catch (_) {}
     }
-    if (updates.isEmpty) return;
     await db.transaction((txn) async {
       for (final entry in updates.entries) {
         final retained = entry.value;
@@ -1638,6 +1746,13 @@ class MediaLibraryStore {
           whereArgs: [entry.key],
         );
       }
+      for (final id in ids) {
+        await txn.delete(
+          'resource_metadata',
+          where: 'resource_id = ?',
+          whereArgs: [id],
+        );
+      }
     });
   }
 
@@ -1651,6 +1766,13 @@ class MediaLibraryStore {
     if (ids.isEmpty) return;
     final db = await _db;
     await db.transaction((txn) async {
+      for (final id in ids) {
+        await txn.delete(
+          'resource_metadata',
+          where: 'resource_id = ?',
+          whereArgs: [id],
+        );
+      }
       // 1. Remove from all folders (same logic as removeFilesFromAllFolders)
       final rows = await txn.query('folder_children');
       for (final row in rows) {
@@ -1811,6 +1933,21 @@ class MediaLibraryStore {
         children_json TEXT NOT NULL
       )
     ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS resource_metadata (
+        resource_id TEXT PRIMARY KEY NOT NULL,
+        resource_name TEXT NOT NULL,
+        is_directory INTEGER NOT NULL,
+        parent_id TEXT,
+        full_parent_ids TEXT,
+        cloud_path TEXT NOT NULL,
+        resource_json TEXT NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_resource_metadata_directory_name '
+      'ON resource_metadata(is_directory, resource_name COLLATE NOCASE)',
+    );
     await db.execute('''
       CREATE TABLE IF NOT EXISTS tmdb_works (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
