@@ -331,34 +331,57 @@ jobs:
           cat > "$PKG_SCRIPTS/preinstall" <<'PREINSTALLEOF'
           #!/bin/bash
           set -e
+          STATE_FILE="/tmp/com.ptools.guangyaFlutter.was_running"
           APP_EXECUTABLE="/Applications/小黄鸭.app/Contents/MacOS/小黄鸭"
           APP_PROCESS_NAME="小黄鸭"
           PIDS=""
-          while IFS= read -r pid; do
-            [ -n "$pid" ] || continue
-            running_command="$(ps -ww -p "$pid" -o command= 2>/dev/null || true)"
-            case "$running_command" in
-              "$APP_EXECUTABLE"|"$APP_EXECUTABLE" *)
-                PIDS="$PIDS $pid"
-                ;;
-            esac
-          done < <(pgrep -x "$APP_PROCESS_NAME" 2>/dev/null || true)
-          [ -n "$PIDS" ] || exit 0
-          kill -TERM $PIDS 2>/dev/null || true
-          for _ in $(seq 1 15); do
-            still_running=""
-            for pid in $PIDS; do
-              if kill -0 "$pid" 2>/dev/null; then
-                still_running="$still_running $pid"
-              fi
+          # 优先按完整可执行路径匹配命令行（GUI 安装器沙盒中 ps 命令行匹配不可靠）
+          PIDS="$(/usr/bin/pgrep -f "$APP_EXECUTABLE" 2>/dev/null || true)"
+          # 兜底：按进程名精确匹配
+          [ -n "$PIDS" ] || PIDS="$(/usr/bin/pgrep -x "$APP_PROCESS_NAME" 2>/dev/null || true)"
+          if [ -n "$PIDS" ]; then
+            # 记录"安装前正在运行"，供 postinstall 安装完成后重新打开
+            echo "running" > "$STATE_FILE" 2>/dev/null || true
+            kill -TERM $PIDS 2>/dev/null || true
+            for _ in $(seq 1 15); do
+              still_running=""
+              for pid in $PIDS; do
+                if kill -0 "$pid" 2>/dev/null; then
+                  still_running="$still_running $pid"
+                fi
+              done
+              [ -n "$still_running" ] || exit 0
+              sleep 1
             done
-            [ -n "$still_running" ] || exit 0
-            sleep 1
-          done
-          kill -KILL $PIDS 2>/dev/null || true
+            kill -KILL $PIDS 2>/dev/null || true
+          else
+            rm -f "$STATE_FILE" 2>/dev/null || true
+          fi
           exit 0
           PREINSTALLEOF
           chmod 755 "$PKG_SCRIPTS/preinstall"
+          # --- postinstall: 安装前若在运行，安装完成后重新打开应用 ---
+          cat > "$PKG_SCRIPTS/postinstall" <<'POSTINSTALLEOF'
+          #!/bin/bash
+          set -e
+          STATE_FILE="/tmp/com.ptools.guangyaFlutter.was_running"
+          APP_PATH="/Applications/小黄鸭.app"
+          [ -f "$STATE_FILE" ] || exit 0
+          rm -f "$STATE_FILE" 2>/dev/null || true
+          CONSOLE_USER="$(/usr/bin/stat -f '%Su' /dev/console 2>/dev/null || true)"
+          if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+            CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || true)"
+            if [ -n "$CONSOLE_UID" ]; then
+              /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/open "$APP_PATH" >/dev/null 2>&1 \
+                || /usr/bin/su "$CONSOLE_USER" -c "/usr/bin/open '$APP_PATH'" >/dev/null 2>&1 \
+                || true
+              exit 0
+            fi
+          fi
+          /usr/bin/open "$APP_PATH" >/dev/null 2>&1 || true
+          exit 0
+          POSTINSTALLEOF
+          chmod 755 "$PKG_SCRIPTS/postinstall"
           echo "::group::macOS pkg preinstall"
           sed -n '1,80p' "$PKG_SCRIPTS/preinstall"
           echo "::endgroup::"
@@ -454,34 +477,57 @@ jobs:
           cat > "$PKG_SCRIPTS/preinstall" <<'PREINSTALLEOF'
           #!/bin/bash
           set -e
+          STATE_FILE="/tmp/com.ptools.guangyaFlutter.was_running"
           APP_EXECUTABLE="/Applications/小黄鸭.app/Contents/MacOS/小黄鸭"
           APP_PROCESS_NAME="小黄鸭"
           PIDS=""
-          while IFS= read -r pid; do
-            [ -n "$pid" ] || continue
-            running_command="$(ps -ww -p "$pid" -o command= 2>/dev/null || true)"
-            case "$running_command" in
-              "$APP_EXECUTABLE"|"$APP_EXECUTABLE" *)
-                PIDS="$PIDS $pid"
-                ;;
-            esac
-          done < <(pgrep -x "$APP_PROCESS_NAME" 2>/dev/null || true)
-          [ -n "$PIDS" ] || exit 0
-          kill -TERM $PIDS 2>/dev/null || true
-          for _ in $(seq 1 15); do
-            still_running=""
-            for pid in $PIDS; do
-              if kill -0 "$pid" 2>/dev/null; then
-                still_running="$still_running $pid"
-              fi
+          # 优先按完整可执行路径匹配命令行（GUI 安装器沙盒中 ps 命令行匹配不可靠）
+          PIDS="$(/usr/bin/pgrep -f "$APP_EXECUTABLE" 2>/dev/null || true)"
+          # 兜底：按进程名精确匹配
+          [ -n "$PIDS" ] || PIDS="$(/usr/bin/pgrep -x "$APP_PROCESS_NAME" 2>/dev/null || true)"
+          if [ -n "$PIDS" ]; then
+            # 记录"安装前正在运行"，供 postinstall 安装完成后重新打开
+            echo "running" > "$STATE_FILE" 2>/dev/null || true
+            kill -TERM $PIDS 2>/dev/null || true
+            for _ in $(seq 1 15); do
+              still_running=""
+              for pid in $PIDS; do
+                if kill -0 "$pid" 2>/dev/null; then
+                  still_running="$still_running $pid"
+                fi
+              done
+              [ -n "$still_running" ] || exit 0
+              sleep 1
             done
-            [ -n "$still_running" ] || exit 0
-            sleep 1
-          done
-          kill -KILL $PIDS 2>/dev/null || true
+            kill -KILL $PIDS 2>/dev/null || true
+          else
+            rm -f "$STATE_FILE" 2>/dev/null || true
+          fi
           exit 0
           PREINSTALLEOF
           chmod 755 "$PKG_SCRIPTS/preinstall"
+          # --- postinstall: 安装前若在运行，安装完成后重新打开应用 ---
+          cat > "$PKG_SCRIPTS/postinstall" <<'POSTINSTALLEOF'
+          #!/bin/bash
+          set -e
+          STATE_FILE="/tmp/com.ptools.guangyaFlutter.was_running"
+          APP_PATH="/Applications/小黄鸭.app"
+          [ -f "$STATE_FILE" ] || exit 0
+          rm -f "$STATE_FILE" 2>/dev/null || true
+          CONSOLE_USER="$(/usr/bin/stat -f '%Su' /dev/console 2>/dev/null || true)"
+          if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+            CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || true)"
+            if [ -n "$CONSOLE_UID" ]; then
+              /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/open "$APP_PATH" >/dev/null 2>&1 \
+                || /usr/bin/su "$CONSOLE_USER" -c "/usr/bin/open '$APP_PATH'" >/dev/null 2>&1 \
+                || true
+              exit 0
+            fi
+          fi
+          /usr/bin/open "$APP_PATH" >/dev/null 2>&1 || true
+          exit 0
+          POSTINSTALLEOF
+          chmod 755 "$PKG_SCRIPTS/postinstall"
           echo "::group::macOS pkg preinstall"
           sed -n '1,80p' "$PKG_SCRIPTS/preinstall"
           echo "::endgroup::"
