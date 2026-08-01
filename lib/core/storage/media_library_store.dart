@@ -38,6 +38,9 @@ class MediaLibraryStore {
         // Enforce declared foreign keys (e.g. media_items -> media_libraries
         // ON DELETE CASCADE). Must run before any query on each connection.
         await db.execute('PRAGMA foreign_keys = ON');
+        await _safePragma(db, 'PRAGMA journal_mode = WAL');
+        await _safePragma(db, 'PRAGMA synchronous = NORMAL');
+        await _safePragma(db, 'PRAGMA busy_timeout = 15000');
       },
       onCreate: (db, _) async {
         await _createSchema(db);
@@ -193,7 +196,9 @@ class MediaLibraryStore {
       args.add(libraryID);
     }
     if (unmatchedOnly) {
-      where.add('(tmdb_id IS NULL OR tmdb_id = \'\') AND (douban_id IS NULL OR douban_id = \'\')');
+      where.add(
+        '(tmdb_id IS NULL OR tmdb_id = \'\') AND (douban_id IS NULL OR douban_id = \'\')',
+      );
     }
     final whereClause = where.isEmpty ? null : where.join(' AND ');
     var offset = 0;
@@ -700,18 +705,21 @@ class MediaLibraryStore {
     final db = await _db;
     final removed = await db.delete(
       'media_items',
-      where: 'library_id = ? AND (resource_path LIKE ? OR resource_path LIKE ?)',
+      where:
+          'library_id = ? AND (resource_path LIKE ? OR resource_path LIKE ?)',
       whereArgs: [libraryID, '%/BDMV/%', '%/VIDEO_TS/%'],
     );
     final removedUnmatched = await db.delete(
       'media_items',
-      where: 'library_id = ? AND (tmdb_id IS NULL OR tmdb_id = \'\') '
+      where:
+          'library_id = ? AND (tmdb_id IS NULL OR tmdb_id = \'\') '
           'AND (resource_path LIKE ? OR resource_path LIKE ?)',
       whereArgs: [libraryID, '%BDMV%', '%VIDEO_TS%'],
     );
     final removedM2ts = await db.delete(
       'media_items',
-      where: 'library_id = ? AND (cloud_name LIKE ? OR cloud_name LIKE ? '
+      where:
+          'library_id = ? AND (cloud_name LIKE ? OR cloud_name LIKE ? '
           'OR cloud_name LIKE ? OR cloud_name LIKE ? OR cloud_name LIKE ?)',
       whereArgs: [libraryID, '%.m2ts', '%.M2TS', '%.vob', '%.VOB', '%.IFO'],
     );
@@ -1044,19 +1052,15 @@ class MediaLibraryStore {
 
     final batch = txn.batch();
     for (final file in resources.values) {
-      batch.insert(
-        'resource_metadata',
-        {
-          'resource_id': file.id,
-          'resource_name': file.name,
-          'is_directory': file.isDirectory ? 1 : 0,
-          'parent_id': file.parentID,
-          'full_parent_ids': file.fullParentIDs,
-          'cloud_path': file.cloudPath,
-          'resource_json': jsonEncode(file.toJson()),
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      batch.insert('resource_metadata', {
+        'resource_id': file.id,
+        'resource_name': file.name,
+        'is_directory': file.isDirectory ? 1 : 0,
+        'parent_id': file.parentID,
+        'full_parent_ids': file.fullParentIDs,
+        'cloud_path': file.cloudPath,
+        'resource_json': jsonEncode(file.toJson()),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
   }
@@ -1326,8 +1330,7 @@ class MediaLibraryStore {
         result[folderID] = raw
             .whereType<Map>()
             .map(
-              (value) =>
-                  CloudFile.fromJson(Map<String, dynamic>.from(value)),
+              (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
             )
             .toList();
       } catch (_) {
@@ -1395,15 +1398,12 @@ class MediaLibraryStore {
             ? null
             : storedFolderID;
         try {
-          final raw = jsonDecode(
-            row['children_json']?.toString() ?? '[]',
-          );
+          final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
           if (raw is! List) continue;
           snapshots[folderID] = raw
               .whereType<Map>()
               .map(
-                (value) =>
-                    CloudFile.fromJson(Map<String, dynamic>.from(value)),
+                (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
               )
               .toList(growable: false);
         } catch (_) {
@@ -1552,7 +1552,9 @@ class MediaLibraryStore {
   ///
   /// Unlike [cachedFile] this does not require a gcid, so it also resolves
   /// directories — which is what lets folder child counts survive a restart.
-  Future<Map<String, CloudFile>> cachedFilesByIDs(Iterable<String> fileIDs) async {
+  Future<Map<String, CloudFile>> cachedFilesByIDs(
+    Iterable<String> fileIDs,
+  ) async {
     final wanted = fileIDs.toSet();
     if (wanted.isEmpty) return const {};
     final db = await _db;
@@ -1595,6 +1597,7 @@ class MediaLibraryStore {
     }
     return result;
   }
+
   /// Returns gcid values for the given file IDs from the file_index table.
   Future<Map<String, String>> gcidsByFileIDs(Iterable<String> fileIDs) async {
     final ids = fileIDs.where((id) => id.isNotEmpty).toSet();
@@ -1604,7 +1607,7 @@ class MediaLibraryStore {
     for (final chunk in _chunked(ids.toList(), 500)) {
       final rows = await db.rawQuery(
         'SELECT file_id, gcid FROM file_index '
-            'WHERE file_id IN (${chunk.map((_) => '?').join(',')})',
+        'WHERE file_id IN (${chunk.map((_) => '?').join(',')})',
         chunk,
       );
       for (final row in rows) {
@@ -1747,6 +1750,7 @@ class MediaLibraryStore {
         );
       }
       for (final id in ids) {
+        await txn.delete('file_index', where: 'file_id = ?', whereArgs: [id]);
         await txn.delete(
           'resource_metadata',
           where: 'resource_id = ?',
@@ -1794,7 +1798,9 @@ class MediaLibraryStore {
             await txn.update(
               'folder_children',
               {
-                'child_ids': jsonEncode(retained.map((file) => file.id).toList()),
+                'child_ids': jsonEncode(
+                  retained.map((file) => file.id).toList(),
+                ),
                 'children_json': jsonEncode(
                   retained.map((file) => file.toJson()).toList(),
                 ),
@@ -1815,13 +1821,14 @@ class MediaLibraryStore {
         whereArgs: [parentKey],
       );
       if (existingRows.isNotEmpty) {
-        final existingJson = existingRows.first['children_json']?.toString() ?? '[]';
-        _updateParentChildrenInTxn(txn, parentKey, existingJson, ids);
+        final existingJson =
+            existingRows.first['children_json']?.toString() ?? '[]';
+        await _updateParentChildrenInTxn(txn, parentKey, existingJson, ids);
       }
     });
   }
 
-  void _updateParentChildrenInTxn(
+  Future<void> _updateParentChildrenInTxn(
     Transaction txn,
     String parentKey,
     String existingJson,
@@ -1831,7 +1838,11 @@ class MediaLibraryStore {
       final raw = jsonDecode(existingJson);
       if (raw is! List) return;
       final children = raw
-          .map((m) => m is Map ? CloudFile.fromJson(Map<String, dynamic>.from(m)) : null)
+          .map(
+            (m) => m is Map
+                ? CloudFile.fromJson(Map<String, dynamic>.from(m))
+                : null,
+          )
           .whereType<CloudFile>()
           .where((f) => !ids.contains(f.id))
           .toList();
@@ -2373,27 +2384,31 @@ class MediaLibraryStore {
     if (normalized.isEmpty) return const [];
 
     // Phase 1: exact match on title or original_title.
-    final exactRows = await db.rawQuery('''
+    final exactRows = await db.rawQuery(
+      '''
       SELECT * FROM tmdb_works
       WHERE (LOWER(title) = ? OR LOWER(original_title) = ?)
       ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
       ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
       ORDER BY rating DESC NULLS LAST
       LIMIT ?
-    ''', [
-      normalized,
-      normalized,
-      if (mediaKind != null && mediaKind != 'automatic') mediaKind,
-      if (year != null) '$year',
-      limit,
-    ]);
+    ''',
+      [
+        normalized,
+        normalized,
+        if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+        if (year != null) '$year',
+        limit,
+      ],
+    );
     if (exactRows.isNotEmpty) {
       return exactRows.map((r) => TMDBWork.fromJson(r)).toList();
     }
 
     // Phase 2: fuzzy LIKE match.
     final likePattern = '%$normalized%';
-    final fuzzyRows = await db.rawQuery('''
+    final fuzzyRows = await db.rawQuery(
+      '''
       SELECT * FROM tmdb_works
       WHERE (LOWER(title) LIKE ? OR LOWER(original_title) LIKE ?)
       ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
@@ -2402,14 +2417,16 @@ class MediaLibraryStore {
         CASE WHEN LOWER(title) = ? THEN 0 ELSE 1 END,
         rating DESC NULLS LAST
       LIMIT ?
-    ''', [
-      likePattern,
-      likePattern,
-      if (mediaKind != null && mediaKind != 'automatic') mediaKind,
-      if (year != null) '$year',
-      normalized,
-      limit,
-    ]);
+    ''',
+      [
+        likePattern,
+        likePattern,
+        if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+        if (year != null) '$year',
+        normalized,
+        limit,
+      ],
+    );
     return fuzzyRows.map((r) => TMDBWork.fromJson(r)).toList();
   }
 
@@ -2426,24 +2443,27 @@ class MediaLibraryStore {
 
   Future<void> upsertTMDBWork(TMDBWork work) async {
     final db = await _db;
-    await db.rawInsert('''
+    await db.rawInsert(
+      '''
       INSERT OR REPLACE INTO tmdb_works
         (tmdb_id, title, original_title, media_kind, release_date,
          overview, poster_path, backdrop_path, rating, imdb_id, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', [
-      work.tmdbID,
-      work.title,
-      work.originalTitle,
-      work.mediaKind.name,
-      work.releaseDate,
-      work.overview,
-      work.posterPath,
-      work.backdropPath,
-      work.rating,
-      work.imdbID,
-      work.createdAt.millisecondsSinceEpoch / 1000.0,
-    ]);
+    ''',
+      [
+        work.tmdbID,
+        work.title,
+        work.originalTitle,
+        work.mediaKind.name,
+        work.releaseDate,
+        work.overview,
+        work.posterPath,
+        work.backdropPath,
+        work.rating,
+        work.imdbID,
+        work.createdAt.millisecondsSinceEpoch / 1000.0,
+      ],
+    );
   }
 
   Future<List<TMDBWork>> allTMDBWorks() async {
@@ -2460,24 +2480,27 @@ class MediaLibraryStore {
     await db.transaction((txn) async {
       final batch = txn.batch();
       for (final work in list) {
-        batch.rawInsert('''
+        batch.rawInsert(
+          '''
           INSERT OR REPLACE INTO tmdb_works
             (tmdb_id, title, original_title, media_kind, release_date,
              overview, poster_path, backdrop_path, rating, imdb_id, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', [
-          work.tmdbID,
-          work.title,
-          work.originalTitle,
-          work.mediaKind.name,
-          work.releaseDate,
-          work.overview,
-          work.posterPath,
-          work.backdropPath,
-          work.rating,
-          work.imdbID,
-          work.createdAt.millisecondsSinceEpoch / 1000.0,
-        ]);
+        ''',
+          [
+            work.tmdbID,
+            work.title,
+            work.originalTitle,
+            work.mediaKind.name,
+            work.releaseDate,
+            work.overview,
+            work.posterPath,
+            work.backdropPath,
+            work.rating,
+            work.imdbID,
+            work.createdAt.millisecondsSinceEpoch / 1000.0,
+          ],
+        );
       }
       await batch.commit(noResult: true);
     });
@@ -2515,26 +2538,30 @@ class MediaLibraryStore {
     final normalized = title.trim().toLowerCase();
     if (normalized.isEmpty) return const [];
 
-    final exactRows = await db.rawQuery('''
+    final exactRows = await db.rawQuery(
+      '''
       SELECT * FROM douban_works
       WHERE (LOWER(title) = ? OR LOWER(original_title) = ?)
       ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
       ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
       ORDER BY rating DESC NULLS LAST
       LIMIT ?
-    ''', [
-      normalized,
-      normalized,
-      if (mediaKind != null && mediaKind != 'automatic') mediaKind,
-      if (year != null) '$year',
-      limit,
-    ]);
+    ''',
+      [
+        normalized,
+        normalized,
+        if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+        if (year != null) '$year',
+        limit,
+      ],
+    );
     if (exactRows.isNotEmpty) {
       return exactRows.map((r) => DoubanWork.fromJson(r)).toList();
     }
 
     final likePattern = '%$normalized%';
-    final fuzzyRows = await db.rawQuery('''
+    final fuzzyRows = await db.rawQuery(
+      '''
       SELECT * FROM douban_works
       WHERE (LOWER(title) LIKE ? OR LOWER(original_title) LIKE ?)
       ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
@@ -2543,14 +2570,16 @@ class MediaLibraryStore {
         CASE WHEN LOWER(title) = ? THEN 0 ELSE 1 END,
         rating DESC NULLS LAST
       LIMIT ?
-    ''', [
-      likePattern,
-      likePattern,
-      if (mediaKind != null && mediaKind != 'automatic') mediaKind,
-      if (year != null) '$year',
-      normalized,
-      limit,
-    ]);
+    ''',
+      [
+        likePattern,
+        likePattern,
+        if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+        if (year != null) '$year',
+        normalized,
+        limit,
+      ],
+    );
     return fuzzyRows.map((r) => DoubanWork.fromJson(r)).toList();
   }
 
@@ -2567,22 +2596,25 @@ class MediaLibraryStore {
 
   Future<void> upsertDoubanWork(DoubanWork work) async {
     final db = await _db;
-    await db.rawInsert('''
+    await db.rawInsert(
+      '''
       INSERT OR REPLACE INTO douban_works
         (douban_id, title, original_title, media_kind, release_date,
          overview, poster_path, rating, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', [
-      work.doubanID,
-      work.title,
-      work.originalTitle,
-      work.mediaKind.name,
-      work.releaseDate,
-      work.overview,
-      work.posterPath,
-      work.rating,
-      work.createdAt.millisecondsSinceEpoch / 1000.0,
-    ]);
+    ''',
+      [
+        work.doubanID,
+        work.title,
+        work.originalTitle,
+        work.mediaKind.name,
+        work.releaseDate,
+        work.overview,
+        work.posterPath,
+        work.rating,
+        work.createdAt.millisecondsSinceEpoch / 1000.0,
+      ],
+    );
   }
 
   Future<List<DoubanWork>> allDoubanWorks() async {
@@ -2598,22 +2630,25 @@ class MediaLibraryStore {
     await db.transaction((txn) async {
       final batch = txn.batch();
       for (final work in list) {
-        batch.rawInsert('''
+        batch.rawInsert(
+          '''
           INSERT OR REPLACE INTO douban_works
             (douban_id, title, original_title, media_kind, release_date,
              overview, poster_path, rating, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', [
-          work.doubanID,
-          work.title,
-          work.originalTitle,
-          work.mediaKind.name,
-          work.releaseDate,
-          work.overview,
-          work.posterPath,
-          work.rating,
-          work.createdAt.millisecondsSinceEpoch / 1000.0,
-        ]);
+        ''',
+          [
+            work.doubanID,
+            work.title,
+            work.originalTitle,
+            work.mediaKind.name,
+            work.releaseDate,
+            work.overview,
+            work.posterPath,
+            work.rating,
+            work.createdAt.millisecondsSinceEpoch / 1000.0,
+          ],
+        );
       }
       await batch.commit(noResult: true);
     });
@@ -2621,9 +2656,10 @@ class MediaLibraryStore {
 
   /// Looks up many Douban works at once, keyed by `douban_id`.
   Future<Map<String, DoubanWork>> doubanWorksByIDs(Iterable<String> ids) async {
-    final unique = ids.where((id) => id.isNotEmpty).toSet().toList(
-      growable: false,
-    );
+    final unique = ids
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
     if (unique.isEmpty) return const {};
     final db = await _db;
     final result = <String, DoubanWork>{};
@@ -2696,11 +2732,13 @@ class MediaLibraryStore {
         if (douban != null && douban.trim().isNotEmpty) return douban;
         return fallback;
       }
+
       String? pickNullableText(String? tmdb, String? douban, String? fallback) {
         if (tmdb != null && tmdb.trim().isNotEmpty) return tmdb;
         if (douban != null && douban.trim().isNotEmpty) return douban;
         return fallback;
       }
+
       return item.copyWith(
         title: pickText(tmdbWork?.title, doubanWork?.title, item.title),
         originalTitle: pickText(
@@ -2708,9 +2746,8 @@ class MediaLibraryStore {
           doubanWork?.originalTitle,
           item.originalTitle,
         ),
-        mediaKind: tmdbWork?.mediaKind ??
-            doubanWork?.mediaKind ??
-            item.mediaKind,
+        mediaKind:
+            tmdbWork?.mediaKind ?? doubanWork?.mediaKind ?? item.mediaKind,
         releaseDate: pickText(
           tmdbWork?.releaseDate,
           doubanWork?.releaseDate,
@@ -2757,20 +2794,22 @@ class MediaLibraryStore {
       if (tmdbID == 0) continue;
       final existing = await tmdbWork(tmdbID);
       if (existing != null) continue;
-      await upsertTMDBWork(TMDBWork(
-        id: 0,
-        tmdbID: tmdbID,
-        title: row['title']?.toString() ?? '',
-        originalTitle: row['original_title']?.toString() ?? '',
-        mediaKind: _parseMediaKindStr(row['media_kind']?.toString()),
-        releaseDate: row['release_date']?.toString() ?? '',
-        overview: row['overview']?.toString() ?? '',
-        posterPath: row['poster_path']?.toString(),
-        backdropPath: row['backdrop_path']?.toString(),
-        rating: row['tmdb_rating'] as double?,
-        imdbID: row['imdb_id']?.toString(),
-        createdAt: DateTime.now(),
-      ));
+      await upsertTMDBWork(
+        TMDBWork(
+          id: 0,
+          tmdbID: tmdbID,
+          title: row['title']?.toString() ?? '',
+          originalTitle: row['original_title']?.toString() ?? '',
+          mediaKind: _parseMediaKindStr(row['media_kind']?.toString()),
+          releaseDate: row['release_date']?.toString() ?? '',
+          overview: row['overview']?.toString() ?? '',
+          posterPath: row['poster_path']?.toString(),
+          backdropPath: row['backdrop_path']?.toString(),
+          rating: row['tmdb_rating'] as double?,
+          imdbID: row['imdb_id']?.toString(),
+          createdAt: DateTime.now(),
+        ),
+      );
       migrated += 1;
     }
 
@@ -2786,18 +2825,20 @@ class MediaLibraryStore {
       if (doubanID.isEmpty) continue;
       final existing = await doubanWork(doubanID);
       if (existing != null) continue;
-      await upsertDoubanWork(DoubanWork(
-        id: 0,
-        doubanID: doubanID,
-        title: row['title']?.toString() ?? '',
-        originalTitle: row['original_title']?.toString() ?? '',
-        mediaKind: _parseMediaKindStr(row['media_kind']?.toString()),
-        releaseDate: row['release_date']?.toString() ?? '',
-        overview: row['overview']?.toString() ?? '',
-        posterPath: row['poster_path']?.toString(),
-        rating: row['douban_rating'] as double?,
-        createdAt: DateTime.now(),
-      ));
+      await upsertDoubanWork(
+        DoubanWork(
+          id: 0,
+          doubanID: doubanID,
+          title: row['title']?.toString() ?? '',
+          originalTitle: row['original_title']?.toString() ?? '',
+          mediaKind: _parseMediaKindStr(row['media_kind']?.toString()),
+          releaseDate: row['release_date']?.toString() ?? '',
+          overview: row['overview']?.toString() ?? '',
+          posterPath: row['poster_path']?.toString(),
+          rating: row['douban_rating'] as double?,
+          createdAt: DateTime.now(),
+        ),
+      );
       migrated += 1;
     }
 
