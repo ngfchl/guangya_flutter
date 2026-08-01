@@ -23,18 +23,27 @@ class OrganizeState {
     this.progressMessage = '',
   });
 
-  int get moveCount =>
-      actions.where((a) => a.type == OrganizeActionType.moveToBase).length;
-  int get deleteCount =>
-      actions.where((a) => a.type == OrganizeActionType.deleteDuplicate).length;
-  int get renameCount => actions
-      .where((a) =>
-  a.type == OrganizeActionType.renameConflict ||
-      a.type == OrganizeActionType.renameBase)
+  int get moveCount => actions
+      .where((a) => a.selected && a.type == OrganizeActionType.moveToBase)
       .length;
-  int get cleanCount =>
-      actions.where((a) => a.type == OrganizeActionType.cleanDir).length;
+  int get deleteCount => actions
+      .where((a) => a.selected && a.type == OrganizeActionType.deleteDuplicate)
+      .length;
+  int get renameCount => actions
+      .where(
+        (a) =>
+            a.selected &&
+            (a.type == OrganizeActionType.renameConflict ||
+                a.type == OrganizeActionType.renameBase),
+      )
+      .length;
+  int get cleanCount => actions
+      .where((a) => a.selected && a.type == OrganizeActionType.cleanDir)
+      .length;
   int get totalAffected => moveCount + deleteCount + renameCount;
+  int get selectedCount => actions.where((a) => a.selected).length;
+  bool get allSelected =>
+      actions.isNotEmpty && actions.every((a) => a.selected);
 
   OrganizeState copyWith({
     OrganizePhase? phase,
@@ -47,8 +56,9 @@ class OrganizeState {
       phase: phase ?? this.phase,
       actions: actions ?? this.actions,
       logs: logs ?? this.logs,
-      progressMessage:
-      clearProgress ? '' : (progressMessage ?? this.progressMessage),
+      progressMessage: clearProgress
+          ? ''
+          : (progressMessage ?? this.progressMessage),
     );
   }
 }
@@ -97,7 +107,9 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
       // ── 2. 构建路径映射 (BFS，仅用于日志显示) ──
       final effectiveRoot = rootPath.isEmpty ? '根目录' : rootPath;
       final pathMap = _buildPathMap(snapshots, rootId, effectiveRoot);
-      _scopedFolderKeys = rootId.isEmpty ? null : pathMap.keys.map(_folderKey).toSet();
+      _scopedFolderKeys = rootId.isEmpty
+          ? null
+          : pathMap.keys.map(_folderKey).toSet();
       _log('已构建 ${pathMap.length} 条路径');
 
       // ── 3. 扫描所有目录，识别重复组 ──
@@ -169,8 +181,9 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
             }
             if (hasBase) {
               try {
-                final base =
-                children.firstWhere((c) => c.name == baseName && !c.isDirectory);
+                final base = children.firstWhere(
+                  (c) => c.name == baseName && !c.isDirectory,
+                );
                 dupFileIds.add(base.id);
               } catch (_) {}
             }
@@ -187,7 +200,8 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
         for (final groupEntry in folderEntry.value.entries) {
           final baseName = groupEntry.key; // "Photos"
           final dups = groupEntry.value;
-          final hasBase = childNameSet.contains(baseName) &&
+          final hasBase =
+              childNameSet.contains(baseName) &&
               children.any((c) => c.name == baseName && c.isDirectory);
 
           if (dups.length > 1 || (dups.isNotEmpty && hasBase)) {
@@ -200,7 +214,8 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
                   break;
                 }
               }
-              if (base != null) _collectDirectoryFileIDs(snapshots, base.id, dupFileIds);
+              if (base != null)
+                _collectDirectoryFileIDs(snapshots, base.id, dupFileIds);
             }
             for (final dup in dups) {
               _collectDirectoryFileIDs(snapshots, dup.id, dupFileIds);
@@ -268,8 +283,9 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
 
       _log('扫描完成: ${state.actions.length} 项操作');
       state = state.copyWith(
-        phase:
-        state.actions.isEmpty ? OrganizePhase.idle : OrganizePhase.preview,
+        phase: state.actions.isEmpty
+            ? OrganizePhase.idle
+            : OrganizePhase.preview,
       );
     } catch (e, st) {
       _log('扫描出错: $e');
@@ -281,37 +297,60 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   Future<void> execute() async {
     if (_api == null || state.actions.isEmpty) return;
     _cancelled = false;
+    final actions = state.actions.where((a) => a.selected).toList();
+    if (actions.isEmpty) return;
     state = state.copyWith(phase: OrganizePhase.executing);
 
     _log('开始执行...');
-    final actions = List<OrganizeAction>.from(state.actions);
     final total = actions.length;
+    final regularActions = actions
+        .where((action) => action.type != OrganizeActionType.cleanDir)
+        .toList(growable: false);
+    final cleanupActions = actions
+        .where((action) => action.type == OrganizeActionType.cleanDir)
+        .toList(growable: false);
+    var completed = 0;
 
-    const concurrency = 6;
-    var nextIndex = 0;
+    Future<void> runActions(
+      List<OrganizeAction> pending, {
+      required int concurrency,
+    }) async {
+      var nextIndex = 0;
 
-    Future<void> worker() async {
-      while (true) {
-        if (_cancelled) return;
-        final index = nextIndex++;
-        if (index >= total) return;
-        final action = actions[index];
-        state = state.copyWith(
-          progressMessage: '[${index + 1}/$total] ${action.sourceName}',
-        );
-        try {
-          await _executeAction(action);
-          action.executed = true;
-        } catch (e) {
-          action.failed = true;
-          action.errorMessage = e.toString();
-          _log('  失败: ${action.sourceName} — $e');
+      Future<void> worker() async {
+        while (true) {
+          if (_cancelled) return;
+          final index = nextIndex++;
+          if (index >= pending.length) return;
+          final action = pending[index];
+          state = state.copyWith(
+            progressMessage: '[${completed + 1}/$total] ${action.sourceName}',
+          );
+          try {
+            await _executeAction(action);
+            action.executed = true;
+          } catch (e) {
+            action.failed = true;
+            action.errorMessage = e.toString();
+            _log('  失败: ${action.sourceName} — $e');
+          }
+          completed += 1;
+          state = state.copyWith(actions: List.from(state.actions));
         }
-        state = state.copyWith(actions: List.from(actions));
       }
+
+      await Future.wait(
+        List.generate(concurrency.clamp(1, pending.length), (_) => worker()),
+      );
     }
 
-    await Future.wait(List.generate(concurrency, (_) => worker()));
+    if (regularActions.isNotEmpty) {
+      await runActions(regularActions, concurrency: 6);
+    }
+    if (!_cancelled && cleanupActions.isNotEmpty) {
+      _log('开始按顺序清理合并后的空目录...');
+      await runActions(cleanupActions, concurrency: 1);
+    }
 
     final ok = actions.where((a) => a.executed && !a.failed).length;
     _log('执行完成: $ok/$total 成功');
@@ -319,6 +358,56 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   }
 
   void cancel() => _cancelled = true;
+
+  void toggleAction(int index) {
+    if (index < 0 || index >= state.actions.length) return;
+    final actions = List<OrganizeAction>.from(state.actions);
+    final action = actions[index];
+    actions[index] = OrganizeAction(
+      type: action.type,
+      sourceId: action.sourceId,
+      sourceName: action.sourceName,
+      sourceIsDir: action.sourceIsDir,
+      sourceParentId: action.sourceParentId,
+      sourcePath: action.sourcePath,
+      newFileName: action.newFileName,
+      targetParentId: action.targetParentId,
+      targetParentName: action.targetParentName,
+      targetPath: action.targetPath,
+      reason: action.reason,
+      executed: action.executed,
+      failed: action.failed,
+      selected: !action.selected,
+      errorMessage: action.errorMessage,
+    );
+    state = state.copyWith(actions: actions);
+  }
+
+  void setAllSelected(bool selected) {
+    if (state.actions.isEmpty) return;
+    final actions = List<OrganizeAction>.from(state.actions);
+    for (var i = 0; i < actions.length; i++) {
+      final a = actions[i];
+      actions[i] = OrganizeAction(
+        type: a.type,
+        sourceId: a.sourceId,
+        sourceName: a.sourceName,
+        sourceIsDir: a.sourceIsDir,
+        sourceParentId: a.sourceParentId,
+        sourcePath: a.sourcePath,
+        newFileName: a.newFileName,
+        targetParentId: a.targetParentId,
+        targetParentName: a.targetParentName,
+        targetPath: a.targetPath,
+        reason: a.reason,
+        executed: a.executed,
+        failed: a.failed,
+        selected: selected,
+        errorMessage: a.errorMessage,
+      );
+    }
+    state = state.copyWith(actions: actions);
+  }
 
   void reset() {
     _cancelled = true;
@@ -333,10 +422,10 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   // ═══════════════════════════════════════════════════
 
   Map<String, String> _buildPathMap(
-      Map<String?, List<CloudFile>> snapshots,
-      String rootId,
-      String rootPath,
-      ) {
+    Map<String?, List<CloudFile>> snapshots,
+    String rootId,
+    String rootPath,
+  ) {
     final pathMap = <String, String>{};
     final queue = <(String?, String)>[];
     final visited = <String?>{};
@@ -383,23 +472,26 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   // ═══════════════════════════════════════════════════
 
   void _processFileGroup(
-      String baseName, // "report.pdf"
-      List<CloudFile> dups,
-      List<CloudFile> allChildren,
-      String parentId,
-      String currentPath,
-      ) {
+    String baseName, // "report.pdf"
+    List<CloudFile> dups,
+    List<CloudFile> allChildren,
+    String parentId,
+    String currentPath,
+  ) {
     // 过滤掉不属于当前扫描范围的
     if (!_inScope(parentId)) return;
 
-    dups.sort((a, b) =>
-        _parseDup(a.name, false)!.number.compareTo(
-            _parseDup(b.name, false)!.number));
+    dups.sort(
+      (a, b) => _parseDup(
+        a.name,
+        false,
+      )!.number.compareTo(_parseDup(b.name, false)!.number),
+    );
 
     CloudFile? baseFile;
     try {
       baseFile = allChildren.firstWhere(
-            (f) => f.name == baseName && !f.isDirectory,
+        (f) => f.name == baseName && !f.isDirectory,
       );
     } catch (_) {}
 
@@ -409,17 +501,19 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
       if (dups.length < 2) return; // 只有一个 dup 且无原始 → 跳过
       // 没有原始文件，第一个 dup 当基准
       final first = dups.first;
-      _addAction(OrganizeAction(
-        type: OrganizeActionType.renameBase,
-        sourceId: first.id,
-        sourceName: first.name,
-        sourceIsDir: false,
-        sourceParentId: parentId,
-        sourcePath: _joinPath(currentPath, first.name),
-        newFileName: baseName,
-        targetPath: _joinPath(currentPath, baseName),
-        reason: '$currentPath/${first.name} → $baseName（原始文件不存在）',
-      ));
+      _addAction(
+        OrganizeAction(
+          type: OrganizeActionType.renameBase,
+          sourceId: first.id,
+          sourceName: first.name,
+          sourceIsDir: false,
+          sourceParentId: parentId,
+          sourcePath: _joinPath(currentPath, first.name),
+          newFileName: baseName,
+          targetPath: _joinPath(currentPath, baseName),
+          reason: '$currentPath/${first.name} → $baseName（原始文件不存在）',
+        ),
+      );
       baseFile = first;
       remaining = dups.sublist(1);
     } else {
@@ -434,49 +528,56 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
       final gcidB = _gcidByFileId[dup.id];
 
       if (gcidA != null && gcidB != null && gcidA == gcidB) {
-        _addAction(OrganizeAction(
-          type: OrganizeActionType.deleteDuplicate,
-          sourceId: dup.id,
-          sourceName: dup.name,
-          sourceIsDir: false,
-          sourceParentId: parentId,
-          sourcePath: _joinPath(currentPath, dup.name),
-          targetPath: '回收站',
-          reason: '$currentPath/${dup.name} — GCID 相同，移入回收站',
-        ));
+        _addAction(
+          OrganizeAction(
+            type: OrganizeActionType.deleteDuplicate,
+            sourceId: dup.id,
+            sourceName: dup.name,
+            sourceIsDir: false,
+            sourceParentId: parentId,
+            sourcePath: _joinPath(currentPath, dup.name),
+            targetPath: '回收站',
+            reason: '$currentPath/${dup.name} — GCID 相同，移入回收站',
+          ),
+        );
       } else {
         final ext = _ext(dup.name);
         final base = _base(dup.name);
         final dupNum = _dupNumber(dup.name);
         final baseNum = _dupNumber(baseFile.name);
-        final sameNumber = dupNum != null && baseNum != null && dupNum == baseNum;
+        final sameNumber =
+            dupNum != null && baseNum != null && dupNum == baseNum;
         if (sameNumber) {
           final newName = _uniqueName(base, ext, usedNames);
           usedNames.add(newName);
           final note = (gcidA == null || gcidB == null) ? 'GCID 缺失' : 'GCID 不同';
-          _addAction(OrganizeAction(
-            type: OrganizeActionType.renameConflict,
-            sourceId: dup.id,
-            sourceName: dup.name,
-            sourceIsDir: false,
-            sourceParentId: parentId,
-            sourcePath: _joinPath(currentPath, dup.name),
-            newFileName: newName,
-            targetPath: _joinPath(currentPath, newName),
-            reason: '$currentPath/${dup.name} — $note，重命名为 $newName',
-          ));
+          _addAction(
+            OrganizeAction(
+              type: OrganizeActionType.renameConflict,
+              sourceId: dup.id,
+              sourceName: dup.name,
+              sourceIsDir: false,
+              sourceParentId: parentId,
+              sourcePath: _joinPath(currentPath, dup.name),
+              newFileName: newName,
+              targetPath: _joinPath(currentPath, newName),
+              reason: '$currentPath/${dup.name} — $note，重命名为 $newName',
+            ),
+          );
         } else {
-          _addAction(OrganizeAction(
-            type: OrganizeActionType.moveToBase,
-            sourceId: dup.id,
-            sourceName: dup.name,
-            sourceIsDir: false,
-            sourceParentId: parentId,
-            sourcePath: _joinPath(currentPath, dup.name),
-            targetParentId: parentId,
-            targetPath: _joinPath(currentPath, dup.name),
-            reason: '$currentPath/${dup.name} — 编号不同或缺失，仅移动不重命名',
-          ));
+          _addAction(
+            OrganizeAction(
+              type: OrganizeActionType.moveToBase,
+              sourceId: dup.id,
+              sourceName: dup.name,
+              sourceIsDir: false,
+              sourceParentId: parentId,
+              sourcePath: _joinPath(currentPath, dup.name),
+              targetParentId: parentId,
+              targetPath: _joinPath(currentPath, dup.name),
+              reason: '$currentPath/${dup.name} — 编号不同或缺失，仅移动不重命名',
+            ),
+          );
         }
       }
     }
@@ -487,24 +588,27 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   // ═══════════════════════════════════════════════════
 
   void _processDirGroup(
-      String baseName,
-      List<CloudFile> dups,
-      List<CloudFile> allChildren,
-      String parentId,
-      String currentPath,
-      Map<String?, List<CloudFile>> snapshots,
-      Map<String, String> pathMap,
-      ) {
+    String baseName,
+    List<CloudFile> dups,
+    List<CloudFile> allChildren,
+    String parentId,
+    String currentPath,
+    Map<String?, List<CloudFile>> snapshots,
+    Map<String, String> pathMap,
+  ) {
     if (!_inScope(parentId)) return;
 
-    dups.sort((a, b) =>
-        _parseDup(a.name, true)!.number.compareTo(
-            _parseDup(b.name, true)!.number));
+    dups.sort(
+      (a, b) => _parseDup(
+        a.name,
+        true,
+      )!.number.compareTo(_parseDup(b.name, true)!.number),
+    );
 
     CloudFile? baseDir;
     try {
       baseDir = allChildren.firstWhere(
-            (f) => f.name == baseName && f.isDirectory,
+        (f) => f.name == baseName && f.isDirectory,
       );
     } catch (_) {}
 
@@ -513,17 +617,19 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
     if (baseDir == null) {
       if (dups.length < 2) return;
       final first = dups.first;
-      _addAction(OrganizeAction(
-        type: OrganizeActionType.renameBase,
-        sourceId: first.id,
-        sourceName: first.name,
-        sourceIsDir: true,
-        sourceParentId: parentId,
-        sourcePath: _joinPath(currentPath, first.name),
-        newFileName: baseName,
-        targetPath: _joinPath(currentPath, baseName),
-        reason: '$currentPath/${first.name} → $baseName（原始目录不存在）',
-      ));
+      _addAction(
+        OrganizeAction(
+          type: OrganizeActionType.renameBase,
+          sourceId: first.id,
+          sourceName: first.name,
+          sourceIsDir: true,
+          sourceParentId: parentId,
+          sourcePath: _joinPath(currentPath, first.name),
+          newFileName: baseName,
+          targetPath: _joinPath(currentPath, baseName),
+          reason: '$currentPath/${first.name} → $baseName（原始目录不存在）',
+        ),
+      );
       baseDir = first;
       remaining = dups.sublist(1);
     } else {
@@ -544,28 +650,30 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   }
 
   void _mergeDirRecursive(
-      CloudFile baseDir,
-      CloudFile dupDir,
-      Map<String?, List<CloudFile>> snapshots,
-      Map<String, String> pathMap,
-      String basePath,
-      ) {
+    CloudFile baseDir,
+    CloudFile dupDir,
+    Map<String?, List<CloudFile>> snapshots,
+    Map<String, String> pathMap,
+    String basePath,
+  ) {
     final dupPath = _displayPath(dupDir.id, pathMap);
 
     final baseChildren = snapshots[baseDir.id] ?? [];
     final dupChildren = snapshots[dupDir.id] ?? [];
 
     if (dupChildren.isEmpty) {
-      _addAction(OrganizeAction(
-        type: OrganizeActionType.cleanDir,
-        sourceId: dupDir.id,
-        sourceName: dupDir.name,
-        sourceIsDir: true,
-        sourceParentId: dupDir.parentID ?? '',
-        sourcePath: dupPath,
-        targetPath: '清理空目录',
-        reason: '$dupPath/ 为空，直接清理',
-      ));
+      _addAction(
+        OrganizeAction(
+          type: OrganizeActionType.cleanDir,
+          sourceId: dupDir.id,
+          sourceName: dupDir.name,
+          sourceIsDir: true,
+          sourceParentId: dupDir.parentID ?? '',
+          sourcePath: dupPath,
+          targetPath: '清理空目录',
+          reason: '$dupPath/ 为空，直接清理',
+        ),
+      );
       return;
     }
 
@@ -579,18 +687,20 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
       final existing = baseByName[dupChild.name];
 
       if (existing == null) {
-        _addAction(OrganizeAction(
-          type: OrganizeActionType.moveToBase,
-          sourceId: dupChild.id,
-          sourceName: dupChild.name,
-          sourceIsDir: dupChild.isDirectory,
-          sourceParentId: dupDir.id,
-          sourcePath: _joinPath(dupPath, dupChild.name),
-          targetParentId: baseDir.id,
-          targetParentName: basePath,
-          targetPath: _joinPath(basePath, dupChild.name),
-          reason: '$dupPath/${dupChild.name} → $basePath/',
-        ));
+        _addAction(
+          OrganizeAction(
+            type: OrganizeActionType.moveToBase,
+            sourceId: dupChild.id,
+            sourceName: dupChild.name,
+            sourceIsDir: dupChild.isDirectory,
+            sourceParentId: dupDir.id,
+            sourcePath: _joinPath(dupPath, dupChild.name),
+            targetParentId: baseDir.id,
+            targetParentName: basePath,
+            targetPath: _joinPath(basePath, dupChild.name),
+            reason: '$dupPath/${dupChild.name} → $basePath/',
+          ),
+        );
       } else if (dupChild.isDirectory && existing.isDirectory) {
         _mergeDirRecursive(
           existing,
@@ -604,86 +714,102 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
         final gcidB = _gcidByFileId[dupChild.id];
 
         if (gcidA != null && gcidB != null && gcidA == gcidB) {
-          _addAction(OrganizeAction(
-            type: OrganizeActionType.deleteDuplicate,
-            sourceId: dupChild.id,
-            sourceName: dupChild.name,
-            sourceIsDir: false,
-            sourceParentId: dupDir.id,
-            sourcePath: _joinPath(dupPath, dupChild.name),
-            targetPath: '回收站',
-            reason: '$dupPath/${dupChild.name} — 与 $basePath/${dupChild.name} GCID 相同',
-          ));
+          _addAction(
+            OrganizeAction(
+              type: OrganizeActionType.deleteDuplicate,
+              sourceId: dupChild.id,
+              sourceName: dupChild.name,
+              sourceIsDir: false,
+              sourceParentId: dupDir.id,
+              sourcePath: _joinPath(dupPath, dupChild.name),
+              targetPath: '回收站',
+              reason:
+                  '$dupPath/${dupChild.name} — 与 $basePath/${dupChild.name} GCID 相同',
+            ),
+          );
         } else {
           final ext = _ext(dupChild.name);
           final nameBase = _base(dupChild.name);
           final dupNum = _dupNumber(dupChild.name);
           final baseNum = _dupNumber(existing.name);
-          final sameNumber = dupNum != null && baseNum != null && dupNum == baseNum;
+          final sameNumber =
+              dupNum != null && baseNum != null && dupNum == baseNum;
           if (sameNumber) {
             final newName = _uniqueName(nameBase, ext, usedNames);
             usedNames.add(newName);
-            final note = (gcidA == null || gcidB == null) ? 'GCID 缺失' : 'GCID 不同';
-            _addAction(OrganizeAction(
-              type: OrganizeActionType.renameConflict,
-              sourceId: dupChild.id,
-              sourceName: dupChild.name,
-              sourceIsDir: false,
-              sourceParentId: dupDir.id,
-              sourcePath: _joinPath(dupPath, dupChild.name),
-              targetParentId: baseDir.id,
-              targetParentName: basePath,
-              newFileName: newName,
-              targetPath: _joinPath(basePath, newName),
-              reason: '$dupPath/${dupChild.name} — $note，重命名为 $newName 后移入 $basePath/',
-            ));
+            final note = (gcidA == null || gcidB == null)
+                ? 'GCID 缺失'
+                : 'GCID 不同';
+            _addAction(
+              OrganizeAction(
+                type: OrganizeActionType.renameConflict,
+                sourceId: dupChild.id,
+                sourceName: dupChild.name,
+                sourceIsDir: false,
+                sourceParentId: dupDir.id,
+                sourcePath: _joinPath(dupPath, dupChild.name),
+                targetParentId: baseDir.id,
+                targetParentName: basePath,
+                newFileName: newName,
+                targetPath: _joinPath(basePath, newName),
+                reason:
+                    '$dupPath/${dupChild.name} — $note，重命名为 $newName 后移入 $basePath/',
+              ),
+            );
           } else {
-            _addAction(OrganizeAction(
-              type: OrganizeActionType.moveToBase,
-              sourceId: dupChild.id,
-              sourceName: dupChild.name,
-              sourceIsDir: false,
-              sourceParentId: dupDir.id,
-              sourcePath: _joinPath(dupPath, dupChild.name),
-              targetParentId: baseDir.id,
-              targetParentName: basePath,
-              targetPath: _joinPath(basePath, dupChild.name),
-              reason: '$dupPath/${dupChild.name} — 编号不同或缺失，仅移动不重命名',
-            ));
+            _addAction(
+              OrganizeAction(
+                type: OrganizeActionType.moveToBase,
+                sourceId: dupChild.id,
+                sourceName: dupChild.name,
+                sourceIsDir: false,
+                sourceParentId: dupDir.id,
+                sourcePath: _joinPath(dupPath, dupChild.name),
+                targetParentId: baseDir.id,
+                targetParentName: basePath,
+                targetPath: _joinPath(basePath, dupChild.name),
+                reason: '$dupPath/${dupChild.name} — 编号不同或缺失，仅移动不重命名',
+              ),
+            );
           }
         }
       } else {
         final ext = dupChild.isDirectory ? '' : _ext(dupChild.name);
-        final nameBase =
-        dupChild.isDirectory ? dupChild.name : _base(dupChild.name);
+        final nameBase = dupChild.isDirectory
+            ? dupChild.name
+            : _base(dupChild.name);
         final suffix = dupChild.isDirectory ? '__dup_dir' : '__dup_file';
         final newName = '$nameBase$suffix$ext';
-        _addAction(OrganizeAction(
-          type: OrganizeActionType.renameConflict,
-          sourceId: dupChild.id,
-          sourceName: dupChild.name,
-          sourceIsDir: dupChild.isDirectory,
-          sourceParentId: dupDir.id,
-          sourcePath: _joinPath(dupPath, dupChild.name),
-          targetParentId: baseDir.id,
-          targetParentName: basePath,
-          newFileName: newName,
-          targetPath: _joinPath(basePath, newName),
-          reason: '$dupPath/${dupChild.name} — 类型冲突，重命名为 $newName',
-        ));
+        _addAction(
+          OrganizeAction(
+            type: OrganizeActionType.renameConflict,
+            sourceId: dupChild.id,
+            sourceName: dupChild.name,
+            sourceIsDir: dupChild.isDirectory,
+            sourceParentId: dupDir.id,
+            sourcePath: _joinPath(dupPath, dupChild.name),
+            targetParentId: baseDir.id,
+            targetParentName: basePath,
+            newFileName: newName,
+            targetPath: _joinPath(basePath, newName),
+            reason: '$dupPath/${dupChild.name} — 类型冲突，重命名为 $newName',
+          ),
+        );
       }
     }
 
-    _addAction(OrganizeAction(
-      type: OrganizeActionType.cleanDir,
-      sourceId: dupDir.id,
-      sourceName: dupDir.name,
-      sourceIsDir: true,
-      sourceParentId: dupDir.parentID ?? '',
-      sourcePath: dupPath,
-      targetPath: '清理空目录',
-      reason: '$dupPath/ 合并完成，清理空目录',
-    ));
+    _addAction(
+      OrganizeAction(
+        type: OrganizeActionType.cleanDir,
+        sourceId: dupDir.id,
+        sourceName: dupDir.name,
+        sourceIsDir: true,
+        sourceParentId: dupDir.parentID ?? '',
+        sourcePath: dupPath,
+        targetPath: '清理空目录',
+        reason: '$dupPath/ 合并完成，清理空目录',
+      ),
+    );
   }
 
   void _collectDirectoryFileIDs(
@@ -747,8 +873,12 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
         await _syncRenameCache(action);
         if (action.targetParentId != null &&
             !_sameParent(action.sourceParentId, action.targetParentId)) {
-          _log('  移入: ${action.newFileName} → ${action.targetParentName ?? ""}/');
-          await _api!.fsMove([action.sourceId], parentID: action.targetParentId);
+          _log(
+            '  移入: ${action.newFileName} → ${action.targetParentName ?? ""}/',
+          );
+          await _api!.fsMove([
+            action.sourceId,
+          ], parentID: action.targetParentId);
           await _syncMoveCache(action);
         }
         break;
@@ -772,13 +902,18 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
     final file = _fileById[action.sourceId];
     final sourceParentID = _cacheParentID(action.sourceParentId);
     if (file == null || action.newFileName == null) {
-      await FileMetadataCache.updateFolderChildren(sourceParentID, invalidate: true);
+      await FileMetadataCache.updateFolderChildren(
+        sourceParentID,
+        invalidate: true,
+      );
       return;
     }
     final renamed = file.copyWith(name: action.newFileName);
     _fileById[action.sourceId] = renamed;
-    await FileMetadataCache.updateFolderChildren(sourceParentID, addOrReplace: [renamed]);
-    await FileMetadataCache.cacheFiles([renamed]);
+    await FileMetadataCache.updateFolderChildren(
+      sourceParentID,
+      addOrReplace: [renamed],
+    );
   }
 
   Future<void> _syncMoveCache(OrganizeAction action) async {
@@ -786,24 +921,36 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
     final sourceParentID = _cacheParentID(action.sourceParentId);
     final targetParentID = _cacheParentID(action.targetParentId);
     if (file == null || action.targetParentId == null) {
-      await FileMetadataCache.updateFolderChildren(sourceParentID, invalidate: true);
+      await FileMetadataCache.updateFolderChildren(
+        sourceParentID,
+        invalidate: true,
+      );
       if (targetParentID != null) {
-        await FileMetadataCache.updateFolderChildren(targetParentID, invalidate: true);
+        await FileMetadataCache.updateFolderChildren(
+          targetParentID,
+          invalidate: true,
+        );
       }
       return;
     }
     final moved = file.copyWith(parentID: targetParentID);
     _fileById[action.sourceId] = moved;
-    await FileMetadataCache.updateFolderChildren(sourceParentID, removeIDs: [action.sourceId]);
-    await FileMetadataCache.updateFolderChildren(targetParentID, addOrReplace: [moved]);
+    await FileMetadataCache.updateFolderChildren(
+      sourceParentID,
+      removeIDs: [action.sourceId],
+    );
+    await FileMetadataCache.updateFolderChildren(
+      targetParentID,
+      addOrReplace: [moved],
+    );
   }
 
   Future<void> _syncDeleteCache(OrganizeAction action) async {
     final sourceParentID = _cacheParentID(action.sourceParentId);
     _fileById.remove(action.sourceId);
-    await FileMetadataCache.removeFilesFromAllFolders([action.sourceId]);
-    await FileMetadataCache.removeLiveFileIDs([action.sourceId]);
-    await FileMetadataCache.updateFolderChildren(sourceParentID, removeIDs: [action.sourceId]);
+    await FileMetadataCache.removeFilesAllFoldersAndUpdateParent([
+      action.sourceId,
+    ], sourceParentID);
   }
 
   String? _cacheParentID(String? value) {
@@ -836,9 +983,9 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   }
 
   ({String baseName, int number, String extension})? _parseDup(
-      String name,
-      bool isDirectory,
-      ) {
+    String name,
+    bool isDirectory,
+  ) {
     String namePart;
     String extPart;
 
@@ -862,11 +1009,7 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
     if (baseName.isEmpty) return null;
     final number = int.parse(m.group(2)!);
     if (number < 1 || number > 999) return null;
-    return (
-      baseName: baseName,
-      number: number,
-      extension: extPart,
-    );
+    return (baseName: baseName, number: number, extension: extPart);
   }
 
   String _ext(String name) {
@@ -896,7 +1039,6 @@ class OrganizeNotifier extends StateNotifier<OrganizeState> {
   }
 }
 
-final organizeProvider =
-StateNotifierProvider<OrganizeNotifier, OrganizeState>(
-      (ref) => OrganizeNotifier(),
+final organizeProvider = StateNotifierProvider<OrganizeNotifier, OrganizeState>(
+  (ref) => OrganizeNotifier(),
 );

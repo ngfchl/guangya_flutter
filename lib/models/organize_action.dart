@@ -21,6 +21,7 @@ class OrganizeAction {
 
   bool executed;
   bool failed;
+  bool selected;
   String? errorMessage;
 
   OrganizeAction({
@@ -37,6 +38,7 @@ class OrganizeAction {
     required this.reason,
     this.executed = false,
     this.failed = false,
+    this.selected = true,
     this.errorMessage,
   });
 }

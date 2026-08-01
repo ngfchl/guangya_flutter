@@ -55,9 +55,7 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
 
   String get _parentId {
     final fileState = ref.read(fileProvider);
-    return fileState.folderPath.isNotEmpty
-        ? fileState.folderPath.last.id
-        : '';
+    return fileState.folderPath.isNotEmpty ? fileState.folderPath.last.id : '';
   }
 
   String get _parentPath {
@@ -69,11 +67,11 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
   // ── 头部 ──
 
   Widget _buildHeader(
-      BuildContext context,
-      ColorScheme cs,
-      TextTheme tt,
-      OrganizeState state,
-      ) {
+    BuildContext context,
+    ColorScheme cs,
+    TextTheme tt,
+    OrganizeState state,
+  ) {
     final notifier = ref.read(organizeProvider.notifier);
 
     return Container(
@@ -95,14 +93,20 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
                     style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                   )
                 else if (state.phase == OrganizePhase.scanning)
-                  Text('正在扫描...', style: tt.bodySmall?.copyWith(color: cs.primary))
+                  Text(
+                    '正在扫描...',
+                    style: tt.bodySmall?.copyWith(color: cs.primary),
+                  )
                 else if (state.phase == OrganizePhase.executing)
-                    Text('正在执行...', style: tt.bodySmall?.copyWith(color: cs.primary))
-                  else
-                    Text(
-                      'GCID 相同 → 删除副本  ·  GCID 不同 → 保留两份',
-                      style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                    ),
+                  Text(
+                    '正在执行...',
+                    style: tt.bodySmall?.copyWith(color: cs.primary),
+                  )
+                else
+                  Text(
+                    'GCID 相同 → 删除副本  ·  GCID 不同 → 保留两份',
+                    style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                  ),
               ],
             ),
           ),
@@ -119,8 +123,7 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
             ),
 
           // ── 日志阶段：复制全部按钮 ──
-          if (state.phase == OrganizePhase.preview &&
-              state.actions.isNotEmpty)
+          if (state.phase == OrganizePhase.preview && state.actions.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.copy_all, size: 20),
               tooltip: '复制扫描结果',
@@ -165,10 +168,7 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
   void _copyLogs(BuildContext context, List<String> logs) {
     Clipboard.setData(ClipboardData(text: logs.join('\n')));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('已复制扫描日志'),
-        duration: Duration(seconds: 2),
-      ),
+      const SnackBar(content: Text('已复制扫描日志'), duration: Duration(seconds: 2)),
     );
   }
 
@@ -184,28 +184,26 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
       return '[$prefix] ${a.sourceName} — ${a.reason}';
     }).toList();
 
-    final summary = '移动: ${state.moveCount}  '
+    final summary =
+        '移动: ${state.moveCount}  '
         '重命名: ${state.renameCount}  '
         '删除: ${state.deleteCount}  '
         '清理: ${state.cleanCount}';
 
     Clipboard.setData(ClipboardData(text: '$summary\n\n${lines.join('\n')}'));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('已复制扫描结果'),
-        duration: Duration(seconds: 2),
-      ),
+      const SnackBar(content: Text('已复制扫描结果'), duration: Duration(seconds: 2)),
     );
   }
 
   // ── 统计 ──
 
   Widget _buildStats(
-      BuildContext context,
-      ColorScheme cs,
-      TextTheme tt,
-      OrganizeState state,
-      ) {
+    BuildContext context,
+    ColorScheme cs,
+    TextTheme tt,
+    OrganizeState state,
+  ) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
       child: Card(
@@ -214,14 +212,34 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _statItem(context, '移动', state.moveCount,
-                  Icons.drive_file_move, cs.primary),
-              _statItem(context, '重命名', state.renameCount,
-                  Icons.edit, Colors.orange),
-              _statItem(context, '删除', state.deleteCount,
-                  Icons.delete, Colors.red),
-              _statItem(context, '清理', state.cleanCount,
-                  Icons.folder_delete, Colors.purple),
+              _statItem(
+                context,
+                '移动',
+                state.moveCount,
+                Icons.drive_file_move,
+                cs.primary,
+              ),
+              _statItem(
+                context,
+                '重命名',
+                state.renameCount,
+                Icons.edit,
+                Colors.orange,
+              ),
+              _statItem(
+                context,
+                '删除',
+                state.deleteCount,
+                Icons.delete,
+                Colors.red,
+              ),
+              _statItem(
+                context,
+                '清理',
+                state.cleanCount,
+                Icons.folder_delete,
+                Colors.purple,
+              ),
             ],
           ),
         ),
@@ -230,16 +248,22 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
   }
 
   Widget _statItem(
-      BuildContext context, String label, int count, IconData icon, Color color,
-      ) {
+    BuildContext context,
+    String label,
+    int count,
+    IconData icon,
+    Color color,
+  ) {
     final tt = Theme.of(context).textTheme;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 18, color: color),
         const SizedBox(height: 2),
-        Text('$count',
-            style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+        Text(
+          '$count',
+          style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
         Text(label, style: tt.bodySmall),
       ],
     );
@@ -247,7 +271,11 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
 
   // ── 进度 ──
 
-  Widget _buildProgress(BuildContext context, TextTheme tt, OrganizeState state) {
+  Widget _buildProgress(
+    BuildContext context,
+    TextTheme tt,
+    OrganizeState state,
+  ) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Column(
@@ -256,8 +284,12 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
           const LinearProgressIndicator(),
           if (state.progressMessage.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(state.progressMessage,
-                style: tt.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text(
+              state.progressMessage,
+              style: tt.bodySmall,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
         ],
       ),
@@ -267,8 +299,11 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
   // ── 内容区 ──
 
   Widget _buildBody(
-      BuildContext context, ColorScheme cs, TextTheme tt, OrganizeState state,
-      ) {
+    BuildContext context,
+    ColorScheme cs,
+    TextTheme tt,
+    OrganizeState state,
+  ) {
     if (state.phase == OrganizePhase.idle) {
       return Center(
         child: Column(
@@ -276,8 +311,10 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
           children: [
             Icon(Icons.folder_open, size: 56, color: cs.outlineVariant),
             const SizedBox(height: 12),
-            Text('点击上方「扫描预览」开始',
-                style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+            Text(
+              '点击上方「扫描预览」开始',
+              style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+            ),
           ],
         ),
       );
@@ -340,7 +377,11 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(Icons.copy, size: 12, color: Theme.of(context).colorScheme.outline),
+                Icon(
+                  Icons.copy,
+                  size: 12,
+                  color: Theme.of(context).colorScheme.outline,
+                ),
               ],
             ),
           ),
@@ -350,10 +391,14 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
   }
 
   Widget _buildActionList(BuildContext context, OrganizeState state) {
+    final notifier = ref.read(organizeProvider.notifier);
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       itemCount: state.actions.length,
-      itemBuilder: (_, i) => _ActionTile(action: state.actions[i]),
+      itemBuilder: (_, i) => _ActionTile(
+        action: state.actions[i],
+        onToggle: () => notifier.toggleAction(i),
+      ),
     );
   }
 
@@ -363,17 +408,31 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
     final notifier = ref.read(organizeProvider.notifier);
 
     if (state.phase == OrganizePhase.preview) {
-      if (state.totalAffected == 0) return const SizedBox.shrink();
+      if (state.actions.isEmpty) return const SizedBox.shrink();
       return SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton.tonalIcon(
-              onPressed: () => _confirmExecute(context, state),
-              icon: const Icon(Icons.play_arrow),
-              label: Text('执行整理 (${state.totalAffected})'),
-            ),
+          child: Row(
+            children: [
+              TextButton.icon(
+                onPressed: () => notifier.setAllSelected(!state.allSelected),
+                icon: Icon(
+                  state.allSelected ? Icons.deselect : Icons.select_all,
+                  size: 18,
+                ),
+                label: Text(state.allSelected ? '取消全选' : '全选'),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: state.selectedCount == 0
+                      ? null
+                      : () => _confirmExecute(context, state),
+                  icon: const Icon(Icons.play_arrow),
+                  label: Text('执行整理 (${state.selectedCount})'),
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -398,17 +457,20 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
     return const SizedBox.shrink();
   }
 
-  Future<void> _confirmExecute(BuildContext context, OrganizeState state) async {
+  Future<void> _confirmExecute(
+    BuildContext context,
+    OrganizeState state,
+  ) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('确认执行'),
         content: Text(
           '将移动 ${state.moveCount} 个文件，'
-              '重命名 ${state.renameCount} 个，'
-              '回收 ${state.deleteCount} 个重复文件，'
-              '清理 ${state.cleanCount} 个空目录。\n\n'
-              '删除的文件会移入回收站。',
+          '重命名 ${state.renameCount} 个，'
+          '回收 ${state.deleteCount} 个重复文件，'
+          '清理 ${state.cleanCount} 个空目录。\n\n'
+          '删除的文件会移入回收站。',
         ),
         actions: [
           TextButton(
@@ -432,7 +494,8 @@ class _OrganizeViewState extends ConsumerState<OrganizeView> {
 
 class _ActionTile extends StatelessWidget {
   final OrganizeAction action;
-  const _ActionTile({required this.action});
+  final VoidCallback onToggle;
+  const _ActionTile({required this.action, required this.onToggle});
 
   @override
   Widget build(BuildContext context) {
@@ -441,72 +504,95 @@ class _ActionTile extends StatelessWidget {
     final tt = Theme.of(context).textTheme;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 2),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: color, size: 18),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(999),
+      color: action.selected
+          ? null
+          : cs.surfaceContainerHighest.withValues(alpha: 0.4),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onToggle,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Checkbox(
+                value: action.selected,
+                onChanged: (_) => onToggle(),
+                visualDensity: VisualDensity.compact,
+              ),
+              Icon(icon, color: color, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            _actionLabel(action.type),
+                            style: tt.labelSmall?.copyWith(
+                              color: color,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ),
-                        child: Text(
-                          _actionLabel(action.type),
-                          style: tt.labelSmall?.copyWith(color: color, fontWeight: FontWeight.w700),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            action.sourceName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: tt.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          action.sourceName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: tt.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                    _InfoRow(label: '来源', value: action.sourcePath),
+                    const SizedBox(height: 4),
+                    _InfoRow(label: '处理', value: _targetText(action)),
+                    if (action.reason.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        action.reason,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: tt.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant,
                         ),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 7),
-                  _InfoRow(label: '来源', value: action.sourcePath),
-                  const SizedBox(height: 4),
-                  _InfoRow(label: '处理', value: _targetText(action)),
-                  if (action.reason.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      action.reason,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                    ),
+                    if (action.failed &&
+                        action.errorMessage?.isNotEmpty == true) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        action.errorMessage!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: tt.bodySmall?.copyWith(color: cs.error),
+                      ),
+                    ],
                   ],
-                  if (action.failed && action.errorMessage?.isNotEmpty == true) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      action.errorMessage!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: tt.bodySmall?.copyWith(color: cs.error),
-                    ),
-                  ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            if (action.failed)
-              const Icon(Icons.error_outline, color: Colors.red, size: 16)
-            else if (action.executed)
-              const Icon(Icons.check, color: Colors.green, size: 16),
-          ],
+              const SizedBox(width: 8),
+              if (action.failed)
+                const Icon(Icons.error_outline, color: Colors.red, size: 16)
+              else if (action.executed)
+                const Icon(Icons.check, color: Colors.green, size: 16),
+            ],
+          ),
         ),
       ),
     );
@@ -524,11 +610,14 @@ class _ActionTile extends StatelessWidget {
 
   String _targetText(OrganizeAction action) {
     return switch (action.type) {
-      OrganizeActionType.moveToBase => '移动到 ${action.targetPath ?? action.targetParentName ?? '--'}',
-      OrganizeActionType.renameBase => '重命名为 ${action.targetPath ?? action.newFileName ?? '--'}',
-      OrganizeActionType.renameConflict => action.targetParentId == null
-          ? '重命名为 ${action.targetPath ?? action.newFileName ?? '--'}'
-          : '重命名为 ${action.newFileName ?? '--'} 后移动到 ${action.targetPath ?? action.targetParentName ?? '--'}',
+      OrganizeActionType.moveToBase =>
+        '移动到 ${action.targetPath ?? action.targetParentName ?? '--'}',
+      OrganizeActionType.renameBase =>
+        '重命名为 ${action.targetPath ?? action.newFileName ?? '--'}',
+      OrganizeActionType.renameConflict =>
+        action.targetParentId == null
+            ? '重命名为 ${action.targetPath ?? action.newFileName ?? '--'}'
+            : '重命名为 ${action.newFileName ?? '--'} 后移动到 ${action.targetPath ?? action.targetParentName ?? '--'}',
       OrganizeActionType.deleteDuplicate => '移入回收站',
       OrganizeActionType.cleanDir => '合并后删除空目录',
     };
