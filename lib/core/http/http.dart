@@ -23,6 +23,7 @@ class Http {
     Options? options,
     bool useAccountDio = false,
     bool allowAnyCode = false,
+    bool injectClientID = false,
   }) async {
     final client = useAccountDio ? DioClient.accountDio : DioClient.dio;
 
@@ -30,11 +31,12 @@ class Http {
       method: method,
       headers: headers,
     );
+    final requestData = injectClientID ? _withClientID(data) : data;
 
     try {
       final res = await client.request(
         path,
-        data: data,
+        data: requestData,
         queryParameters: queryParameters,
         cancelToken: cancelToken,
         options: mergedOptions,
@@ -51,7 +53,10 @@ class Http {
           message = respData;
         }
         if (useAccountDio) {
-          AppLogger.warning('HTTP', 'Account API 非 2xx: $method $path → $statusCode | body: ${respData is Map ? respData : respData?.toString().substring(0, (respData?.toString().length ?? 0) > 500 ? 500 : (respData?.toString().length ?? 0))}');
+          AppLogger.warning(
+            'HTTP',
+            'Account API 非 2xx: $method $path → $statusCode | body: ${respData is Map ? respData : respData?.toString().substring(0, (respData?.toString().length ?? 0) > 500 ? 500 : (respData?.toString().length ?? 0))}',
+          );
         }
         throw ApiException(status: statusCode, message: message);
       }
@@ -81,30 +86,21 @@ class Http {
   }) async {
     final mergedHeaders = <String, dynamic>{
       'traceparent': _generateTraceparent(),
+      // 服务端以 did（设备标识）作为客户端身份校验，缺省会报「缺少clientId」
+      // 与参考客户端保持一致：业务请求统一携带 did / dt
+      'did': _getDeviceID(),
+      'dt': '4',
       ...?headers,
     };
-    dynamic requestBody = body;
-    if (body is Map) {
-      requestBody = <String, dynamic>{
-        ...Map<String, dynamic>.from(body),
-        'clientId': AppConfig.clientID,
-      };
-    } else if (body is FormData &&
-        !body.fields.any((field) => field.key == 'clientId')) {
-      body.fields.add(const MapEntry('clientId', AppConfig.clientID));
-    } else if (body == null) {
-      requestBody = const <String, dynamic>{
-        'clientId': AppConfig.clientID,
-      };
-    }
 
     final data = await request<Map<String, dynamic>>(
       path,
       method: method,
-      data: requestBody,
+      data: body,
       headers: mergedHeaders,
       cancelToken: cancelToken,
       options: Options(extra: {ResponseInterceptor.skipCodeCheckKey: true}),
+      injectClientID: true,
     );
 
     final code = parseBusinessCode(data['code']);
@@ -152,6 +148,24 @@ class Http {
       options: Options(extra: {ResponseInterceptor.skipCodeCheckKey: true}),
     );
 
+    return data;
+  }
+
+  static dynamic _withClientID(dynamic data) {
+    if (data is Map) {
+      return <String, dynamic>{
+        ...Map<String, dynamic>.from(data),
+        'clientId': AppConfig.clientID,
+      };
+    }
+    if (data is FormData) {
+      data.fields.removeWhere((field) => field.key == 'clientId');
+      data.fields.add(const MapEntry('clientId', AppConfig.clientID));
+      return data;
+    }
+    if (data == null) {
+      return const <String, dynamic>{'clientId': AppConfig.clientID};
+    }
     return data;
   }
 
