@@ -1190,21 +1190,63 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     }
   }
 
-  void _openDetail(_MediaWork work) {
+  Future<void> _openDetail(_MediaWork work) async {
     // 保存当前滚动位置，返回时恢复
     final currentScroll = _contentScrollController.hasClients
         ? _contentScrollController.offset
         : 0.0;
+    // 网格中的 work 来自 distinctWorks 去重后的 allItems，只含 1 集；
+    // 打开详情前从 store 全量加载该作品的所有资源（全部剧集/版本）。
+    var fullWork = work;
+    try {
+      final primary = work.primary;
+      final all = await ref
+          .read(mediaLibraryProvider.notifier)
+          .itemsForWork(
+            tmdbID: primary.tmdbID,
+            doubanID: primary.doubanID,
+            title: primary.tmdbID == null && primary.doubanID == null
+                ? primary.title
+                : null,
+            year: primary.tmdbID == null && primary.doubanID == null
+                ? int.tryParse(
+                    primary.releaseDate.isNotEmpty
+                        ? primary.releaseDate.substring(0, 4)
+                        : '',
+                  )
+                : null,
+          );
+      if (all.isNotEmpty) {
+        final byID = {for (final item in all) item.id: item};
+        final merged = <MediaLibraryItem>[];
+        final seen = <String>{};
+        for (final item in [...all, ...work.resources]) {
+          if (seen.add(item.id)) merged.add(item);
+        }
+        fullWork = _MediaWork(
+          key: work.key,
+          primary: byID[work.primary.id] ?? work.primary,
+          resources: merged
+            ..sort(
+              (a, b) =>
+                  a.file.name.toLowerCase().compareTo(b.file.name.toLowerCase()),
+            ),
+        );
+      }
+    } catch (_) {
+      // Store read failure falls back to the grid's (possibly partial) work.
+    }
+    if (!mounted) return;
     setState(() {
       _detailSession += 1;
-      _detailWork = work;
+      _detailWork = fullWork;
       _savedScrollOffset = currentScroll;
     });
     _setDetailHeader(
       MediaDetailHeader(
-        title: work.primary.title,
-        mediaKind: work.primary.mediaKind,
-        year: work.primary.year,
+        title: fullWork.primary.title,
+        mediaKind: fullWork.primary.mediaKind,
+        year: fullWork.primary.year,
       ),
     );
   }

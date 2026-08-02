@@ -184,7 +184,56 @@ class MediaLibraryStore {
     return enrichItemsWithWorkDetails(items);
   }
 
-  /// Process media items in batches via streaming to avoid loading all into memory.
+  /// Loads every media row belonging to one work (all episodes / all versions),
+  /// regardless of `distinctWorks` pagination.  The work is identified by its
+  /// TMDB id, Douban id, or fallback title+year — matching the work_key the
+  /// UI uses to group rows.
+  Future<List<MediaLibraryItem>> itemsForWork({
+    int? tmdbID,
+    String? doubanID,
+    String? title,
+    int? year,
+  }) async {
+    final db = await _db;
+    await _ensureMediaItemLocationColumns(db);
+    final where = <String>[];
+    final args = <Object?>[];
+    if (tmdbID != null && tmdbID != 0) {
+      where.add('tmdb_id = ?');
+      args.add(tmdbID);
+    } else if (doubanID != null && doubanID.isNotEmpty) {
+      where.add('douban_id = ?');
+      args.add(doubanID);
+    } else {
+      final normalized = title?.trim() ?? '';
+      if (normalized.isNotEmpty) {
+        where.add('title = ?');
+        args.add(normalized);
+      }
+      if (year != null && year > 0) {
+        where.add("SUBSTR(COALESCE(release_date, ''), 1, 4) = ?");
+        args.add('$year');
+      }
+    }
+    if (where.isEmpty) return const [];
+    const pageSize = 200;
+    final items = <MediaLibraryItem>[];
+    for (var offset = 0; ; offset += pageSize) {
+      final rows = await db.query(
+        'media_items',
+        columns: _itemMetadataColumns,
+        where: where.join(' AND '),
+        whereArgs: args,
+        orderBy: 'title COLLATE NOCASE, library_id, file_id',
+        limit: pageSize,
+        offset: offset,
+      );
+      items.addAll(rows.map(_itemFromRow));
+      if (rows.length < pageSize) break;
+    }
+    return enrichItemsWithWorkDetails(items);
+  }
+
   Future<void> allItemsBatched({
     required String? libraryID,
     required Future<void> Function(List<MediaLibraryItem> batch) onBatch,
