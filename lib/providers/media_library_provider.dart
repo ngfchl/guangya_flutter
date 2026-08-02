@@ -460,6 +460,43 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   /// How often the global scan writes an aggregated recognition-progress line
   /// to the user-facing scan log (instead of one line per file).
   static const _globalScanRecognitionLogStep = 50;
+  // 统计刷新频率：每识别这么多条就重算一次全库统计（电影/电视剧/未识别），
+  // 让左侧菜单栏数字实时变化。独立于日志打印步长。
+  static const _globalScanStatisticsRefreshStep = 10;
+
+  /// 识别进度刷新统计的在途任务（合并并发请求，避免每批都重算全库统计）。
+  Future<void>? _statisticsRefreshInFlight;
+  /// 在途计算期间又收到刷新请求时置位，完成后立即尾随重算一次，
+  /// 确保 UI 数字不会因合并而长期停留旧值。
+  bool _statisticsRefreshPending = false;
+
+  /// 重新计算全局统计并写入 state，供 UI 实时展示电影/电视剧/未识别数量。
+  /// 并发调用合并：在途时只标记 pending，完成后尾随重算保证最新。
+  Future<void> _refreshGlobalStatistics() async {
+    final inFlight = _statisticsRefreshInFlight;
+    if (inFlight != null) {
+      _statisticsRefreshPending = true;
+      await inFlight;
+      return;
+    }
+    _statisticsRefreshPending = false;
+    final future = () async {
+      try {
+        final statistics = await _store.statistics();
+        state = state.copyWith(storedGlobalStatistics: statistics.global);
+      } catch (error) {
+        AppLogger.warning('Media', '刷新媒体库统计失败：$error');
+      } finally {
+        _statisticsRefreshInFlight = null;
+        if (_statisticsRefreshPending) {
+          _statisticsRefreshPending = false;
+          await _refreshGlobalStatistics();
+        }
+      }
+    }();
+    _statisticsRefreshInFlight = future;
+    await future;
+  }
 
   final Future<void> Function(Set<String>)? _removeWatchHistory;
   GuangyaAPI? _api;
@@ -3147,32 +3184,126 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             _setScanProgress(
               libraryID,
               MediaLibraryScanProgress(
-                phase: '正在识别 ${item.file.name}',
+                phase: '正在远程识别 ${item.file.name}',
                 completed: completed,
                 total: insertedCount,
                 scanned: scannedFiles,
-                pending: (insertedCount - nextRecognize).clamp(0, insertedCount),
+                pending:
+                    (insertedCount - nextRemote).clamp(0, insertedCount),
                 matched: recognizedCount,
                 unmatched: unmatchedCount,
               ),
             );
           }
-          // Aggregated, user-facing recognition progress. One concise line
-          // every [recognitionLogStep] items instead of one line per file.
           if (completed % _globalScanRecognitionLogStep == 0) {
             _appendScanLog(
               '识别进度 $completed/$insertedCount'
               '（匹配 $recognizedCount，未匹配 $unmatchedCount）',
             );
           }
+          // 统计刷新频率独立于日志：每 _globalScanStatisticsRefreshStep 条
+          // 重算一次（电影/电视剧/未识别），让左侧菜单栏数字实时变化。
+          if (completed % _globalScanStatisticsRefreshStep == 0) {
+            await _refreshGlobalStatistics();
+          }
         }
       }
 
-      // 流式生产者：每批从 DB 读取 → 筛选 → 入队，消费者并行消费
-      _appendScanLog('启动 $concurrency 个并发识别消费者…');
-      final consumers = List.generate(concurrency, (i) => consumer(i + 1));
+      // 阶段三：详情补全消费者。与识别并行运行——识别一旦产出带 tmdbID
+      // 且需要补详情的条目，这里就按作品去重批量拉取详情并入库，
+      // 无需等识别全部结束（localPhaseDone && remotePhaseDone 后才退出）。
+      Future<void> detailConsumer(int id) async {
+        while (!_scanShouldAbort(libraryID)) {
+          if (!await _waitIfScanPaused(libraryID)) return;
+          if (nextDetail >= deferredDetailItems.length) {
+            if (localPhaseDone && remotePhaseDone) break;
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+            continue;
+          }
+          final end = (nextDetail + globalDetailBatchSize)
+              .clamp(0, deferredDetailItems.length);
+          final batch = deferredDetailItems.sublist(nextDetail, end);
+          nextDetail = end;
+          if (batch.isEmpty) continue;
+          try {
+            await _hydrateDeferredDetails(
+              batch,
+              apiKey: tmdbApiKey,
+              proxyHost: tmdbProxyHost,
+              proxyPort: tmdbProxyPort,
+              libraryID: libraryID,
+              concurrency: concurrency,
+            );
+          } catch (e) {
+            AppLogger.warning('Media', '详情补全失败（跳过批次）：$e');
+          }
+          if (completed % _globalScanRecognitionLogStep == 0) {
+            _appendScanLog(
+              '详情补全 $nextDetail/${deferredDetailItems.length} 条',
+            );
+          }
+          // 统计刷新频率独立于日志：每 _globalScanStatisticsRefreshStep 条
+          // 重算一次（电影/电视剧/未识别），让左侧菜单栏数字实时变化。
+          if (completed % _globalScanStatisticsRefreshStep == 0) {
+            await _refreshGlobalStatistics();
+          }
+        }
+      }
+
+      // 流式生产者：每批从 DB 读取 → 筛选 → 入队，消费者并行消费。
+      // 本地预筛、远程识别、详情补全三组消费者同时启动（流水线并行），
+      // 识别一产出结果即入库、一产出待补详情即拉取详情，互不等待。
+      _appendScanLog(
+        '启动 $localConcurrency 个本地预筛消费者、$concurrency 个远程识别消费者'
+        '与详情补全消费者（流水线并行）…',
+      );
+      final consumers = List.generate(
+        localConcurrency,
+        (i) => localConsumer(i + 1),
+      );
+      final remoteConsumers = List.generate(
+        concurrency,
+        (i) => remoteConsumer(i + 1),
+      );
+      final detailConsumers = List.generate(
+        concurrency.clamp(1, 4),
+        (i) => detailConsumer(i + 1),
+      );
 
       final insertBatch = <MediaLibraryItem>[];
+      if (mode == MediaLibraryScanMode.unrecognizedOnly) {
+        // 扫描未识别：直接从 media_items 的未匹配行读取，不扫全量缓存。
+        await _store.allItemsBatched(
+          libraryID: libraryID,
+          unmatchedOnly: true,
+          onBatch: (items) async {
+            if (_scanShouldAbort(libraryID)) return;
+            totalCachedFiles += items.length;
+            for (final item in items) {
+              if (_scanShouldAbort(libraryID)) return;
+              scannedFiles += 1;
+              final file = item.file;
+              if (file.isDirectory) continue;
+              if (!file.isVideo) { skippedNotVideo += 1; continue; }
+              if (hasExclusions && isExcluded(file)) { skippedExcluded += 1; continue; }
+              if (isMediaScanIsoFile(file)) { skippedIso += 1; continue; }
+              if (isMediaScanDiscInternalPath(file.cloudPath)) {
+                skippedDiscInternal += 1;
+                continue;
+              }
+              if ((file.size ?? 0) < minimumSizeBytes) { skippedSmall += 1; continue; }
+              recognizeQueue.add(item);
+              insertedCount += 1;
+            }
+            await Future<void>.delayed(Duration.zero);
+            if (scannedFiles % 500 == 0) {
+              _appendScanLog(
+                '扫描进度 $scannedFiles 个文件，已入队 $insertedCount 条…',
+              );
+            }
+          },
+        );
+      } else {
       await FileMetadataCache.allCachedFolderChildrenBatched(
         (batch) async {
           if (_scanShouldAbort(libraryID)) return;
