@@ -75,7 +75,12 @@ class FileMetadataCache {
   static Future<void> allCachedFolderChildrenBatched(
     Future<void> Function(List<CloudFile> batch) onBatch, {
     int batchSize = 500,
-  }) => _store.allCachedFolderChildrenBatched(onBatch, batchSize: batchSize);
+    bool Function()? shouldStop,
+  }) => _store.allCachedFolderChildrenBatched(
+    onBatch,
+    batchSize: batchSize,
+    shouldStop: shouldStop,
+  );
 
   static Future<void> folderChildrenSnapshotsBatched(
     Future<void> Function(Map<String?, List<CloudFile>> batch) onBatch, {

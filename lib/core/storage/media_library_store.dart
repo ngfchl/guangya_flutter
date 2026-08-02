@@ -204,23 +204,47 @@ class MediaLibraryStore {
         '(tmdb_id IS NULL OR tmdb_id = \'\') AND (douban_id IS NULL OR douban_id = \'\')',
       );
     }
-    final whereClause = where.isEmpty ? null : where.join(' AND ');
-    var offset = 0;
+    // keyset 分页：以 (title, library_id, file_id) 为递增游标，替代 OFFSET。
+    // 每页从上一页最后一行之后继续读取，避免 OFFSET 逐页全表扫描 + 重复
+    // 排序（大数据量下接近 O(N²)），配合
+    // idx_media_items_library_title_file 索引整体降到 O(N)。
+    String? cursorTitle;
+    String? cursorLibraryID;
+    String? cursorFileID;
+    var firstPage = true;
     while (true) {
+      final pageWhere = <String>[...where];
+      final pageArgs = <Object?>[...args];
+      if (!firstPage) {
+        pageWhere.add(
+          '(title COLLATE NOCASE > ? OR '
+          '(title COLLATE NOCASE = ? AND '
+          '(library_id > ? OR (library_id = ? AND file_id > ?))))',
+        );
+        pageArgs
+          ..add(cursorTitle)
+          ..add(cursorTitle)
+          ..add(cursorLibraryID)
+          ..add(cursorLibraryID)
+          ..add(cursorFileID);
+      }
       final rows = await db.query(
         'media_items',
         columns: _itemMetadataColumns,
-        where: whereClause,
-        whereArgs: args.isEmpty ? null : args,
+        where: pageWhere.isEmpty ? null : pageWhere.join(' AND '),
+        whereArgs: pageArgs.isEmpty ? null : pageArgs,
         orderBy: 'title COLLATE NOCASE, library_id, file_id',
         limit: batchSize,
-        offset: offset,
       );
       if (rows.isEmpty) break;
-      offset += rows.length;
+      firstPage = false;
       final batch = rows.map(_itemFromRow).toList();
       if (batch.isNotEmpty) await onBatch(batch);
       if (rows.length < batchSize) break;
+      final last = rows.last;
+      cursorTitle = last['title']?.toString() ?? '';
+      cursorLibraryID = last['library_id']?.toString() ?? '';
+      cursorFileID = last['file_id']?.toString() ?? '';
     }
   }
 
@@ -1349,10 +1373,12 @@ class MediaLibraryStore {
   Future<void> allCachedFolderChildrenBatched(
     Future<void> Function(List<CloudFile> batch) onBatch, {
     int batchSize = 500,
+    bool Function()? shouldStop,
   }) async {
     final db = await _db;
     var offset = 0;
     while (true) {
+      if (shouldStop?.call() == true) break;
       final rows = await db.query(
         'folder_children',
         columns: const ['children_json'],
@@ -1434,20 +1460,32 @@ class MediaLibraryStore {
   }
 
   /// Stream file IDs by library in batches to avoid loading all into memory.
+  /// Uses keyset pagination over the (library_id, file_id) primary key —
+  /// OFFSET-based paging is O(N²) on large tables.
   Future<void> fileIdsByLibraryBatched(
     Future<void> Function(String libraryID, Set<String> ids) onBatch, {
     int batchSize = 500,
   }) async {
     final db = await _db;
     final libIds = <String, Set<String>>{};
-    var offset = 0;
+    String? cursorLibID;
+    String? cursorFileID;
+    var firstPage = true;
     while (true) {
-      final rows = await db.rawQuery(
-        'SELECT library_id, file_id FROM media_items LIMIT ? OFFSET ?',
-        [batchSize, offset],
-      );
+      final rows = firstPage
+          ? await db.rawQuery(
+              'SELECT library_id, file_id FROM media_items '
+              'ORDER BY library_id, file_id LIMIT ?',
+              [batchSize],
+            )
+          : await db.rawQuery(
+              'SELECT library_id, file_id FROM media_items '
+              'WHERE (library_id > ? OR (library_id = ? AND file_id > ?)) '
+              'ORDER BY library_id, file_id LIMIT ?',
+              [cursorLibID, cursorLibID, cursorFileID, batchSize],
+            );
       if (rows.isEmpty) break;
-      offset += rows.length;
+      firstPage = false;
       libIds.clear();
       for (final row in rows) {
         final libID = row['library_id']?.toString() ?? '';
@@ -1459,6 +1497,75 @@ class MediaLibraryStore {
         await onBatch(entry.key, entry.value);
       }
       if (rows.length < batchSize) break;
+      final last = rows.last;
+      cursorLibID = last['library_id']?.toString() ?? '';
+      cursorFileID = last['file_id']?.toString() ?? '';
+    }
+  }
+
+  /// Streams only the file IDs of unmatched media items (keyset paginated).
+  /// Unlike [allItemsBatched], it selects just the id columns instead of
+  /// deserialising every full row, so collecting 6 万+ unmatched ids on a
+  /// global scan is far cheaper.
+  Future<void> unmatchedFileIDsBatched(
+    Future<void> Function(List<String> ids) onBatch, {
+    required String? libraryID,
+    int batchSize = 200,
+  }) async {
+    final db = await _db;
+    final where = <String>[];
+    final args = <Object?>[];
+    if (libraryID != null) {
+      where.add('library_id = ?');
+      args.add(libraryID);
+    }
+    where.add(
+      '(tmdb_id IS NULL OR tmdb_id = \'\') AND (douban_id IS NULL OR douban_id = \'\')',
+    );
+    final baseWhere = where.join(' AND ');
+    String? cursorTitle;
+    String? cursorLibraryID;
+    String? cursorFileID;
+    var firstPage = true;
+    while (true) {
+      final pageWhere = <String>[];
+      final pageArgs = <Object?>[];
+      pageWhere.add(baseWhere);
+      pageArgs.addAll(args);
+      if (!firstPage) {
+        pageWhere.add(
+          '(title COLLATE NOCASE > ? OR '
+          '(title COLLATE NOCASE = ? AND '
+          '(library_id > ? OR (library_id = ? AND file_id > ?))))',
+        );
+        pageArgs
+          ..add(cursorTitle)
+          ..add(cursorTitle)
+          ..add(cursorLibraryID)
+          ..add(cursorLibraryID)
+          ..add(cursorFileID);
+      }
+      final rows = await db.query(
+        'media_items',
+        columns: const ['file_id', 'title', 'library_id'],
+        where: pageWhere.join(' AND '),
+        whereArgs: pageArgs,
+        orderBy: 'title COLLATE NOCASE, library_id, file_id',
+        limit: batchSize,
+      );
+      if (rows.isEmpty) break;
+      firstPage = false;
+      final ids = [
+        for (final row in rows)
+          if ((row['file_id']?.toString() ?? '').isNotEmpty)
+            row['file_id']!.toString(),
+      ];
+      if (ids.isNotEmpty) await onBatch(ids);
+      if (rows.length < batchSize) break;
+      final last = rows.last;
+      cursorTitle = last['title']?.toString() ?? '';
+      cursorLibraryID = last['library_id']?.toString() ?? '';
+      cursorFileID = last['file_id']?.toString() ?? '';
     }
   }
 
@@ -2281,6 +2388,18 @@ class MediaLibraryStore {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_library_title '
       'ON media_items(library_id, title COLLATE NOCASE)',
+    );
+    // keyset 分页索引：allItemsBatched 按 (title, library_id, file_id) 游标续读
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_library_title_file '
+      'ON media_items(library_id, title COLLATE NOCASE, file_id)',
+    );
+    // 未匹配行（无 tmdb/douban id）部分索引：unmatchedFileIDsBatched 只扫
+    // 这些行，跳过已匹配行，大幅缩小 keyset 扫描范围。
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_library_title_file_unmatched '
+      'ON media_items(library_id, title COLLATE NOCASE, file_id) '
+      'WHERE tmdb_id IS NULL AND douban_id IS NULL',
     );
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_id '

@@ -2031,8 +2031,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       var unmatchedCount = 0;
       var skippedCount = 0;
       var discoveredCount = 0;
-      // Rows matched with deferred details, drained once recognition finishes.
+      // Rows matched with deferred details, drained by the detail consumer.
       final deferredDetailItems = <MediaLibraryItem>[];
+      var nextDetail = 0;
+      var detailPhaseDone = false;
+      // 详情补全按作品去重，攒批提交以摊薄每批的数据库/网络开销。
+      const detailBatchSize = 100;
       _appendScanLog('$modeLabel，媒体识别并发数：$concurrency');
       final doubanAutoRecognition = _doubanAutoRecognitionEnabled;
       if (tmdbApiKey.trim().isEmpty && doubanAutoRecognition) {
@@ -2044,16 +2048,34 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       Future<void> indexBatch(List<CloudFile> files) async {
         final pending = files.toList();
         if (pending.isEmpty || _scanShouldAbort(library.id)) return;
-        var next = 0;
-        Future<void> worker() async {
+        // 本地预筛是纯 SQLite 查询，可用更高并发；远程 API 沿用用户并发。
+        final localConcurrency = (concurrency * 4).clamp(4, 40);
+        // 本地预筛未命中（需远程 API 识别）的文件，由远程消费者流水线消费。
+        final remotePending = <CloudFile>[];
+        var nextLocal = 0;
+        var nextRemote = 0;
+        var localPhaseDone = false;
+        Future<void> worker(bool localStage) async {
           while (!_scanShouldAbort(library.id)) {
             // Claim the index synchronously before any await so that two
             // workers cannot both read the same slot (fixes RangeError
             // when _waitIfScanPaused yields the event loop).
-            if (next >= pending.length) break;
-            final idx = next++;
-            if (!await _waitIfScanPaused(library.id)) return;
-            final file = pending[idx];
+            late final CloudFile file;
+            if (localStage) {
+              if (nextLocal >= pending.length) break;
+              final idx = nextLocal++;
+              if (!await _waitIfScanPaused(library.id)) return;
+              file = pending[idx];
+            } else {
+              if (nextRemote >= remotePending.length) {
+                if (localPhaseDone) break;
+                await Future<void>.delayed(const Duration(milliseconds: 20));
+                continue;
+              }
+              final idx = nextRemote++;
+              if (!await _waitIfScanPaused(library.id)) return;
+              file = remotePending[idx];
+            }
             final fallback = MediaLibraryItem.fromFile(
               library.id,
               file,
@@ -2117,6 +2139,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                   proxyHost: tmdbProxyHost,
                   proxyPort: tmdbProxyPort,
                   deferDetails: true,
+                  localOnly: localStage,
                 );
               } else {
                 final inFlight = seriesRecognitionTasks[seriesKey];
@@ -2133,6 +2156,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                           proxyHost: tmdbProxyHost,
                           proxyPort: tmdbProxyPort,
                           deferDetails: true,
+                          localOnly: localStage,
                         );
                 } else {
                   final task = _recognizeMediaItem(
@@ -2141,6 +2165,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
                     proxyHost: tmdbProxyHost,
                     proxyPort: tmdbProxyPort,
                     deferDetails: true,
+                    localOnly: localStage,
                   );
                   seriesRecognitionTasks[seriesKey] = task;
                   recognized = await task;
@@ -2164,6 +2189,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               }
             }
             if (_scanShouldAbort(library.id)) return;
+            // 本地预筛阶段：本地 works 表未命中 → 放入远程识别队列，
+            // 由远程消费者流水线消费（不在此处入库/计数）。
+            if (localStage && !item.isMatched && item.tmdbID == null) {
+              remotePending.add(file);
+              continue;
+            }
             // Do not lose an existing match solely because a transient TMDB
             // lookup failed while filling an incomplete record.
             if (item.tmdbID == null && existing?.tmdbID != null) {
@@ -2223,7 +2254,53 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           }
         }
 
-        await Future.wait(List.generate(concurrency, (_) => worker()));
+        // 本地预筛与远程识别并行启动（流水线）：本地未命中的文件
+        // 进入 remotePending 后立即被远程 worker 消费，无需等待本地全部结束。
+        final localWorkers = List.generate(
+          localConcurrency,
+          (_) => worker(true),
+        );
+        final remoteWorkers = List.generate(
+          concurrency,
+          (_) => worker(false),
+        );
+        await Future.wait(localWorkers);
+        localPhaseDone = true;
+        await Future.wait(remoteWorkers);
+      }
+
+      // 详情补全消费者：与识别批次并行运行，识别一产出带 tmdbID 且需补
+      // 详情的条目即按作品去重批量拉取详情并入库，无需等识别全部结束。
+      Future<void> detailConsumer(int id) async {
+        while (!_scanShouldAbort(library.id)) {
+          if (!await _waitIfScanPaused(library.id)) return;
+          if (nextDetail >= deferredDetailItems.length) {
+            if (detailPhaseDone) break;
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+            continue;
+          }
+          final end = (nextDetail + detailBatchSize)
+              .clamp(0, deferredDetailItems.length);
+          final batch = deferredDetailItems.sublist(nextDetail, end);
+          nextDetail = end;
+          if (batch.isEmpty) continue;
+          try {
+            final hydrated = await _hydrateDeferredDetails(
+              batch,
+              apiKey: tmdbApiKey,
+              proxyHost: tmdbProxyHost,
+              proxyPort: tmdbProxyPort,
+              libraryID: library.id,
+              concurrency: concurrency,
+            );
+            // Fold hydrated rows back into the set that gets persisted below.
+            for (final item in hydrated) {
+              if (unique.containsKey(item.id)) unique[item.id] = item;
+            }
+          } catch (e) {
+            AppLogger.warning('Media', '详情补全失败（跳过批次）：$e');
+          }
+        }
       }
 
       int scheduledRecognitionBatches = 0;
@@ -2269,6 +2346,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           await recognitionTail;
         }
       }
+
+      // 详情补全消费者与识别批次并行启动：识别一旦产出带 tmdbID 且需补
+      // 详情的条目，detailConsumer 立即批量拉取详情并入库。
+      final detailConsumers = List.generate(
+        concurrency.clamp(1, 4),
+        (i) => detailConsumer(i + 1),
+      );
 
       if (forceAll && !_scanShouldAbort(library.id)) {
         _appendScanLog('正在强制刷新当前媒体库目录…');
@@ -2332,35 +2416,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         AppLogger.info('Media', '$modeLabel [4/5] 等待识别队列完成');
         await flushRecognitionQueue();
       }
-      // Consumer stage: matching produced ids only, so hydrate the detail
-      // documents now — batched and deduplicated per work.
-      if (!_scanShouldAbort(library.id) && deferredDetailItems.isNotEmpty) {
-        _setScanProgress(
-          library.id,
-          MediaLibraryScanProgress(
-            phase: '正在补全刮削详情',
-            completed: completed,
-            total: discoveredCount,
-            scanned: discoveredCount,
-            matched: recognizedCount,
-            unmatched: unmatchedCount,
-            skipped: skippedCount,
-          ),
-        );
-        _appendScanLog('识别完成，开始补全 ${deferredDetailItems.length} 条刮削详情…');
-        final hydrated = await _hydrateDeferredDetails(
-          deferredDetailItems,
-          apiKey: tmdbApiKey,
-          proxyHost: tmdbProxyHost,
-          proxyPort: tmdbProxyPort,
-          libraryID: library.id,
-          concurrency: concurrency,
-        );
-        // Fold hydrated rows back into the set that gets persisted below.
-        for (final item in hydrated) {
-          if (unique.containsKey(item.id)) unique[item.id] = item;
-        }
-      }
+      // 识别批次全部结束后，通知详情补全消费者处理完剩余条目后退出
+      detailPhaseDone = true;
+      await Future.wait(detailConsumers);
       AppLogger.info('Media', '$modeLabel [5/5] 识别完成，入库中');
       // Flush any items still buffered by the throttled writer.
       await flushPendingUpserts(force: true);
@@ -2848,33 +2906,34 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     var completed = 0;
 
     try {
-      // ── 1. 加载已有条目 ID ──
+      // ── 0. 后台并行准备 ID 集合：与流式生产者同时启动，扫描一开始
+      //    就开流水线，生产者抓到数据立刻入队给识别消费者，不再等 ID 集齐。
       final existingGlobalFileIDs = <String>{};
       final otherLibraryFileIDs = <String>{};
-      final idsByLibrary = await _store.fileIdsByLibrary();
-      for (final entry in idsByLibrary.entries) {
-        if (entry.key == libraryID) {
-          existingGlobalFileIDs.addAll(entry.value);
-        } else {
-          otherLibraryFileIDs.addAll(entry.value);
-        }
-      }
-      AppLogger.info('Media', '$modeLabel 全局条目 ${existingGlobalFileIDs.length} 个，其他库 ${otherLibraryFileIDs.length} 个');
-
-      // 流式加载本库已入库但未匹配的文件 ID（unindexedOnly 模式需要重新识别这些）
       final unmatchedFileIDs = <String>{};
-      if (!forceAll) {
-        await _store.allItemsBatched(
-          libraryID: libraryID,
-          unmatchedOnly: true,
-          onBatch: (batch) async {
-            for (final item in batch) {
-              unmatchedFileIDs.add(item.id);
+      var idPrepDone = false;
+      final idPrepFuture = Future.wait([
+        _store.fileIdsByLibraryBatched(
+          (libID, ids) async {
+            if (libID == libraryID) {
+              existingGlobalFileIDs.addAll(ids);
+            } else {
+              otherLibraryFileIDs.addAll(ids);
             }
           },
-        );
-      }
-      _appendScanLog('当前媒体库已匹配 ${existingGlobalFileIDs.length - unmatchedFileIDs.length} 个，未匹配 ${unmatchedFileIDs.length} 个');
+        ),
+        if (!forceAll)
+          _store.unmatchedFileIDsBatched(
+            (ids) async {
+              unmatchedFileIDs.addAll(ids);
+            },
+            libraryID: libraryID,
+          ),
+      ]).then((_) {
+        idPrepDone = true;
+        AppLogger.info('Media', '$modeLabel 全局条目 ${existingGlobalFileIDs.length} 个，其他库 ${otherLibraryFileIDs.length} 个');
+        _appendScanLog('当前媒体库已匹配 ${existingGlobalFileIDs.length - unmatchedFileIDs.length} 个，未匹配 ${unmatchedFileIDs.length} 个');
+      });
 
       _appendScanLog('从缓存读取文件列表…');
       // ── 流式管道：DB 分批读取，边筛选边入队，消费者立刻开始消费 ──
@@ -2932,14 +2991,48 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       var unmatchedCount = 0;
 
       final recognizeQueue = <MediaLibraryItem>[];
-      // Rows matched with deferred details, drained after recognition ends.
+      // Rows matched with deferred details, drained by the detail consumer.
       final deferredDetailItems = <MediaLibraryItem>[];
+      // 本地预筛未命中（需远程 API 识别）的条目，由远程消费者流水线消费。
+      final remoteRecognizeQueue = <MediaLibraryItem>[];
       var producerDone = false;
+      var localPhaseDone = false;
+      var remotePhaseDone = false;
       var nextRecognize = 0;
+      var nextRemote = 0;
+      var nextDetail = 0;
+      // 本地预筛是纯 SQLite 查询，可安全使用更高并发；远程 API 受限流
+      // 约束，仍沿用用户配置的 concurrency。
+      final localConcurrency = (concurrency * 4).clamp(4, 40);
+      // 详情补全按作品去重，攒批提交以摊薄每批的数据库/网络开销。
+      const globalDetailBatchSize = 100;
+      // 批量入库缓冲：识别结果攒够一批再写库，避免每条一个事务。
+      const globalUpsertFlushCount = 50;
+      final pendingUpserts = <MediaLibraryItem>[];
+      // 全局刮削有 40+10+详情 多组消费者并发攒批，若同时写 SQLite 会锁竞争
+      // （此前日志反复出现 database has been locked）。与单库扫描一致，
+      // 用串行链把批量 upsert 排队执行，避免并发写。
+      Future<void> pendingPersistence = Future<void>.value();
+      Future<void> flushPendingUpserts({bool force = false}) async {
+        if (pendingUpserts.isEmpty) return;
+        if (!force && pendingUpserts.length < globalUpsertFlushCount) return;
+        final batch = List<MediaLibraryItem>.of(pendingUpserts);
+        pendingUpserts.clear();
+        pendingPersistence = pendingPersistence.then(
+          (_) => _upsertItems(batch),
+        );
+        await pendingPersistence;
+      }
 
       // Consumers are defined here but launched after the variables they
       // close over (recognizeQueue, nextRecognize, producerDone) are ready.
-      Future<void> consumer(int id) async {
+      //
+      // 两阶段识别：
+      //  阶段一（本地预筛，localConcurrency 高并发）：只查本地 works 表，
+      //  命中的直接入库；未命中的放入 remoteRecognizeQueue。
+      //  阶段二（远程 API，concurrency）：等本地预筛结束后统一消费
+      //  remoteRecognizeQueue，走 TMDB/豆瓣网络搜索。
+      Future<void> localConsumer(int id) async {
         while (!_scanShouldAbort(libraryID)) {
           if (!await _waitIfScanPaused(libraryID)) return;
           if (nextRecognize >= recognizeQueue.length) {
@@ -2949,18 +3042,83 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           }
           final item = recognizeQueue[nextRecognize++];
           try {
-            // Producer stage: a resolved TMDB/Douban id already counts as
-            // "scraped". Detail documents are fetched afterwards, batched and
-            // deduplicated per work by _hydrateDeferredDetails.
+            // 本地预筛：仅命中本地 works 表才返回匹配结果，否则原样返回，
+            // 由阶段二做远程 API 识别。模式筛选已在生产者入队前完成。
+            final recognized = await _recognizeMediaItem(
+              item, tmdbApiKey,
+              proxyHost: tmdbProxyHost, proxyPort: tmdbProxyPort,
+              deferDetails: true,
+              localOnly: true,
+            );
+            if (_scanShouldAbort(libraryID)) return;
+            if (!recognized.isMatched) {
+              // 本地未命中 → 进入远程识别队列
+              remoteRecognizeQueue.add(item);
+              continue;
+            }
+            // Route through _upsertItems so the shared TMDB/Douban works cache
+            // is mirrored for globally-scanned matches too.
+            pendingUpserts.add(recognized);
+            await flushPendingUpserts();
+            if (recognized.needsDetailHydration) {
+              deferredDetailItems.add(recognized);
+            }
+            completed += 1;
+            recognizedCount += 1;
+          } catch (e) {
+            // 本地预筛异常不影响整体流程，转入远程队列重试
+            AppLogger.warning(
+              'Media',
+              '本地预筛失败（转远程识别）：${item.file.name}，$e',
+            );
+            if (_scanShouldAbort(libraryID)) return;
+            remoteRecognizeQueue.add(item);
+          }
+          if (completed % 5 == 0) {
+            // Reloading + enriching the entire library from SQLite is O(N);
+            // doing it every 10 items makes a large scan O(N²). A coarser
+            // interval keeps the grid live without the quadratic cost.
+            if (completed % 200 == 0) {
+              final refreshedItems = await _loadItems(libraryID);
+              state = state.copyWith(items: refreshedItems);
+            }
+            _setScanProgress(
+              libraryID,
+              MediaLibraryScanProgress(
+                phase: '正在本地预筛 ${item.file.name}',
+                completed: completed,
+                total: insertedCount,
+                scanned: scannedFiles,
+                pending: (insertedCount - nextRecognize).clamp(0, insertedCount),
+                matched: recognizedCount,
+                unmatched: unmatchedCount,
+              ),
+            );
+          }
+        }
+      }
+
+      // 阶段二：远程 API 识别（受流控约束，沿用用户配置的 concurrency）。
+      // 与本地预筛并行运行：本地未命中的条目一进队列即被消费，
+      // 仅当本地预筛全部结束（localPhaseDone）且队列清空后才退出。
+      Future<void> remoteConsumer(int id) async {
+        while (!_scanShouldAbort(libraryID)) {
+          if (!await _waitIfScanPaused(libraryID)) return;
+          if (nextRemote >= remoteRecognizeQueue.length) {
+            if (localPhaseDone) break;
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+            continue;
+          }
+          final item = remoteRecognizeQueue[nextRemote++];
+          try {
             final recognized = await _recognizeMediaItem(
               item, tmdbApiKey,
               proxyHost: tmdbProxyHost, proxyPort: tmdbProxyPort,
               deferDetails: true,
             );
             if (_scanShouldAbort(libraryID)) return;
-            // Route through _upsertItems so the shared TMDB/Douban works cache
-            // is mirrored for globally-scanned matches too.
-            await _upsertItems([recognized]);
+            pendingUpserts.add(recognized);
+            await flushPendingUpserts();
             if (recognized.needsDetailHydration) {
               deferredDetailItems.add(recognized);
             }
@@ -2970,9 +3128,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             } else {
               unmatchedCount += 1;
             }
-            // Per-item detail floods the log on a large library (one line per
-            // file). Keep unmatched files (the actionable ones) at debug level
-            // and let the periodic summary below report overall progress.
             if (!recognized.isMatched) {
               AppLogger.debug(
                 'Media',
@@ -2985,9 +3140,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             unmatchedCount += 1;
           }
           if (completed % 5 == 0) {
-            // Reloading + enriching the entire library from SQLite is O(N);
-            // doing it every 10 items makes a large scan O(N²). A coarser
-            // interval keeps the grid live without the quadratic cost.
             if (completed % 200 == 0) {
               final refreshedItems = await _loadItems(libraryID);
               state = state.copyWith(items: refreshedItems);
@@ -3037,14 +3189,35 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               continue;
             }
             if ((file.size ?? 0) < minimumSizeBytes) { skippedSmall += 1; continue; }
+            // 第二步：入队前模式筛选（流水线环节）。
+            // forceAll 全部识别，无需筛选，保持乐观放行；
+            // unindexedOnly/unrecognizedOnly 的筛选依赖 ID 集合（判断未入库/
+            // 未匹配），ID 集合与 folder_children 读取并行填充，就绪前等待
+            // 该次（之后恒就绪），就绪后精确筛选——保证扫描范围正确，
+            // 不把已入库/已匹配的文件误入队。
             if (otherLibraryFileIDs.contains(file.id)) { skippedOtherLib += 1; continue; }
-            if (existingGlobalFileIDs.contains(file.id) && !forceAll) {
-              if (!unmatchedFileIDs.contains(file.id)) {
-                // 已入库且已匹配 → 跳过
-                skippedDuplicate += 1;
-                continue;
+            if (!forceAll) {
+              if (!idPrepDone) {
+                await idPrepFuture;
               }
-              // 已入库但未匹配 → 需要重新识别
+              switch (mode) {
+                case MediaLibraryScanMode.forceAll:
+                  break;
+                case MediaLibraryScanMode.unindexedOnly:
+                  if (existingGlobalFileIDs.contains(file.id)) {
+                    // 已入库 → 跳过（本次只扫描未入库的新文件）
+                    skippedDuplicate += 1;
+                    continue;
+                  }
+                  break;
+                case MediaLibraryScanMode.unrecognizedOnly:
+                  if (!unmatchedFileIDs.contains(file.id)) {
+                    // 不在未匹配集合 → 跳过（本次只识别已入库但未匹配的文件）
+                    skippedDuplicate += 1;
+                    continue;
+                  }
+                  break;
+              }
             }
             final item = MediaLibraryItem.fromFile(
               libraryID,
@@ -3069,7 +3242,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           }
         },
         batchSize: batchSize,
+        shouldStop: () => _scanShouldAbort(libraryID),
       );
+      }
       if (insertBatch.isNotEmpty) await _store.upsertItems(insertBatch);
 
       final totalSkipped = skippedNotVideo + skippedIso + skippedSmall +
@@ -3082,35 +3257,24 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         '${skippedExcluded > 0 ? ' 排除$skippedExcluded' : ''}）',
       );
 
-      // 生产者结束，等待消费者处理完队列中剩余数据
+      // 生产者结束：等待本地预筛消费者处理完队列中剩余数据
       producerDone = true;
       await Future.wait(consumers);
-
-      // ── 3.5 详情补全消费者 ──
-      // Matching only resolved ids; now turn those into full records. Grouped
-      // per work, so a 24-episode season costs one request, not 24.
-      if (!_scanShouldAbort(libraryID) && deferredDetailItems.isNotEmpty) {
-        _setScanProgress(
-          libraryID,
-          MediaLibraryScanProgress(
-            phase: '正在补全刮削详情',
-            completed: completed,
-            total: insertedCount,
-            scanned: scannedFiles,
-            matched: recognizedCount,
-            unmatched: unmatchedCount,
-          ),
-        );
-        _appendScanLog('识别完成，开始补全 ${deferredDetailItems.length} 条刮削详情…');
-        await _hydrateDeferredDetails(
-          deferredDetailItems,
-          apiKey: tmdbApiKey,
-          proxyHost: tmdbProxyHost,
-          proxyPort: tmdbProxyPort,
-          libraryID: libraryID,
-          concurrency: concurrency,
+      // 本地预筛全部结束，通知远程消费者处理完剩余条目后退出
+      localPhaseDone = true;
+      if (remoteRecognizeQueue.isNotEmpty) {
+        _appendScanLog(
+          '本地预筛完成，${remoteRecognizeQueue.length} 条待远程识别…',
         );
       }
+      await Future.wait(remoteConsumers);
+      // 远程识别全部结束，通知详情补全消费者处理完剩余条目后退出
+      remotePhaseDone = true;
+      await Future.wait(detailConsumers);
+      // 强制写入剩余缓冲的识别结果
+      await flushPendingUpserts(force: true);
+      // ID 集合预取是后台并行跑完的，收尾前确保其完成（统计依赖完整集合）
+      await idPrepFuture;
 
       // ── 4. 最终统计 ──
       final stats = await _store.statistics();
@@ -5401,6 +5565,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     required String proxyHost,
     required String proxyPort,
     bool deferDetails = false,
+    bool localOnly = false,
   }) async {
     if (_api == null) return fallback;
     try {
@@ -5495,6 +5660,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             );
           }
         }
+      }
+
+      // localOnly 模式（本地预筛阶段）：本地 works 表未命中则直接返回，
+      // 由调用方将该条目放入远程识别队列，避免在预筛阶段触发网络请求。
+      if (localOnly && searchResult.candidates.isEmpty) {
+        return fallback;
       }
 
       // ── Title-level search cache: many files share the same parsed title
