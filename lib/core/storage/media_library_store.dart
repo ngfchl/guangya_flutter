@@ -18,6 +18,10 @@ class MediaLibraryStore {
   static Future<Database>? _openingDatabase;
   bool _mediaItemLocationColumnsReady = false;
   Future<void>? _mediaItemLocationColumnsCheck;
+  // 本地 works 标题查询缓存：同一标题（如 24 集同一剧）只查一次 SQL，
+  // 大幅减少本地预筛的 DB 往返。键 = normalized|year|mediaKind|limit。
+  final Map<String, List<TMDBWork>> _tmdbTitleSearchCache = {};
+  final Map<String, List<DoubanWork>> _doubanTitleSearchCache = {};
 
   Future<Database> get _db => _openDatabase();
 
@@ -1979,6 +1983,11 @@ class MediaLibraryStore {
       'CREATE INDEX IF NOT EXISTS idx_tmdb_works_tmdb_id '
       'ON tmdb_works(tmdb_id)',
     );
+    // 本地预筛按标题查询 works，NOCASE 索引让精确匹配走索引而非全表扫描
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_tmdb_works_title '
+      'ON tmdb_works(title COLLATE NOCASE)',
+    );
     await db.execute('''
       CREATE TABLE IF NOT EXISTS douban_works (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1997,9 +2006,109 @@ class MediaLibraryStore {
       'CREATE INDEX IF NOT EXISTS idx_douban_works_douban_id '
       'ON douban_works(douban_id)',
     );
+    // 本地预筛按标题查询 works，NOCASE 索引让精确匹配走索引而非全表扫描
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_douban_works_title '
+      'ON douban_works(title COLLATE NOCASE)',
+    );
+    // ── FTS5 全文索引：替代 LIKE '%x%' 全表扫描，支持标题子串匹配。
+    // 外部内容表 + 触发器保持与基础表同步；trigram 分词器要求 ≥3 字符，
+    // 短查询由调用方回退 LIKE。首次建库时用 rebuild 命令补齐已有行。
+    await db.execute(
+      'CREATE VIRTUAL TABLE IF NOT EXISTS tmdb_works_fts USING fts5('
+      "title, original_title, content='tmdb_works', content_rowid='id', "
+      "tokenize='trigram')",
+    );
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS tmdb_works_fts_ai AFTER INSERT ON tmdb_works BEGIN
+        INSERT INTO tmdb_works_fts(rowid, title, original_title)
+        VALUES (new.id, new.title, new.original_title);
+      END
+    ''');
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS tmdb_works_fts_ad AFTER DELETE ON tmdb_works BEGIN
+        INSERT INTO tmdb_works_fts(tmdb_works_fts, rowid, title, original_title)
+        VALUES ('delete', old.id, old.title, old.original_title);
+      END
+    ''');
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS tmdb_works_fts_au AFTER UPDATE ON tmdb_works BEGIN
+        INSERT INTO tmdb_works_fts(tmdb_works_fts, rowid, title, original_title)
+        VALUES ('delete', old.id, old.title, old.original_title);
+        INSERT INTO tmdb_works_fts(rowid, title, original_title)
+        VALUES (new.id, new.title, new.original_title);
+      END
+    ''');
+    await db.execute(
+      'CREATE VIRTUAL TABLE IF NOT EXISTS douban_works_fts USING fts5('
+      "title, original_title, content='douban_works', content_rowid='id', "
+      "tokenize='trigram')",
+    );
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS douban_works_fts_ai AFTER INSERT ON douban_works BEGIN
+        INSERT INTO douban_works_fts(rowid, title, original_title)
+        VALUES (new.id, new.title, new.original_title);
+      END
+    ''');
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS douban_works_fts_ad AFTER DELETE ON douban_works BEGIN
+        INSERT INTO douban_works_fts(douban_works_fts, rowid, title, original_title)
+        VALUES ('delete', old.id, old.title, old.original_title);
+      END
+    ''');
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS douban_works_fts_au AFTER UPDATE ON douban_works BEGIN
+        INSERT INTO douban_works_fts(douban_works_fts, rowid, title, original_title)
+        VALUES ('delete', old.id, old.title, old.original_title);
+        INSERT INTO douban_works_fts(rowid, title, original_title)
+        VALUES (new.id, new.title, new.original_title);
+      END
+    ''');
+    // 首次建库（或旧库无 FTS 标记）时，用 rebuild 命令把已有 works 补进索引。
+    // 注意：此处必须用传入的 db 而非 _db——_createSchema 可能在 onCreate/
+    // onUpgrade 期间被调用，此时 _database 尚未赋值，_db 会递归打开（死锁）。
+    // trigram 分词器需要 SQLite 3.34+，旧环境建表失败时降级为 LIKE 全表扫描。
+    try {
+      final ftsRows = await db.query(
+        'store_meta',
+        columns: const ['value'],
+        where: 'key = ?',
+        whereArgs: const ['works_fts_built_v1'],
+        limit: 1,
+      );
+      if (ftsRows.isEmpty) {
+        await db.execute(
+          "INSERT INTO tmdb_works_fts(tmdb_works_fts) VALUES ('rebuild')",
+        );
+        await db.execute(
+          "INSERT INTO douban_works_fts(douban_works_fts) VALUES ('rebuild')",
+        );
+        await db.insert('store_meta', {
+          'key': 'works_fts_built_v1',
+          'value': '1',
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    } catch (error) {
+      AppLogger.warning(
+        'Storage',
+        'FTS5 works 索引重建失败（降级为 LIKE 查询）：$error',
+      );
+    }
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_library_title '
       'ON media_items(library_id, title COLLATE NOCASE)',
+    );
+    // keyset 分页索引：allItemsBatched 按 (title, library_id, file_id) 游标续读
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_library_title_file '
+      'ON media_items(library_id, title COLLATE NOCASE, file_id)',
+    );
+    // 未匹配行（无 tmdb/douban id）部分索引：unmatchedFileIDsBatched 只扫
+    // 这些行，跳过已匹配行，大幅缩小 keyset 扫描范围。
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_library_title_file_unmatched '
+      'ON media_items(library_id, title COLLATE NOCASE, file_id) '
+      'WHERE tmdb_id IS NULL AND douban_id IS NULL',
     );
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_id '
@@ -2383,6 +2492,10 @@ class MediaLibraryStore {
     final normalized = title.trim().toLowerCase();
     if (normalized.isEmpty) return const [];
 
+    final cacheKey = '$normalized|$year|$mediaKind|$limit';
+    final cached = _tmdbTitleSearchCache[cacheKey];
+    if (cached != null) return cached;
+
     // Phase 1: exact match on title or original_title.
     final exactRows = await db.rawQuery(
       '''
@@ -2402,32 +2515,89 @@ class MediaLibraryStore {
       ],
     );
     if (exactRows.isNotEmpty) {
-      return exactRows.map((r) => TMDBWork.fromJson(r)).toList();
+      final result = exactRows.map((r) => TMDBWork.fromJson(r)).toList();
+      _tmdbTitleSearchCache[cacheKey] = result;
+      return result;
     }
 
-    // Phase 2: fuzzy LIKE match.
+    // Phase 2: fuzzy match. Prefer FTS5 trigram substring search when the
+    // query is long enough (≥3 chars); otherwise fall back to LIKE. FTS5
+    // may be unavailable on older SQLite builds, so any failure degrades
+    // gracefully to the LIKE scan.
     final likePattern = '%$normalized%';
-    final fuzzyRows = await db.rawQuery(
-      '''
-      SELECT * FROM tmdb_works
-      WHERE (LOWER(title) LIKE ? OR LOWER(original_title) LIKE ?)
-      ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
-      ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
-      ORDER BY
-        CASE WHEN LOWER(title) = ? THEN 0 ELSE 1 END,
-        rating DESC NULLS LAST
-      LIMIT ?
-    ''',
-      [
-        likePattern,
-        likePattern,
-        if (mediaKind != null && mediaKind != 'automatic') mediaKind,
-        if (year != null) '$year',
-        normalized,
-        limit,
-      ],
-    );
-    return fuzzyRows.map((r) => TMDBWork.fromJson(r)).toList();
+    List<Map<String, Object?>> fuzzyRows;
+    if (normalized.runes.length >= 3) {
+      try {
+        final escaped = normalized.replaceAll('"', '""');
+        fuzzyRows = await db.rawQuery(
+          '''
+          SELECT t.* FROM tmdb_works t
+          JOIN (
+            SELECT rowid FROM tmdb_works_fts
+            WHERE tmdb_works_fts MATCH ?
+          ) f ON f.rowid = t.id
+          ${mediaKind != null && mediaKind != 'automatic' ? "WHERE t.media_kind = ?" : ''}
+          ${year != null ? "${mediaKind != null && mediaKind != 'automatic' ? 'AND' : 'WHERE'} SUBSTR(t.release_date, 1, 4) = ?" : ''}
+          ORDER BY
+            CASE WHEN LOWER(t.title) = ? THEN 0 ELSE 1 END,
+            t.rating DESC NULLS LAST
+          LIMIT ?
+        ''',
+          [
+            '"$escaped"',
+            if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+            if (year != null) '$year',
+            normalized,
+            limit,
+          ],
+        );
+      } catch (_) {
+        fuzzyRows = await db.rawQuery(
+          '''
+          SELECT * FROM tmdb_works
+          WHERE (LOWER(title) LIKE ? OR LOWER(original_title) LIKE ?)
+          ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
+          ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
+          ORDER BY
+            CASE WHEN LOWER(title) = ? THEN 0 ELSE 1 END,
+            rating DESC NULLS LAST
+          LIMIT ?
+        ''',
+          [
+            likePattern,
+            likePattern,
+            if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+            if (year != null) '$year',
+            normalized,
+            limit,
+          ],
+        );
+      }
+    } else {
+      fuzzyRows = await db.rawQuery(
+        '''
+        SELECT * FROM tmdb_works
+        WHERE (LOWER(title) LIKE ? OR LOWER(original_title) LIKE ?)
+        ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
+        ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
+        ORDER BY
+          CASE WHEN LOWER(title) = ? THEN 0 ELSE 1 END,
+          rating DESC NULLS LAST
+        LIMIT ?
+      ''',
+        [
+          likePattern,
+          likePattern,
+          if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+          if (year != null) '$year',
+          normalized,
+          limit,
+        ],
+      );
+    }
+    final result = fuzzyRows.map((r) => TMDBWork.fromJson(r)).toList();
+    _tmdbTitleSearchCache[cacheKey] = result;
+    return result;
   }
 
   Future<TMDBWork?> tmdbWork(int tmdbID) async {
@@ -2538,6 +2708,10 @@ class MediaLibraryStore {
     final normalized = title.trim().toLowerCase();
     if (normalized.isEmpty) return const [];
 
+    final cacheKey = '$normalized|$year|$mediaKind|$limit';
+    final cached = _doubanTitleSearchCache[cacheKey];
+    if (cached != null) return cached;
+
     final exactRows = await db.rawQuery(
       '''
       SELECT * FROM douban_works
@@ -2556,31 +2730,89 @@ class MediaLibraryStore {
       ],
     );
     if (exactRows.isNotEmpty) {
-      return exactRows.map((r) => DoubanWork.fromJson(r)).toList();
+      final result = exactRows.map((r) => DoubanWork.fromJson(r)).toList();
+      _doubanTitleSearchCache[cacheKey] = result;
+      return result;
     }
 
+    // Phase 2: fuzzy match. Prefer FTS5 trigram substring search when the
+    // query is long enough (≥3 chars); otherwise fall back to LIKE. FTS5
+    // may be unavailable on older SQLite builds, so any failure degrades
+    // gracefully to the LIKE scan.
     final likePattern = '%$normalized%';
-    final fuzzyRows = await db.rawQuery(
-      '''
-      SELECT * FROM douban_works
-      WHERE (LOWER(title) LIKE ? OR LOWER(original_title) LIKE ?)
-      ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
-      ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
-      ORDER BY
-        CASE WHEN LOWER(title) = ? THEN 0 ELSE 1 END,
-        rating DESC NULLS LAST
-      LIMIT ?
-    ''',
-      [
-        likePattern,
-        likePattern,
-        if (mediaKind != null && mediaKind != 'automatic') mediaKind,
-        if (year != null) '$year',
-        normalized,
-        limit,
-      ],
-    );
-    return fuzzyRows.map((r) => DoubanWork.fromJson(r)).toList();
+    List<Map<String, Object?>> fuzzyRows;
+    if (normalized.runes.length >= 3) {
+      try {
+        final escaped = normalized.replaceAll('"', '""');
+        fuzzyRows = await db.rawQuery(
+          '''
+          SELECT t.* FROM douban_works t
+          JOIN (
+            SELECT rowid FROM douban_works_fts
+            WHERE douban_works_fts MATCH ?
+          ) f ON f.rowid = t.id
+          ${mediaKind != null && mediaKind != 'automatic' ? "WHERE t.media_kind = ?" : ''}
+          ${year != null ? "${mediaKind != null && mediaKind != 'automatic' ? 'AND' : 'WHERE'} SUBSTR(t.release_date, 1, 4) = ?" : ''}
+          ORDER BY
+            CASE WHEN LOWER(t.title) = ? THEN 0 ELSE 1 END,
+            t.rating DESC NULLS LAST
+          LIMIT ?
+        ''',
+          [
+            '"$escaped"',
+            if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+            if (year != null) '$year',
+            normalized,
+            limit,
+          ],
+        );
+      } catch (_) {
+        fuzzyRows = await db.rawQuery(
+          '''
+          SELECT * FROM douban_works
+          WHERE (LOWER(title) LIKE ? OR LOWER(original_title) LIKE ?)
+          ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
+          ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
+          ORDER BY
+            CASE WHEN LOWER(title) = ? THEN 0 ELSE 1 END,
+            rating DESC NULLS LAST
+          LIMIT ?
+        ''',
+          [
+            likePattern,
+            likePattern,
+            if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+            if (year != null) '$year',
+            normalized,
+            limit,
+          ],
+        );
+      }
+    } else {
+      fuzzyRows = await db.rawQuery(
+        '''
+        SELECT * FROM douban_works
+        WHERE (LOWER(title) LIKE ? OR LOWER(original_title) LIKE ?)
+        ${mediaKind != null && mediaKind != 'automatic' ? "AND media_kind = ?" : ''}
+        ${year != null ? "AND SUBSTR(release_date, 1, 4) = ?" : ''}
+        ORDER BY
+          CASE WHEN LOWER(title) = ? THEN 0 ELSE 1 END,
+          rating DESC NULLS LAST
+        LIMIT ?
+      ''',
+        [
+          likePattern,
+          likePattern,
+          if (mediaKind != null && mediaKind != 'automatic') mediaKind,
+          if (year != null) '$year',
+          normalized,
+          limit,
+        ],
+      );
+    }
+    final result = fuzzyRows.map((r) => DoubanWork.fromJson(r)).toList();
+    _doubanTitleSearchCache[cacheKey] = result;
+    return result;
   }
 
   Future<DoubanWork?> doubanWork(String doubanID) async {
