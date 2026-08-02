@@ -1581,47 +1581,49 @@ class _TopBar extends StatelessWidget {
                     radius: 19,
                     opacity: 0.52,
                     padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.search_rounded,
-                          size: 18,
-                          color: cs.foreground,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            controller: searchController,
-                            focusNode: searchFocusNode,
-                            style: TextStyle(
-                              color: cs.foreground,
-                              fontSize: 13,
-                            ),
-                            decoration: InputDecoration(
-                              border: InputBorder.none,
-                              isDense: true,
-                              hintText: mode == WorkspaceMode.cloud
-                                  ? '搜索文件'
-                                  : '搜索影视资源',
-                              hintStyle: TextStyle(
-                                color: cs.mutedForeground,
+                    child: ClipRect(
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.search_rounded,
+                            size: 18,
+                            color: cs.foreground,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: searchController,
+                              focusNode: searchFocusNode,
+                              style: TextStyle(
+                                color: cs.foreground,
                                 fontSize: 13,
                               ),
+                              decoration: InputDecoration(
+                                border: InputBorder.none,
+                                isDense: true,
+                                hintText: mode == WorkspaceMode.cloud
+                                    ? '搜索文件'
+                                    : '搜索影视资源',
+                                hintStyle: TextStyle(
+                                  color: cs.mutedForeground,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              textInputAction: TextInputAction.search,
+                              onSubmitted: onSearch,
                             ),
-                            textInputAction: TextInputAction.search,
-                            onSubmitted: onSearch,
                           ),
-                        ),
-                        InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: onToggleSearch,
-                          child: Icon(
-                            Icons.close_rounded,
-                            size: 18,
-                            color: cs.mutedForeground,
+                          InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: onToggleSearch,
+                            child: Icon(
+                              Icons.close_rounded,
+                              size: 18,
+                              color: cs.mutedForeground,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   )
                 : _TopBarIconButton(
