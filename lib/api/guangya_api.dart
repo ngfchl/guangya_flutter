@@ -341,7 +341,7 @@ class GuangyaAPI {
   Future<Map<String, dynamic>> fsRename(String fileID, String newName) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/file/rename',
-      body: {'fileId': fileID, 'newName': newName},
+      body: {'fileId': fileID, 'newName': newName, 'clientId': AppConfig.clientID},
     );
   }
 
