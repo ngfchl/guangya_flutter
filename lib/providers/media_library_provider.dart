@@ -7334,6 +7334,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           .replaceAll(RegExp(r'[._]+'), ' ')
           .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
+      // 优先加入剥离年份的干净标题：如「超级宝贝JOJO 2019」→「超级宝贝
+      // JOJO」。若把带年份的原始标题当作整体去 TMDB 搜索，叠加年份参数
+      // 双重限制几乎必然失败。ParsedMediaName 的年份负向后顾不会误伤
+      // 「你好1983」这类年份本就是剧名的情形。
+      final parsedRaw = ParsedMediaName.parse(rawFileTitle);
+      final cleanedRawTitle = parsedRaw.title.trim();
+      if (parsedRaw.year != null &&
+          cleanedRawTitle.isNotEmpty &&
+          cleanedRawTitle != rawFileTitle) {
+        addWithVariants(cleanedRawTitle, '文件名原始标题去年份');
+      }
       // Keep this before the parsed title. A real work title may itself end
       // in `S01` or `S02`, while the following marker still identifies the
       // resource episode, for example `Project.S01.S01E01`.
