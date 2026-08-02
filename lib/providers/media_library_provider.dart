@@ -1087,6 +1087,100 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     }
   }
 
+  /// 导出本地 TMDB/豆瓣 works 刮削数据为 JSON 文件（不含影视条目本身）。
+  Future<void> exportWorksData(String destinationPath) async {
+    if (state.isLoading || state.hasActiveScans) return;
+    state = state.copyWith(
+      clearError: true,
+      clearStatus: true,
+      cloudBackupSync: const CloudBackupSyncProgress(
+        phase: '导出 works 中',
+        destination: '',
+        transferredBytes: 0,
+        totalBytes: 0,
+        isActive: true,
+      ),
+    );
+    try {
+      final json = await _store.exportWorksJSON();
+      final file = File(destinationPath);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(json);
+      final fileName = destinationPath.split('/').last;
+      state = state.copyWith(
+        statusMessage: '刮削数据已导出到 $fileName',
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '导出完成',
+          destination: fileName,
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+        ),
+      );
+    } catch (error) {
+      state = state.copyWith(
+        errorMessage: '导出失败：$error',
+        cloudBackupSync: const CloudBackupSyncProgress(
+          phase: '导出失败',
+          destination: '',
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+        ),
+      );
+    } finally {
+      state = state.copyWith(isLoading: false);
+    }
+  }
+
+  /// 从 JSON 文件导入 TMDB/豆瓣 works 刮削数据（按 tmdb_id/douban_id 去重合并）。
+  Future<({int tmdb, int douban})> importWorksData(String sourcePath) async {
+    if (state.isLoading || state.hasActiveScans) {
+      return (tmdb: 0, douban: 0);
+    }
+    state = state.copyWith(
+      clearError: true,
+      clearStatus: true,
+      cloudBackupSync: const CloudBackupSyncProgress(
+        phase: '导入 works 中',
+        destination: '',
+        transferredBytes: 0,
+        totalBytes: 0,
+        isActive: true,
+      ),
+    );
+    try {
+      final json = await File(sourcePath).readAsString();
+      final result = await _store.importWorksJSON(json);
+      final fileName = sourcePath.split('/').last;
+      state = state.copyWith(
+        statusMessage: '已导入 $fileName（TMDB ${result.tmdb}，豆瓣 ${result.douban}）',
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '导入完成',
+          destination: fileName,
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+        ),
+      );
+      return result;
+    } catch (error) {
+      state = state.copyWith(
+        errorMessage: '导入失败：$error',
+        cloudBackupSync: const CloudBackupSyncProgress(
+          phase: '导入失败',
+          destination: '',
+          transferredBytes: 0,
+          totalBytes: 0,
+          isActive: false,
+        ),
+      );
+      return (tmdb: 0, douban: 0);
+    } finally {
+      state = state.copyWith(isLoading: false);
+    }
+  }
+
   Future<void> exportScrapedDataToCloud() async {
     if (_api == null || state.isLoading || state.hasActiveScans) return;
     _appendBackupLog('开始备份');

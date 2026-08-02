@@ -2677,6 +2677,53 @@ class MediaLibraryStore {
     return result;
   }
 
+  /// 导出全部 TMDB/豆瓣 works 为可移植 JSON 字符串。
+  /// 格式：{version, exported_at, tmdb_works: [...], douban_works: [...]}，
+  /// 每个 work 使用模型的 toJson() 全字段序列化，供 [importWorksJSON] 还原。
+  Future<String> exportWorksJSON() async {
+    final tmdbWorks = await allTMDBWorks();
+    final doubanWorks = await allDoubanWorks();
+    return jsonEncode({
+      'version': 1,
+      'exported_at': DateTime.now().toIso8601String(),
+      'tmdb_works': tmdbWorks.map((w) => w.toJson()).toList(),
+      'douban_works': doubanWorks.map((w) => w.toJson()).toList(),
+    });
+  }
+
+  /// 从 [exportWorksJSON] 生成的 JSON 字符串恢复 works 数据。
+  /// 返回 (tmdb 数, douban 数)；同 tmdb_id/douban_id 以新数据覆盖（去重合并）。
+  Future<({int tmdb, int douban})> importWorksJSON(String json) async {
+    final data = jsonDecode(json);
+    if (data is! Map) return (tmdb: 0, douban: 0);
+    final tmdbList = <TMDBWork>[];
+    for (final value in (data['tmdb_works'] as List? ?? const [])) {
+      if (value is Map) {
+        try {
+          tmdbList.add(TMDBWork.fromJson(Map<String, dynamic>.from(value)));
+        } catch (_) {}
+      }
+    }
+    final doubanList = <DoubanWork>[];
+    for (final value in (data['douban_works'] as List? ?? const [])) {
+      if (value is Map) {
+        try {
+          doubanList.add(DoubanWork.fromJson(Map<String, dynamic>.from(value)));
+        } catch (_) {}
+      }
+    }
+    await upsertTMDBWorks(tmdbList);
+    await upsertDoubanWorks(doubanList);
+    clearWorksSearchCache();
+    return (tmdb: tmdbList.length, douban: doubanList.length);
+  }
+
+  /// 清空本地 works 标题查询缓存（导入/写入 works 后调用，避免命中旧数据）。
+  void clearWorksSearchCache() {
+    _tmdbTitleSearchCache.clear();
+    _doubanTitleSearchCache.clear();
+  }
+
   /// 从 TMDB/豆瓣独立表加载详情，附加到 media items 上
   Future<List<MediaLibraryItem>> enrichItemsWithWorkDetails(
     List<MediaLibraryItem> items,

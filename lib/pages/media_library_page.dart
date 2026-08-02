@@ -730,6 +730,8 @@ class _BackupActionsMenu extends StatefulWidget {
   final CloudBackupSyncProgress? progress;
   final VoidCallback onExport;
   final VoidCallback onImport;
+  final VoidCallback onExportWorks;
+  final VoidCallback onImportWorks;
   final VoidCallback onSyncToCloud;
   final VoidCallback onRestoreFromCloud;
 
@@ -739,6 +741,8 @@ class _BackupActionsMenu extends StatefulWidget {
     required this.progress,
     required this.onExport,
     required this.onImport,
+    required this.onExportWorks,
+    required this.onImportWorks,
     required this.onSyncToCloud,
     required this.onRestoreFromCloud,
   });
@@ -848,6 +852,16 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
               icon: Icons.upload_file_rounded,
               label: '导入数据',
               onPressed: widget.onImport,
+            ),
+            _item(
+              icon: Icons.ios_share_rounded,
+              label: '导出刮削数据(JSON)',
+              onPressed: widget.onExportWorks,
+            ),
+            _item(
+              icon: Icons.download_rounded,
+              label: '导入刮削数据(JSON)',
+              onPressed: widget.onImportWorks,
             ),
             _item(
               icon: Icons.cloud_upload_rounded,
@@ -3298,9 +3312,46 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       progress: state.cloudBackupSync,
       onExport: _exportScrapedData,
       onImport: _importScrapedData,
+      onExportWorks: _exportWorksData,
+      onImportWorks: _importWorksData,
       onSyncToCloud: _syncScrapedDataToCloud,
       onRestoreFromCloud: _syncScrapedDataFromCloud,
     );
+  }
+
+  Future<void> _exportWorksData() async {
+    final directory = await FilePicker.getDirectoryPath(
+      dialogTitle: '选择刮削数据导出目录',
+    );
+    if (directory == null || !mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      final stamp = DateTime.now()
+          .toIso8601String()
+          .replaceAll(RegExp(r'[:.]'), '-')
+          .substring(0, 19);
+      await ref
+          .read(mediaLibraryProvider.notifier)
+          .exportWorksData('$directory/works-export-$stamp.json');
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _importWorksData() async {
+    final picked = await FilePicker.pickFile(
+      dialogTitle: '选择刮削数据 JSON 文件',
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+    );
+    final path = picked?.path;
+    if (path == null || !mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      await ref.read(mediaLibraryProvider.notifier).importWorksData(path);
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
   }
 
   Future<void> _syncScrapedDataFromCloud() async {
@@ -4634,6 +4685,8 @@ class _MediaLibraryManagementDialogState
                   progress: state.cloudBackupSync,
                   onExport: _exportScrapedData,
                   onImport: _importScrapedData,
+                  onExportWorks: _exportWorksData,
+                  onImportWorks: _importWorksData,
                   onSyncToCloud: _syncScrapedDataToCloud,
                   onRestoreFromCloud: _syncScrapedDataFromCloud,
                 ),
@@ -4925,6 +4978,41 @@ class _MediaLibraryManagementDialogState
     setState(() => _backupBusy = true);
     try {
       await notifier.importScrapedDataFromCloud(selected);
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _exportWorksData() async {
+    final directory = await FilePicker.getDirectoryPath(
+      dialogTitle: '选择刮削数据导出目录',
+    );
+    if (directory == null || !mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      final stamp = DateTime.now()
+          .toIso8601String()
+          .replaceAll(RegExp(r'[:.]'), '-')
+          .substring(0, 19);
+      await ref
+          .read(mediaLibraryProvider.notifier)
+          .exportWorksData('$directory/works-export-$stamp.json');
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<void> _importWorksData() async {
+    final picked = await FilePicker.pickFile(
+      dialogTitle: '选择刮削数据 JSON 文件',
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+    );
+    final path = picked?.path;
+    if (path == null || !mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      await ref.read(mediaLibraryProvider.notifier).importWorksData(path);
     } finally {
       if (mounted) setState(() => _backupBusy = false);
     }
