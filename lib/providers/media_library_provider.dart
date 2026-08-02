@@ -2973,6 +2973,17 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       });
 
       _appendScanLog('从缓存读取文件列表…');
+      // ── 从远端遍历重建全盘文件索引，避免读到旧/不完整的
+      //    folder_children 缓存。forceAll（强制全盘）与 unindexedOnly
+      //    （扫描未入库）都依赖完整索引；unrecognizedOnly 走 media_items
+      //    表，不经过此缓存，无需重建。
+      if (mode.scansSource) {
+        _appendScanLog('正在重建全盘文件索引（远端遍历）…');
+        final refreshed = await refreshGlobalCloudIndex(force: true);
+        if (!refreshed) {
+          throw StateError('全盘文件索引重建失败');
+        }
+      }
       // ── 流式管道：DB 分批读取，边筛选边入队，消费者立刻开始消费 ──
       // 以前 allCachedFolderChildren() 一次性把全表读进内存（7万条≈几十MB），
       // 筛选完才开始入库，延迟高且内存压力大。现在用 batched 游标读取，
@@ -3273,8 +3284,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final insertBatch = <MediaLibraryItem>[];
       if (mode == MediaLibraryScanMode.unrecognizedOnly) {
         // 扫描未识别：直接从 media_items 的未匹配行读取，不扫全量缓存。
+        // global 库（__global__）是逻辑视图，数据库中没有其 media_items 行，
+        // 必须读取所有具体媒体库的未匹配行（libraryID 传 null 即不过滤）。
         await _store.allItemsBatched(
-          libraryID: libraryID,
+          libraryID: null,
           unmatchedOnly: true,
           onBatch: (items) async {
             if (_scanShouldAbort(libraryID)) return;
@@ -3355,6 +3368,30 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               file,
               directoryName: _parentDirectoryName(file.cloudPath),
             );
+            if (item.file.cloudPath.trim().isEmpty ||
+                !item.file.cloudPath.contains('/')) {
+              // 缓存缺失完整路径时，识别会丢失父目录/标题变体上下文，
+              // 尝试从 gcid_details 缓存恢复完整 cloudPath。
+              final enriched = await _store.cachedFile(file.id);
+              if (enriched != null &&
+                  enriched.cloudPath.trim().isNotEmpty &&
+                  enriched.cloudPath.contains('/')) {
+                insertBatch.add(
+                  MediaLibraryItem.fromFile(
+                    libraryID,
+                    enriched,
+                    directoryName: _parentDirectoryName(enriched.cloudPath),
+                  ),
+                );
+                recognizeQueue.add(item.copyWith(file: enriched));
+                insertedCount += 1;
+                if (insertBatch.length >= 200) {
+                  await _store.upsertItems(insertBatch);
+                  insertBatch.clear();
+                }
+                continue;
+              }
+            }
             insertBatch.add(item);
             recognizeQueue.add(item);
             insertedCount += 1;
@@ -5719,14 +5756,33 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         _appendScanLog('[同步识别][调试] 跳过：无法从文件名解析有效标题，文件=${fallback.file.name}');
         return fallback;
       }
-      Map<String, dynamic>? taggedCandidate;
+
+      // ── Layer 0: 路径中的 TMDB ID 标记（如 {tmdb-984951}、[tmdb 123]）
+      //    是最可靠的识别信号，命中直接返回，不再走标题搜索。
+      if (hasTMDBKey && !localOnly) {
+        final tagged = await _tmdbCandidateFromPathTag(
+          fallback,
+          apiKey,
+          proxyHost: proxyHost,
+          proxyPort: proxyPort,
+        );
+        if (tagged != null) {
+          _appendScanLog(
+            '[同步识别][调试] TMDB 路径标记命中：'
+            'id=${tagged['id']}，类型=${tagged['media_type']}',
+          );
+          final item = _itemFromTMDBCandidate(fallback, tagged);
+          return _itemFromTMDBDetails(item, tagged);
+        }
+      }
+
       _TMDBRecognitionSearchResult searchResult =
           const _TMDBRecognitionSearchResult(candidates: [], attempts: []);
 
       // ── Layer 1: local works pre-match. The tmdb_works / douban_works tables
       // accumulate every title ever matched, so over time this short-circuits
       // more and more files with zero network cost.
-      if (taggedCandidate == null && parsed.title.trim().isNotEmpty) {
+      if (parsed.title.trim().isNotEmpty) {
         final localTMDB = await _store.searchTMDBWorksByTitle(
           parsed.title,
           year: parsed.year,
@@ -5829,19 +5885,6 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             requestedKind,
             parsed.year,
           );
-        }
-        if (hasTMDBKey) {
-          taggedCandidate = await _tmdbCandidateFromPathTag(
-            fallback,
-            apiKey,
-            proxyHost: proxyHost,
-            proxyPort: proxyPort,
-          );
-          if (taggedCandidate != null) {
-            unawaited(doubanFuture?.catchError((_) => const <Map<String, dynamic>>[]));
-            final item = _itemFromTMDBCandidate(fallback, taggedCandidate);
-            return _itemFromTMDBDetails(item, taggedCandidate);
-          }
         }
         // Create a shared Future so concurrent workers on the same title
         // merge into one request.
@@ -5950,6 +5993,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       }
       Map<String, dynamic>? candidate;
       var bestScore = -1;
+      // 唯一候选 + 搜索阶段已确认命中（_recognitionTitleScore > 0）时，
+      // 年份差异不再一票否决——年份常来自文件/目录标注，可能与 TMDB 首播
+      // 年份差 1-2 年但标题完全正确。
+      final singleSearchHit =
+          refinedValues.length == 1 &&
+          (_toInt(refinedValues.first['_recognitionTitleScore']) ?? 0) > 0;
       for (final value in refinedValues) {
         final map = Map<String, dynamic>.from(value);
         final type = map['media_type']?.toString();
@@ -5960,6 +6009,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         final resolvedByDetails = map['_recognitionResolvedByDetails'] == true;
         final candidateYear = _releaseYearFromDate(releaseDate);
         if (!resolvedByDetails &&
+            !singleSearchHit &&
             recognitionYear != null &&
             candidateYear != null &&
             _tmdbYearDelta(candidateYear, recognitionYear) > 1) {
@@ -5976,6 +6026,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
               .toString(),
         );
         var score = titleMatch.score;
+        // 搜索阶段已用父目录/别名标题命中该候选时，其评分被记录在
+        // _recognitionTitleScore 中。最终评分重新用 _bestMediaTitleMatch
+        // 对比候选的英文 title/originalTitle，中文标题可能得 0 分而被误杀，
+        // 因此优先沿用搜索阶段已确认的命中评分。
+        final storedScore = _toInt(map['_recognitionTitleScore']) ?? 0;
+        if (storedScore > score) score = storedScore;
         final detailTitleScore = MediaTitleMatcher.bestCandidateScore([
           expectedTitle,
         ], map);
@@ -6905,12 +6961,25 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         parsed.isEpisode
         ? '.S${parsed.season!.toString().padLeft(2, '0')}E${parsed.episode!.toString().padLeft(2, '0')}'
         : '';
+    // 原文件名中的光盘标记（CD1/CD2/DISC1/DISK2 等）不能被丢弃：
+    // 解析器会把它当作噪音剥离，重命名时若丢失会让多光盘文件无法区分。
+    String? discMarker;
+    final discMatch = RegExp(
+      r'(?:\b(?:cd|disc|disk)[ ._-]*(\d{1,2})\b)',
+      caseSensitive: false,
+    ).firstMatch(item.file.name);
+    if (discMatch != null) {
+      final raw = discMatch.group(0)!.trim();
+      final normalized = raw.toUpperCase().replaceAll(RegExp(r'[\s._-]+'), '');
+      if (normalized.isNotEmpty) discMarker = normalized;
+    }
     final technical = <String>[
       if (parsed.resolution?.isNotEmpty == true) parsed.resolution!,
       if (parsed.source?.isNotEmpty == true) parsed.source!,
       if (parsed.dynamicRange?.isNotEmpty == true) parsed.dynamicRange!,
       if (parsed.videoCodec?.isNotEmpty == true) parsed.videoCodec!,
       if (parsed.audio?.isNotEmpty == true) parsed.audio!,
+      if (discMarker != null) discMarker!,
     ].join('.');
     // Keep every recognized technical tag when it is present, but a successful
     // TMDB match must also repair bare or otherwise irregular names such as
@@ -8729,6 +8798,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<List<MediaLibraryItem>> _loadAllItems() {
     return _store.items();
   }
+
+  /// Loads every row belonging to one work (all episodes / all versions),
+  /// bypassing `distinctWorks` pagination so detail pages can show the full
+  /// episode list.
+  Future<List<MediaLibraryItem>> itemsForWork({
+    int? tmdbID,
+    String? doubanID,
+    String? title,
+    int? year,
+  }) => _store.itemsForWork(
+    tmdbID: tmdbID,
+    doubanID: doubanID,
+    title: title,
+    year: year,
+  );
 
   Future<void> _saveLibraries(List<MediaLibraryDefinition> libraries) {
     return _store.saveLibraries(libraries);
