@@ -1647,18 +1647,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
 
     // Probe: try a small Range request to see if the server supports it.
-    final dio = Dio(
+    // 用 bytes=0-0 只请求 1 字节，避免 Dio 完整下载整个响应体；ResponseType.bytes
+    // 让 Dio 不缓冲完整 body，服务端支持 Range 时返回 206。
+    final probeDio = Dio(
       BaseOptions(
         connectTimeout: const Duration(seconds: 15),
         receiveTimeout: const Duration(seconds: 30),
         headers: {'Range': 'bytes=0-0'},
+        responseType: ResponseType.bytes,
       ),
     );
     try {
-      final probe = await dio.get<Uint8List>(url);
+      final probe = await probeDio.get<Uint8List>(url);
       if (probe.statusCode != 206) {
         // Server doesn't support Range — fall back to single connection.
-        _appendBackupLog('$logPrefix：服务器不支持分片，退回单连接');
+        _appendBackupLog('$logPrefix：服务器不支持分片（${probe.statusCode}），退回单连接');
         await _singleDownload(
           url: url,
           destination: destination,
@@ -1666,15 +1669,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         );
         return;
       }
-    } on DioException {
+    } on DioException catch (probeError) {
       // Range not supported or network issue — fall back to single.
-      _appendBackupLog('$logPrefix：Range 探测失败，退回单连接');
+      _appendBackupLog(
+        '$logPrefix：Range 探测失败（${probeError.type}：${probeError.message}），退回单连接',
+        isError: true,
+        error: probeError,
+      );
       await _singleDownload(
         url: url,
         destination: destination,
         onProgress: onProgress,
       );
       return;
+    } finally {
+      probeDio.close(force: true);
     }
 
     // Split into chunks and download concurrently.
@@ -1706,6 +1715,15 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           onProgress(totalReceived);
         },
       );
+      // chunk 下载完后把该 chunk 标记为已收满，避免合并前 onProgress 漏算
+      // 最后一批 bytes；同时重置 chunkReceived[index] 防止重试时重复累加。
+      final prev = chunkReceived[index];
+      final chunkLength = (end - start + 1);
+      if (prev < chunkLength) {
+        chunkReceived[index] = chunkLength;
+        totalReceived += chunkLength - prev;
+        onProgress(totalReceived);
+      }
     }
 
     try {
@@ -1716,8 +1734,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           batch.add(downloadChunk(j));
         }
         await Future.wait(batch);
-        // Report overall progress after each batch completes.
-        onProgress(totalBytes);
+        // 每个 batch 完成后汇报一次累计进度（已收字节，由各 chunk 回调维护）。
+        onProgress(totalReceived.clamp(0, totalBytes));
       }
 
       // Merge chunks into final file.
@@ -1747,12 +1765,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     required String destination,
     required void Function(int receivedBytes) onProgress,
   }) async {
-    int received = 0;
     await Dio().download(
       url,
       destination,
-      onReceiveProgress: (got, _) {
-        received += got;
+      onReceiveProgress: (received, _) {
+        // Dio download 的 received 是本次累计已收字节，直接传出即可，
+        // 不要再累加（之前 received += got 会重复计数导致进度远超实际）。
         onProgress(received);
       },
     );
