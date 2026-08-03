@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
@@ -652,10 +653,11 @@ class GuangyaAPI {
   Future<Map<String, dynamic>> checkCanFlashUpload(
     String taskID,
     String gcid,
+    String cid,
   ) async {
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/check_can_flash_upload',
-      body: {'taskId': taskID, 'gcid': gcid},
+      body: {'taskId': taskID, 'gcid': gcid, 'cid': cid},
     );
   }
 
@@ -709,8 +711,8 @@ class GuangyaAPI {
     if (taskID == null) throw Exception('响应缺少字段：taskId');
     onTaskCreated?.call(taskID);
 
-    final gcid = await _calculateFileGCID(file, size);
-    final canFlash = await checkCanFlashUpload(taskID, gcid);
+    final hashes = await _calculateFileHashes(file, size);
+    final canFlash = await checkCanFlashUpload(taskID, hashes.gcid, hashes.cid);
     if (JsonDeep.findBool(canFlash, ['canFlashUpload', 'can_flash_upload']) ==
         true) {
       onProgress?.call(size, size);
@@ -1071,7 +1073,16 @@ class GuangyaAPI {
     return base64Encode(bytes);
   }
 
-  static Future<String> _calculateFileGCID(File file, int length) async {
+  /// 同时计算文件的 GCID 和 CID，复刻光鸭盘 Web uploader 的 hash worker 算法：
+  /// - GCID：逐块 SHA-1，把所有块的哈希字节拼成大 buffer 再 SHA-1
+  /// - CID：取最多 3 段（每段 20480 字节）拼成小 buffer 再 SHA-1
+  ///   文件 < 61440B：取整个文件
+  ///   否则取 [0,20480)、[size/3, size/3+20480)、[size-20480, size)
+  /// 两者均输出大写十六进制。
+  static Future<({String gcid, String cid})> _calculateFileHashes(
+    File file,
+    int length,
+  ) async {
     final chunkSize = length <= 0x8000000
         ? 262144
         : length <= 0x10000000
@@ -1079,24 +1090,54 @@ class GuangyaAPI {
         : length <= 0x20000000
         ? 1048576
         : 2097152;
-    final hashes = <int>[];
+    // CID 采样区间
+    final cidRanges = length < 61440
+        ? [(0, length)]
+        : [
+            (0, 20480),
+            (length ~/ 3, length ~/ 3 + 20480),
+            (length - 20480, length),
+          ];
+    final cidExpectedSize = cidRanges.fold<int>(
+      0,
+      (sum, range) => sum + (range.$2 - range.$1),
+    );
+    final cidBytes = Uint8List(cidExpectedSize);
+    var cidFilled = 0;
+    final gcidHashes = <int>[];
     final input = await file.open();
     try {
       var offset = 0;
       while (offset < length) {
         final chunk = await input.read(min(chunkSize, length - offset));
         if (chunk.isEmpty) throw Exception('读取上传文件失败：文件提前结束');
-        hashes.addAll(sha1.convert(chunk).bytes);
+        gcidHashes.addAll(sha1.convert(chunk).bytes);
+        // 把当前块落入 CID 采样区间的字节拷进 cidBytes
+        for (final range in cidRanges) {
+          final start = max(offset, range.$1);
+          final end = min(offset + chunk.length, range.$2);
+          if (start >= end) continue;
+          cidBytes.setRange(
+            cidFilled,
+            cidFilled + (end - start),
+            chunk.sublist(start - offset, end - offset),
+          );
+          cidFilled += end - start;
+        }
         offset += chunk.length;
       }
     } finally {
       await input.close();
     }
-    return sha1
-        .convert(hashes)
-        .bytes
-        .map((byte) => byte.toRadixString(16).padLeft(2, '0').toUpperCase())
-        .join();
+    if (cidFilled != cidExpectedSize) {
+      throw Exception('CID 数据长度不符：$cidFilled != $cidExpectedSize');
+    }
+    final gcidInput = Uint8List.fromList(gcidHashes);
+    final gcid = sha1.convert(gcidInput).bytes;
+    final cid = sha1.convert(cidBytes).bytes;
+    String toHex(List<int> bytes) =>
+        bytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join();
+    return (gcid: toHex(gcid), cid: toHex(cid));
   }
 
   // ── Douban (Frodo API) ────────────────────────────────────────────
