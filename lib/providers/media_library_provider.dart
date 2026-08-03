@@ -1219,7 +1219,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   }
 
   Future<void> exportScrapedDataToCloud() async {
-    if (_api == null || state.isLoading || state.hasActiveScans) return;
+    if (_api == null || state.isLoading || state.hasActiveScans) {
+      _appendBackupLog('跳过同步：API未就绪或扫描进行中');
+      return;
+    }
     _appendBackupLog('开始备份');
     state = state.copyWith(
       clearError: true,
@@ -1234,13 +1237,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
     Directory? temporaryDirectory;
     try {
+      _appendBackupLog('定位云盘备份目录…');
       final destination = await _resolveCloudBackupDestination();
+      _appendBackupLog('备份目录：${destination.path}（id=${destination.id})');
       temporaryDirectory = await Directory.systemTemp.createTemp(
         'guangya-media-',
       );
       final backup = File(
         '${temporaryDirectory.path}/${_cloudBackupFileName(DateTime.now())}',
       );
+      _appendBackupLog('导出本地数据库到 ${backup.path}');
       await _store.exportBackupTo(backup.path);
       final size = await backup.length();
       _appendBackupLog('已导出 ${FormatBytes.format(size)}，正在上传');
@@ -1257,12 +1263,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final uploadRate = _BackupTransferRate();
       String? uploadedTaskID;
       try {
+        _appendBackupLog(
+          '调用 fileUpload：parent=${destination.id}，大小=${FormatBytes.format(size)}',
+        );
         await _api!.fileUpload(
           backup,
           parentID: destination.id,
           contentType: 'application/vnd.sqlite3',
           onTaskCreated: (taskID) {
             uploadedTaskID = taskID;
+            _appendBackupLog('已创建上传任务：$taskID');
           },
           onProgress: (sent, total) {
             state = state.copyWith(
@@ -1279,6 +1289,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           },
           onProcessing: () {
             final current = state.cloudBackupSync;
+            _appendBackupLog('云端处理中（落盘）');
             state = state.copyWith(
               cloudBackupSync: CloudBackupSyncProgress(
                 phase: '处理中',
@@ -1292,14 +1303,24 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             );
           },
         );
+        _appendBackupLog('fileUpload 返回，任务=$uploadedTaskID');
       } catch (uploadError) {
+        _appendBackupLog(
+          '上传抛错：${uploadError.runtimeType}：$uploadError',
+          isError: true,
+          error: uploadError,
+        );
         // Delete the partially uploaded file on failure
         if (uploadedTaskID != null) {
           try {
             await _api!.deleteUploadTask([uploadedTaskID!]);
             _appendBackupLog('已清理上传残留');
-          } catch (_) {
-            // Best-effort cleanup; ignore errors
+          } catch (cleanupError) {
+            _appendBackupLog(
+              '清理上传残留失败：$cleanupError',
+              isError: true,
+              error: cleanupError,
+            );
           }
         }
         rethrow;
@@ -1321,7 +1342,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final current = state.cloudBackupSync;
       final destination = current?.destination ?? '云盘根目录/小黄鸭备份';
       final reason = _backupFailureReason(error);
-      _appendBackupLog('备份失败：$reason', isError: true, error: error);
+      _appendBackupLog(
+        '备份失败：$reason\n原始错误：${error.runtimeType}：$error',
+        isError: true,
+        error: error,
+      );
       state = state.copyWith(
         errorMessage: '同步到云盘失败：$reason',
         cloudBackupSync: CloudBackupSyncProgress(
@@ -1343,7 +1368,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<_CloudBackupDestination> _resolveCloudBackupDestination() async {
     const folderName = '小黄鸭备份';
     final existing = await _findCloudBackupDestination();
-    if (existing != null) return existing;
+    if (existing != null) {
+      _appendBackupLog('复用已有备份目录：${existing.path}（id=${existing.id})');
+      return existing;
+    }
+    _appendBackupLog('未找到备份目录，创建「$folderName」');
     final folderID = JsonDeep.findString(
       await _api!.fsCreateDir(folderName, parentID: null),
       const ['fileId', 'file_id', 'resId', 'res_id', 'id'],
@@ -1362,14 +1391,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       StorageKeys.cloudScrapedBackupFolderID,
     )?.trim();
     if (storedID != null && storedID.isNotEmpty) {
+      _appendBackupLog('使用已缓存备份目录 id：$storedID');
       return _CloudBackupDestination(id: storedID, path: '云盘根目录/小黄鸭备份');
     }
+    _appendBackupLog('未缓存目录 id，列举云盘根目录查找「$folderName」');
     final root = await _api!.fsFiles(parentID: null, pageSize: 1000);
     final existing = _extractFiles(
       root,
     ).where((file) => file.isDirectory && file.name == folderName);
     final folder = existing.isEmpty ? null : existing.first;
-    if (folder == null) return null;
+    if (folder == null) {
+      _appendBackupLog('根目录未找到「$folderName」');
+      return null;
+    }
+    _appendBackupLog('命中目录「$folderName」（id=${folder.id}）');
     await StorageManager.set(StorageKeys.cloudScrapedBackupFolderID, folder.id);
     return _CloudBackupDestination(id: folder.id, path: '云盘根目录/$folderName');
   }
@@ -2772,15 +2807,10 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final lastUpdated = int.tryParse(
       StorageManager.get<String>(StorageKeys.cloudIndexLastUpdatedAt) ?? '',
     );
-    final rootSnapshot = await FileMetadataCache.folderChildren(null);
-    final liveGCIDIndexReady =
-        StorageManager.get<String>(StorageKeys.cloudIndexLiveGCIDVersion) ==
-        '1';
-    final needsFullRebuild =
-        force ||
-        lastUpdated == null ||
-        rootSnapshot == null ||
-        !liveGCIDIndexReady;
+    // 全量刷新只在首次（无时间标记）或用户手动触发时执行；
+    // 冷启动只要时间标记未过期就走增量，不再因 rootSnapshot/liveGCIDVersion
+    // 这两个易丢条件触发全量。
+    final needsFullRebuild = force || lastUpdated == null;
     if (!force && !forceIncrementalCheck && !needsFullRebuild) {
       final elapsed = DateTime.now().difference(
         DateTime.fromMillisecondsSinceEpoch(lastUpdated),
@@ -2808,8 +2838,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           AppLogger.info('CloudIndex', '手动全量刷新：正在清空本地文件索引');
           await FileMetadataCache.clearFolderChildrenIndex();
           await StorageManager.delete(StorageKeys.cloudIndexLastUpdatedAt);
+          await StorageManager.delete(StorageKeys.cloudIndexLiveGCIDVersion);
         }
-        await StorageManager.delete(StorageKeys.cloudIndexLiveGCIDVersion);
         AppLogger.info('CloudIndex', '开始通过全盘分页接口刷新索引：$reason');
         result = await _rebuildGlobalCloudIndex();
         AppLogger.info(
