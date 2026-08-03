@@ -1502,13 +1502,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
 
   Future<void> importScrapedDataFromCloud(CloudFile backup) async {
     if (_api == null || state.isLoading || state.hasActiveScans) return;
-    _appendBackupLog('恢复：${backup.name}');
+    _appendBackupLog('下载：${backup.name}');
     state = state.copyWith(
       isLoading: true,
       clearError: true,
       clearStatus: true,
       cloudBackupSync: CloudBackupSyncProgress(
-        phase: '恢复中',
+        phase: '下载中',
         destination: backup.name,
         transferredBytes: 0,
         totalBytes: backup.size ?? 0,
@@ -1542,7 +1542,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           onProgress: (received) {
             state = state.copyWith(
               cloudBackupSync: CloudBackupSyncProgress(
-                phase: '恢复中',
+                phase: '下载中',
                 destination: backup.name,
                 transferredBytes: received,
                 totalBytes: fileSize > 0 ? fileSize : (backup.size ?? 0),
@@ -1560,7 +1560,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           onReceiveProgress: (received, total) {
             state = state.copyWith(
               cloudBackupSync: CloudBackupSyncProgress(
-                phase: '恢复中',
+                phase: '下载中',
                 destination: backup.name,
                 transferredBytes: received,
                 totalBytes: total > 0 ? total : (backup.size ?? 0),
@@ -1571,7 +1571,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           },
         );
       }
-      _appendBackupLog('下载完成，覆盖本地数据库');
+      _appendBackupLog('下载完成，等待用户确认是否恢复');
       state = state.copyWith(
         cloudBackupSync: CloudBackupSyncProgress(
           phase: '处理中',
