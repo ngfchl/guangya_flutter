@@ -2901,6 +2901,46 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     } finally {
       if (mounted) setState(() => _backupBusy = false);
     }
+    // 第一步下载完成后，弹窗确认是否覆盖本地数据（会清空）。
+    if (!mounted || !notifier.hasPendingBackup) return;
+    final apply = await _confirmApplyDownloadedBackup(context, selected.name);
+    if (!apply || !mounted) {
+      await notifier.discardDownloadedBackup();
+      return;
+    }
+    setState(() => _backupBusy = true);
+    try {
+      await notifier.applyDownloadedBackup();
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<bool> _confirmApplyDownloadedBackup(
+    BuildContext context,
+    String backupName,
+  ) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => ShadDialog.alert(
+        title: const Text('确认恢复备份'),
+        description: Text(
+          '备份「$backupName」已下载完成。恢复将用其覆盖本地数据库，'
+          '当前本地刮削数据会被清空。是否继续？',
+        ),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('放弃'),
+          ),
+          ShadButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('恢复'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
   Widget _cloudBackupRestoreRow(BuildContext context, {required CloudFile backup, int? index}) {
@@ -4204,6 +4244,46 @@ class _MediaLibraryManagementDialogState extends ConsumerState<_MediaLibraryMana
     } finally {
       if (mounted) setState(() => _backupBusy = false);
     }
+    // 第一步下载完成后，弹窗确认是否覆盖本地数据（会清空）。
+    if (!mounted || !notifier.hasPendingBackup) return;
+    final apply = await _confirmApplyDownloadedBackup(context, selected.name);
+    if (!apply || !mounted) {
+      await notifier.discardDownloadedBackup();
+      return;
+    }
+    setState(() => _backupBusy = true);
+    try {
+      await notifier.applyDownloadedBackup();
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
+  Future<bool> _confirmApplyDownloadedBackup(
+    BuildContext context,
+    String backupName,
+  ) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => ShadDialog.alert(
+        title: const Text('确认恢复备份'),
+        description: Text(
+          '备份「$backupName」已下载完成。恢复将用其覆盖本地数据库，'
+          '当前本地刮削数据会被清空。是否继续？',
+        ),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('放弃'),
+          ),
+          ShadButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('恢复'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
   Future<void> _exportWorksData() async {
