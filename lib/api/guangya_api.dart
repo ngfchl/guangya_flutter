@@ -590,9 +590,11 @@ class GuangyaAPI {
     required int fileSize,
     String? parentID,
     String? md5,
+    String? cid,
   }) async {
     final res = <String, dynamic>{'fileSize': fileSize};
     if (md5 != null) res['md5'] = _base64MD5(md5);
+    if (cid != null && cid.isNotEmpty) res['cid'] = cid.trim().toUpperCase();
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/get_res_center_token',
       body: {
@@ -629,14 +631,17 @@ class GuangyaAPI {
     required int fileSize,
     String? parentID,
     required String gcid,
+    String? cid,
   }) async {
     final normalizedGCID = gcid.trim().toUpperCase();
+    final res = <String, dynamic>{'gcid': normalizedGCID, 'fileSize': fileSize};
+    if (cid != null && cid.isNotEmpty) res['cid'] = cid.trim().toUpperCase();
     return Http.apiRequest(
       '/nd.bizuserres.s/v1/get_res_center_token',
       body: {
         'capacity': 1,
         'name': name,
-        'res': {'gcid': normalizedGCID, 'fileSize': fileSize},
+        'res': res,
         'parentId': parentID ?? '',
       },
       allowedCodes: const [156],
@@ -689,11 +694,15 @@ class GuangyaAPI {
     if (size < 1024 * 1024) {
       final bytes = await file.readAsBytes();
       final md5Base64 = base64Encode(md5.convert(bytes).bytes);
+      final cidHex = sha1.convert(bytes).bytes
+          .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+          .join();
       token = await uploadToken(
         name: name,
         fileSize: size,
         parentID: parentID,
         md5: md5Base64,
+        cid: cidHex,
       );
       final taskID = JsonDeep.findString(token, ['taskId', 'task_id']);
       if (taskID == null) {
@@ -706,12 +715,17 @@ class GuangyaAPI {
       return _waitForUploadCompletion(taskID, cancelToken: cancelToken);
     }
 
-    token = await uploadToken(name: name, fileSize: size, parentID: parentID);
+    final hashes = await _calculateFileHashes(file, size);
+    token = await uploadToken(
+      name: name,
+      fileSize: size,
+      parentID: parentID,
+      cid: hashes.cid,
+    );
     final taskID = JsonDeep.findString(token, ['taskId', 'task_id']);
     if (taskID == null) throw Exception('响应缺少字段：taskId');
     onTaskCreated?.call(taskID);
 
-    final hashes = await _calculateFileHashes(file, size);
     final canFlash = await checkCanFlashUpload(taskID, hashes.gcid, hashes.cid);
     if (JsonDeep.findBool(canFlash, ['canFlashUpload', 'can_flash_upload']) ==
         true) {
