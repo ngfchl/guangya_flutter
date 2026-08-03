@@ -960,7 +960,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
           children: [
             Icon(
               _hasNewVersion
-                  ? Icons.system_update_rounded
+                  ? Icons.system_update_alt_rounded
                   : Icons.check_circle_rounded,
               color: _hasNewVersion ? cs.primary : cs.muted,
               size: 24,
@@ -1089,6 +1089,13 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
                 ],
               ],
             ),
+            if (_progress > 0) ...[
+              const SizedBox(height: 12),
+              LinearProgressIndicator(
+                value: _progress,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ],
             const SizedBox(height: 12),
             // Changelog
             if (latest.body.isNotEmpty) ...[
@@ -1223,13 +1230,6 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
                 ),
               ],
             ),
-            if (_progress > 0) ...[
-              const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: _progress,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ],
           ],
         ),
       ),
