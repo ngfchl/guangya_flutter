@@ -96,21 +96,22 @@ Future<bool> _confirmCloudBackupRestore(BuildContext context, CloudFile backup) 
   final confirmed = await showShadDialog<bool>(
     context: context,
     builder: (dialogContext) => ShadDialog(
-      title: const Text('确认覆盖？'),
+      title: const Text('确认下载备份？'),
       description: Text(backup.name),
       actions: [
         ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('取消')),
-        ShadButton.destructive(
+        ShadButton(
           onPressed: () => Navigator.of(dialogContext).pop(true),
           leading: const Icon(LucideIcons.download, size: 16),
-          child: const Text('覆盖'),
+          child: const Text('下载'),
         ),
       ],
       child: Padding(
         padding: const EdgeInsets.only(top: 8),
         child: Text(
-          '恢复会先清空本地媒体库数据，再导入所选备份。'
-          '备份大小 ${backup.formattedSize}，时间 ${backup.modifiedAt}。',
+          '将从云盘下载所选备份到本地，不会清空当前媒体库数据。'
+          '备份大小 ${backup.formattedSize}，时间 ${backup.modifiedAt}。'
+          '下载完成后会再询问是否恢复。',
         ),
       ),
     ),
