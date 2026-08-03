@@ -4702,6 +4702,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             final parsed = ParsedMediaName.parse(
               fallback.file.name,
               directoryName: _parentDirectoryName(fallback.file.cloudPath),
+              directoryPath: fallback.file.cloudPath,
             );
             final titleVariants = _recognitionTitleVariants(
               fallback,
@@ -4770,6 +4771,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             final parsed = ParsedMediaName.parse(
               fallback.file.name,
               directoryName: _parentDirectoryName(fallback.file.cloudPath),
+              directoryPath: fallback.file.cloudPath,
             );
             final titleVariants = _recognitionTitleVariants(
               fallback,
@@ -5210,6 +5212,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final parsed = ParsedMediaName.parse(
         item.file.name,
         directoryName: _parentDirectoryName(item.file.cloudPath),
+        directoryPath: item.file.cloudPath,
       );
       final title = parsed.title.trim();
       if (title.isEmpty) {
@@ -6961,6 +6964,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final fileParsed = ParsedMediaName.parse(
       item.file.name,
       directoryName: directoryName,
+      directoryPath: item.file.cloudPath,
     );
     final parentParsed = directoryName == null
         ? null
