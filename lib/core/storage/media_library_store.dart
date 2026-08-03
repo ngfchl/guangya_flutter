@@ -35,6 +35,7 @@ class MediaLibraryStore {
       await getDatabasesPath(),
       'media-library.sqlite3',
     );
+    AppLogger.info('MediaLibrary', '数据库路径：$databasePath');
     _database = await openDatabase(
       databasePath,
       version: 6,
@@ -1022,9 +1023,6 @@ class MediaLibraryStore {
       await txn.insert('folder_children', {
         'folder_id': folderKey,
         'child_ids': jsonEncode(files.map((file) => file.id).toList()),
-        'children_json': jsonEncode(
-          files.map((file) => file.toJson()).toList(),
-        ),
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     });
   }
@@ -1096,9 +1094,6 @@ class MediaLibraryStore {
           batch.insert('folder_children', {
             'folder_id': folderKey,
             'child_ids': jsonEncode(files.map((file) => file.id).toList()),
-            'children_json': jsonEncode(
-              files.map((file) => file.toJson()).toList(),
-            ),
           }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
         await batch.commit(noResult: true);
@@ -1136,7 +1131,6 @@ class MediaLibraryStore {
         'parent_id': file.parentID,
         'full_parent_ids': file.fullParentIDs,
         'cloud_path': file.cloudPath,
-        'resource_json': jsonEncode(file.toJson()),
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
@@ -1233,35 +1227,32 @@ class MediaLibraryStore {
       for (var index = 0; index < pending.length; index++) {
         final folderID = pending[index];
         if (!visited.add(folderID)) continue;
-        final rows = await txn.query(
-          'folder_children',
-          columns: const ['children_json'],
-          where: 'folder_id = ?',
-          whereArgs: [_folderID(folderID)],
-          limit: 1,
+        final rows = await txn.rawQuery(
+          '''SELECT d.file_json FROM folder_children f
+             JOIN file_index i ON i.folder_id = f.folder_id
+             JOIN gcid_details d ON d.gcid = i.gcid
+             WHERE f.folder_id = ?''',
+          [_folderID(folderID)],
         );
         if (rows.isNotEmpty) {
           try {
-            final raw = jsonDecode(
-              rows.first['children_json']?.toString() ?? '[]',
-            );
-            if (raw is List) {
-              for (final value in raw.whereType<Map>()) {
-                final child = CloudFile.fromJson(
-                  Map<String, dynamic>.from(value),
-                );
-                await txn.delete(
-                  'file_index',
-                  where: 'file_id = ?',
-                  whereArgs: [child.id],
-                );
-                await txn.delete(
-                  'resource_metadata',
-                  where: 'resource_id = ?',
-                  whereArgs: [child.id],
-                );
-                if (child.isDirectory) pending.add(child.id);
-              }
+            for (final row in rows) {
+              final value = jsonDecode(row['file_json']?.toString() ?? '{}');
+              if (value is! Map) continue;
+              final child = CloudFile.fromJson(
+                Map<String, dynamic>.from(value),
+              );
+              await txn.delete(
+                'file_index',
+                where: 'file_id = ?',
+                whereArgs: [child.id],
+              );
+              await txn.delete(
+                'resource_metadata',
+                where: 'resource_id = ?',
+                whereArgs: [child.id],
+              );
+              if (child.isDirectory) pending.add(child.id);
             }
           } catch (_) {
             // A malformed stale snapshot can simply be discarded.
@@ -1282,20 +1273,17 @@ class MediaLibraryStore {
   }
 
   Future<List<CloudFile>?> folderChildren(String? folderID) async {
-    final rows = await (await _db).query(
-      'folder_children',
-      columns: ['children_json'],
-      where: 'folder_id = ?',
-      whereArgs: [_folderID(folderID)],
-      limit: 1,
+    final rows = await (await _db).rawQuery(
+      '''SELECT d.file_json FROM folder_children f
+         JOIN file_index i ON i.folder_id = f.folder_id
+         JOIN gcid_details d ON d.gcid = i.gcid
+         WHERE f.folder_id = ?''',
+      [_folderID(folderID)],
     );
     if (rows.isEmpty) return null;
     try {
-      final values = jsonDecode(
-        rows.first['children_json']?.toString() ?? '[]',
-      );
-      if (values is! List) return null;
-      return values
+      return rows
+          .map((row) => jsonDecode(row['file_json']?.toString() ?? '{}'))
           .whereType<Map>()
           .map((value) => CloudFile.fromJson(Map<String, dynamic>.from(value)))
           .toList();
@@ -1370,7 +1358,14 @@ class MediaLibraryStore {
         .replaceAll('_', '\\_');
     final rows = await (await _db).query(
       'resource_metadata',
-      columns: const ['resource_json'],
+      columns: const [
+        'resource_id',
+        'resource_name',
+        'is_directory',
+        'parent_id',
+        'full_parent_ids',
+        'cloud_path',
+      ],
       where:
           "is_directory = 1 AND resource_name LIKE ? ESCAPE '\\' COLLATE NOCASE",
       whereArgs: ['%$escaped%'],
@@ -1379,40 +1374,42 @@ class MediaLibraryStore {
     );
     final result = <CloudFile>[];
     for (final row in rows) {
-      try {
-        final raw = jsonDecode(row['resource_json']?.toString() ?? '{}');
-        if (raw is! Map) continue;
-        final folder = CloudFile.fromJson(Map<String, dynamic>.from(raw));
-        if (folder.isDirectory) result.add(folder);
-      } catch (_) {
-        // Ignore an individual malformed resource row.
-      }
+      final folder = CloudFile(
+        id: row['resource_id']?.toString() ?? '',
+        name: row['resource_name']?.toString() ?? '',
+        isDirectory: (row['is_directory'] as int?) == 1,
+        parentID: row['parent_id']?.toString(),
+        fullParentIDs: row['full_parent_ids']?.toString(),
+        cloudPath: row['cloud_path']?.toString() ?? '',
+      );
+      if (folder.isDirectory) result.add(folder);
     }
     return result;
   }
 
   Future<Map<String?, List<CloudFile>>> allFolderChildrenSnapshots() async {
-    final rows = await (await _db).query(
-      'folder_children',
-      columns: const ['folder_id', 'children_json'],
+    final rows = await (await _db).rawQuery(
+      '''SELECT f.folder_id, d.file_json FROM folder_children f
+         JOIN file_index i ON i.folder_id = f.folder_id
+         JOIN gcid_details d ON d.gcid = i.gcid''',
     );
-    final result = <String?, List<CloudFile>>{};
+    final byFolder = <String, List<CloudFile>>{};
     for (final row in rows) {
       final storedFolderID = row['folder_id']?.toString();
       if (storedFolderID == null) continue;
-      final folderID = storedFolderID == _rootFolderID ? null : storedFolderID;
       try {
-        final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
-        if (raw is! List) continue;
-        result[folderID] = raw
-            .whereType<Map>()
-            .map(
-              (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
-            )
-            .toList();
+        final value = jsonDecode(row['file_json']?.toString() ?? '{}');
+        if (value is! Map) continue;
+        final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+        (byFolder.putIfAbsent(storedFolderID, () => [])).add(file);
       } catch (_) {
         // Ignore a malformed stale snapshot; the next index refresh repairs it.
       }
+    }
+    final result = <String?, List<CloudFile>>{};
+    for (final entry in byFolder.entries) {
+      final folderID = entry.key == _rootFolderID ? null : entry.key;
+      result[folderID] = entry.value;
     }
     return result;
   }
@@ -1428,23 +1425,21 @@ class MediaLibraryStore {
     var offset = 0;
     while (true) {
       if (shouldStop?.call() == true) break;
-      final rows = await db.query(
-        'folder_children',
-        columns: const ['children_json'],
-        limit: batchSize,
-        offset: offset,
+      final rows = await db.rawQuery(
+        '''SELECT d.file_json FROM folder_children f
+           JOIN file_index i ON i.folder_id = f.folder_id
+           JOIN gcid_details d ON d.gcid = i.gcid
+           LIMIT ? OFFSET ?''',
+        [batchSize, offset],
       );
       if (rows.isEmpty) break;
       offset += rows.length;
       final batch = <CloudFile>{};
       for (final row in rows) {
         try {
-          final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
-          if (raw is! List) continue;
-          for (final value in raw.whereType<Map>()) {
-            final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
-            batch.add(file);
-          }
+          final value = jsonDecode(row['file_json']?.toString() ?? '{}');
+          if (value is! Map) continue;
+          batch.add(CloudFile.fromJson(Map<String, dynamic>.from(value)));
         } catch (_) {}
       }
       if (batch.isNotEmpty) await onBatch(batch.toList());
@@ -1461,33 +1456,32 @@ class MediaLibraryStore {
     final db = await _db;
     var offset = 0;
     while (true) {
-      final rows = await db.query(
-        'folder_children',
-        columns: const ['folder_id', 'children_json'],
-        limit: batchSize,
-        offset: offset,
+      final rows = await db.rawQuery(
+        '''SELECT f.folder_id, d.file_json FROM folder_children f
+           JOIN file_index i ON i.folder_id = f.folder_id
+           JOIN gcid_details d ON d.gcid = i.gcid
+           LIMIT ? OFFSET ?''',
+        [batchSize, offset],
       );
       if (rows.isEmpty) break;
       offset += rows.length;
       final snapshots = <String?, List<CloudFile>>{};
+      final byFolder = <String, List<CloudFile>>{};
       for (final row in rows) {
         final storedFolderID = row['folder_id']?.toString();
         if (storedFolderID == null) continue;
-        final folderID = storedFolderID == _rootFolderID
-            ? null
-            : storedFolderID;
         try {
-          final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
-          if (raw is! List) continue;
-          snapshots[folderID] = raw
-              .whereType<Map>()
-              .map(
-                (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
-              )
-              .toList(growable: false);
+          final value = jsonDecode(row['file_json']?.toString() ?? '{}');
+          if (value is! Map) continue;
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+          (byFolder.putIfAbsent(storedFolderID, () => [])).add(file);
         } catch (_) {
           // A malformed snapshot is ignored and repaired by the next refresh.
         }
+      }
+      for (final entry in byFolder.entries) {
+        final folderID = entry.key == _rootFolderID ? null : entry.key;
+        snapshots[folderID] = entry.value;
       }
       if (snapshots.isNotEmpty) await onBatch(snapshots);
       if (rows.length < batchSize) break;
@@ -1654,28 +1648,21 @@ class MediaLibraryStore {
     if (indexed.isNotEmpty) {
       final folderKey = indexed.first['folder_id']?.toString();
       if (folderKey != null) {
-        final snapshot = await db.query(
-          'folder_children',
-          columns: const ['children_json'],
-          where: 'folder_id = ?',
-          whereArgs: [folderKey],
-          limit: 1,
+        final snapshot = await db.rawQuery(
+          '''SELECT d.file_json FROM folder_children f
+             JOIN file_index i ON i.folder_id = f.folder_id
+             JOIN gcid_details d ON d.gcid = i.gcid
+             WHERE f.folder_id = ?''',
+          [folderKey],
         );
         if (snapshot.isNotEmpty) {
           try {
-            final raw = jsonDecode(
-              snapshot.first['children_json']?.toString() ?? '[]',
-            );
-            if (raw is List) {
-              final files = raw
-                  .whereType<Map>()
-                  .map(
-                    (value) =>
-                        CloudFile.fromJson(Map<String, dynamic>.from(value)),
-                  )
-                  .toList();
-              if (files.any((file) => file.id == fileID)) return files;
-            }
+            final files = snapshot
+                .map((row) => jsonDecode(row['file_json']?.toString() ?? '{}'))
+                .whereType<Map>()
+                .map((value) => CloudFile.fromJson(Map<String, dynamic>.from(value)))
+                .toList();
+            if (files.any((file) => file.id == fileID)) return files;
           } catch (_) {
             // Fall through to the legacy scan below.
           }
@@ -1683,22 +1670,18 @@ class MediaLibraryStore {
       }
     }
     // Fallback for legacy rows written before folder_id existed.
-    final rows = await db.query(
-      'folder_children',
-      columns: const ['children_json'],
-      where: 'child_ids LIKE ?',
-      whereArgs: ['%"$fileID"%'],
+    final rows = await db.rawQuery(
+      '''SELECT d.file_json FROM folder_children f
+         JOIN file_index i ON i.folder_id = f.folder_id
+         JOIN gcid_details d ON d.gcid = i.gcid
+         WHERE f.child_ids LIKE ?''',
+      ['%"$fileID"%'],
     );
     for (final row in rows) {
       try {
-        final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
-        if (raw is! List) continue;
-        final files = raw
-            .whereType<Map>()
-            .map(
-              (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
-            )
-            .toList();
+        final value = jsonDecode(row['file_json']?.toString() ?? '{}');
+        if (value is! Map) continue;
+        final files = [CloudFile.fromJson(Map<String, dynamic>.from(value))];
         if (files.any((file) => file.id == fileID)) return files;
       } catch (_) {
         // A stale cache row should not prevent looking at the next folder.
@@ -1738,18 +1721,18 @@ class MediaLibraryStore {
 
     for (final chunk in _chunked(folderIDs.toList(), 200)) {
       final rows = await db.rawQuery(
-        'SELECT children_json FROM folder_children '
-        'WHERE folder_id IN (${chunk.map((_) => '?').join(',')})',
+        '''SELECT d.file_json FROM folder_children f
+           JOIN file_index i ON i.folder_id = f.folder_id
+           JOIN gcid_details d ON d.gcid = i.gcid
+           WHERE f.folder_id IN (${chunk.map((_) => '?').join(',')})''',
         chunk,
       );
       for (final row in rows) {
         try {
-          final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
-          if (raw is! List) continue;
-          for (final value in raw.whereType<Map>()) {
-            final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
-            if (wanted.contains(file.id)) result[file.id] = file;
-          }
+          final value = jsonDecode(row['file_json']?.toString() ?? '{}');
+          if (value is! Map) continue;
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+          if (wanted.contains(file.id)) result[file.id] = file;
         } catch (_) {
           // A malformed snapshot should not abort the whole lookup.
         }
@@ -1874,25 +1857,26 @@ class MediaLibraryStore {
     final ids = fileIDs.toSet();
     if (ids.isEmpty) return;
     final db = await _db;
-    final rows = await db.query('folder_children');
-    final updates = <String, List<CloudFile>>{};
+    final rows = await db.rawQuery(
+      '''SELECT f.folder_id, d.file_json FROM folder_children f
+         JOIN file_index i ON i.folder_id = f.folder_id
+         JOIN gcid_details d ON d.gcid = i.gcid''',
+    );
+    final byFolder = <String, List<CloudFile>>{};
     for (final row in rows) {
       final folderID = row['folder_id']?.toString();
       if (folderID == null) continue;
       try {
-        final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
-        if (raw is! List) continue;
-        final children = raw
-            .whereType<Map>()
-            .map(
-              (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
-            )
-            .toList();
-        final retained = children
-            .where((file) => !ids.contains(file.id))
-            .toList();
-        if (retained.length != children.length) updates[folderID] = retained;
+        final value = jsonDecode(row['file_json']?.toString() ?? '{}');
+        if (value is! Map) continue;
+        final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+        (byFolder.putIfAbsent(folderID, () => [])).add(file);
       } catch (_) {}
+    }
+    final updates = <String, List<CloudFile>>{};
+    for (final entry in byFolder.entries) {
+      final retained = entry.value.where((file) => !ids.contains(file.id)).toList();
+      if (retained.length != entry.value.length) updates[entry.key] = retained;
     }
     await db.transaction((txn) async {
       for (final entry in updates.entries) {
@@ -1901,9 +1885,6 @@ class MediaLibraryStore {
           'folder_children',
           {
             'child_ids': jsonEncode(retained.map((file) => file.id).toList()),
-            'children_json': jsonEncode(
-              retained.map((file) => file.toJson()).toList(),
-            ),
           },
           where: 'folder_id = ?',
           whereArgs: [entry.key],
@@ -1938,52 +1919,54 @@ class MediaLibraryStore {
         );
       }
       // 1. Remove from all folders (same logic as removeFilesFromAllFolders)
-      final rows = await txn.query('folder_children');
+      final rows = await txn.rawQuery(
+        '''SELECT f.folder_id, d.file_json FROM folder_children f
+           JOIN file_index i ON i.folder_id = f.folder_id
+           JOIN gcid_details d ON d.gcid = i.gcid''',
+      );
+      final byFolder = <String, List<CloudFile>>{};
       for (final row in rows) {
         final folderID = row['folder_id']?.toString();
         if (folderID == null) continue;
         try {
-          final raw = jsonDecode(row['children_json']?.toString() ?? '[]');
-          if (raw is! List) continue;
-          final children = raw
-              .whereType<Map>()
-              .map(
-                (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
-              )
-              .toList();
-          final retained = children
-              .where((file) => !ids.contains(file.id))
-              .toList();
-          if (retained.length != children.length) {
-            await txn.update(
-              'folder_children',
-              {
-                'child_ids': jsonEncode(
-                  retained.map((file) => file.id).toList(),
-                ),
-                'children_json': jsonEncode(
-                  retained.map((file) => file.toJson()).toList(),
-                ),
-              },
-              where: 'folder_id = ?',
-              whereArgs: [folderID],
-            );
-          }
+          final value = jsonDecode(row['file_json']?.toString() ?? '{}');
+          if (value is! Map) continue;
+          final file = CloudFile.fromJson(Map<String, dynamic>.from(value));
+          (byFolder.putIfAbsent(folderID, () => [])).add(file);
         } catch (_) {}
+      }
+      for (final entry in byFolder.entries) {
+        final retained = entry.value.where((file) => !ids.contains(file.id)).toList();
+        if (retained.length != entry.value.length) {
+          await txn.update(
+            'folder_children',
+            {
+              'child_ids': jsonEncode(
+                retained.map((file) => file.id).toList(),
+              ),
+            },
+            where: 'folder_id = ?',
+            whereArgs: [entry.key],
+          );
+        }
       }
 
       // 2. Update parent folder children (same logic as updateFolderChildren)
       final parentKey = _folderID(parentID);
-      final existingRows = await txn.query(
-        'folder_children',
-        columns: ['children_json'],
-        where: 'folder_id = ?',
-        whereArgs: [parentKey],
+      final parentRows = await txn.rawQuery(
+        '''SELECT d.file_json FROM folder_children f
+           JOIN file_index i ON i.folder_id = f.folder_id
+           JOIN gcid_details d ON d.gcid = i.gcid
+           WHERE f.folder_id = ?''',
+        [parentKey],
       );
-      if (existingRows.isNotEmpty) {
-        final existingJson =
-            existingRows.first['children_json']?.toString() ?? '[]';
-        await _updateParentChildrenInTxn(txn, parentKey, existingJson, ids);
+      if (parentRows.isNotEmpty) {
+        final parentFiles = parentRows
+            .map((row) => jsonDecode(row['file_json']?.toString() ?? '{}'))
+            .whereType<Map>()
+            .map((value) => CloudFile.fromJson(Map<String, dynamic>.from(value)))
+            .toList();
+        await _updateParentChildrenInTxn(txn, parentKey, parentFiles, ids);
       }
     });
   }
@@ -1991,31 +1974,19 @@ class MediaLibraryStore {
   Future<void> _updateParentChildrenInTxn(
     Transaction txn,
     String parentKey,
-    String existingJson,
+    List<CloudFile> existing,
     Set<String> ids,
   ) async {
-    try {
-      final raw = jsonDecode(existingJson);
-      if (raw is! List) return;
-      final children = raw
-          .map(
-            (m) => m is Map
-                ? CloudFile.fromJson(Map<String, dynamic>.from(m))
-                : null,
-          )
-          .whereType<CloudFile>()
-          .where((f) => !ids.contains(f.id))
-          .toList();
-      await txn.update(
-        'folder_children',
-        {
-          'child_ids': jsonEncode(children.map((f) => f.id).toList()),
-          'children_json': jsonEncode(children.map((f) => f.toJson()).toList()),
-        },
-        where: 'folder_id = ?',
-        whereArgs: [parentKey],
-      );
-    } catch (_) {}
+    final retained = existing.where((file) => !ids.contains(file.id)).toList();
+    if (retained.length == existing.length) return;
+    await txn.update(
+      'folder_children',
+      {
+        'child_ids': jsonEncode(retained.map((file) => file.id).toList()),
+      },
+      where: 'folder_id = ?',
+      whereArgs: [parentKey],
+    );
   }
 
   Future<void> _createSchema(DatabaseExecutor db) async {
@@ -2094,16 +2065,28 @@ class MediaLibraryStore {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS gcid_details (
         gcid TEXT PRIMARY KEY NOT NULL,
-        file_json TEXT NOT NULL
+        file_json TEXT NOT NULL,
+        cid TEXT,
+        md5 TEXT
       )
     ''');
+    // 旧库迁移：给 gcid_details 补 cid/md5 列（秒传探测需要 cid，校验需要 md5）。
+    await _ensureColumn(db, 'gcid_details', 'cid', 'TEXT');
+    await _ensureColumn(db, 'gcid_details', 'md5', 'TEXT');
     await db.execute('''
       CREATE TABLE IF NOT EXISTS folder_children (
         folder_id TEXT PRIMARY KEY NOT NULL,
-        child_ids TEXT NOT NULL,
-        children_json TEXT NOT NULL
+        child_ids TEXT NOT NULL
       )
     ''');
+    // 旧库迁移：删除 folder_children.children_json（臃肿的完整 CloudFile 数组，
+    // 完整文件信息已由 gcid_details 按 file_id 统一存储）。
+    // 先查列是否存在再 DROP，避免已迁移状态报 "no such column" 噪音日志。
+    if (await _hasColumn(db, 'folder_children', 'children_json')) {
+      await db.execute(
+        'ALTER TABLE folder_children DROP COLUMN children_json',
+      );
+    }
     await db.execute('''
       CREATE TABLE IF NOT EXISTS resource_metadata (
         resource_id TEXT PRIMARY KEY NOT NULL,
@@ -2111,10 +2094,18 @@ class MediaLibraryStore {
         is_directory INTEGER NOT NULL,
         parent_id TEXT,
         full_parent_ids TEXT,
-        cloud_path TEXT NOT NULL,
-        resource_json TEXT NOT NULL
+        cloud_path TEXT NOT NULL
       )
     ''');
+    // 旧库迁移：删除 resource_metadata.resource_json（141MB 臃肿列，
+    // 完整 CloudFile 已由 gcid_details 按 gcid 存储或由 resource_metadata
+    // 其余字段重建）。
+    // 先查列是否存在再 DROP，避免已迁移状态报 "no such column" 噪音日志。
+    if (await _hasColumn(db, 'resource_metadata', 'resource_json')) {
+      await db.execute(
+        'ALTER TABLE resource_metadata DROP COLUMN resource_json',
+      );
+    }
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_resource_metadata_directory_name '
       'ON resource_metadata(is_directory, resource_name COLLATE NOCASE)',
@@ -3309,6 +3300,17 @@ class MediaLibraryStore {
     if (!columns.contains(column)) {
       await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
     }
+  }
+
+  /// 旧库迁移用：判断 [table] 是否还有 [column] 列，避免已迁移状态报
+  /// "no such column" 噪音日志。
+  Future<bool> _hasColumn(
+    DatabaseExecutor db,
+    String table,
+    String column,
+  ) async {
+    final columns = await _tableColumns(db, 'main', table);
+    return columns.contains(column);
   }
 
   Future<void> _ensureMediaItemLocationColumns(DatabaseExecutor db) async {
