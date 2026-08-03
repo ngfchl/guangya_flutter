@@ -433,13 +433,13 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                       ),
                     ),
                     _SettingsRow(
-                      icon: Icons.system_update_rounded,
+                      icon: Icons.system_update_alt_rounded,
                       label: '应用更新',
                       child: ShadButton.outline(
                         size: ShadButtonSize.sm,
                         onPressed: () => showAppUpgradeDialog(context),
                         leading: const Icon(
-                          Icons.system_update_rounded,
+                          Icons.system_update_alt_rounded,
                           size: 15,
                         ),
                         child: const Text('检查更新'),
