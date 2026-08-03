@@ -2160,86 +2160,96 @@ class MediaLibraryStore {
     );
     // ── FTS5 全文索引：替代 LIKE '%x%' 全表扫描，支持标题子串匹配。
     // 外部内容表 + 触发器保持与基础表同步；trigram 分词器要求 ≥3 字符，
-    // 短查询由调用方回退 LIKE。首次建库时用 rebuild 命令补齐已有行。
-    await db.execute(
-      'CREATE VIRTUAL TABLE IF NOT EXISTS tmdb_works_fts USING fts5('
-      "title, original_title, content='tmdb_works', content_rowid='id', "
-      "tokenize='trigram')",
-    );
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS tmdb_works_fts_ai AFTER INSERT ON tmdb_works BEGIN
-        INSERT INTO tmdb_works_fts(rowid, title, original_title)
-        VALUES (new.id, new.title, new.original_title);
-      END
-    ''');
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS tmdb_works_fts_ad AFTER DELETE ON tmdb_works BEGIN
-        INSERT INTO tmdb_works_fts(tmdb_works_fts, rowid, title, original_title)
-        VALUES ('delete', old.id, old.title, old.original_title);
-      END
-    ''');
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS tmdb_works_fts_au AFTER UPDATE ON tmdb_works BEGIN
-        INSERT INTO tmdb_works_fts(tmdb_works_fts, rowid, title, original_title)
-        VALUES ('delete', old.id, old.title, old.original_title);
-        INSERT INTO tmdb_works_fts(rowid, title, original_title)
-        VALUES (new.id, new.title, new.original_title);
-      END
-    ''');
-    await db.execute(
-      'CREATE VIRTUAL TABLE IF NOT EXISTS douban_works_fts USING fts5('
-      "title, original_title, content='douban_works', content_rowid='id', "
-      "tokenize='trigram')",
-    );
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS douban_works_fts_ai AFTER INSERT ON douban_works BEGIN
-        INSERT INTO douban_works_fts(rowid, title, original_title)
-        VALUES (new.id, new.title, new.original_title);
-      END
-    ''');
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS douban_works_fts_ad AFTER DELETE ON douban_works BEGIN
-        INSERT INTO douban_works_fts(douban_works_fts, rowid, title, original_title)
-        VALUES ('delete', old.id, old.title, old.original_title);
-      END
-    ''');
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS douban_works_fts_au AFTER UPDATE ON douban_works BEGIN
-        INSERT INTO douban_works_fts(douban_works_fts, rowid, title, original_title)
-        VALUES ('delete', old.id, old.title, old.original_title);
-        INSERT INTO douban_works_fts(rowid, title, original_title)
-        VALUES (new.id, new.title, new.original_title);
-      END
-    ''');
-    // 首次建库（或旧库无 FTS 标记）时，用 rebuild 命令把已有 works 补进索引。
-    // 注意：此处必须用传入的 db 而非 _db——_createSchema 可能在 onCreate/
-    // onUpgrade 期间被调用，此时 _database 尚未赋值，_db 会递归打开（死锁）。
-    // trigram 分词器需要 SQLite 3.34+，旧环境建表失败时降级为 LIKE 全表扫描。
-    try {
-      final ftsRows = await db.query(
-        'store_meta',
-        columns: const ['value'],
-        where: 'key = ?',
-        whereArgs: const ['works_fts_built_v1'],
-        limit: 1,
+    // 短查询由调用方回退 LIKE。
+    // 只有本地已有 tmdb_works/douban_works 数据时才建——新安装无媒体信息
+    // 时建虚拟表既无数据可索也无必要，且部分 SQLite 编译未启用 fts5 会直接崩。
+    final tmdbWorksCount = Sqflite.firstIntValue(
+      await db.rawQuery('SELECT COUNT(*) FROM tmdb_works'),
+    ) ?? 0;
+    final doubanWorksCount = Sqflite.firstIntValue(
+      await db.rawQuery('SELECT COUNT(*) FROM douban_works'),
+    ) ?? 0;
+    if (tmdbWorksCount > 0 || doubanWorksCount > 0) {
+      await db.execute(
+        'CREATE VIRTUAL TABLE IF NOT EXISTS tmdb_works_fts USING fts5('
+        "title, original_title, content='tmdb_works', content_rowid='id', "
+        "tokenize='trigram')",
       );
-      if (ftsRows.isEmpty) {
-        await db.execute(
-          "INSERT INTO tmdb_works_fts(tmdb_works_fts) VALUES ('rebuild')",
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS tmdb_works_fts_ai AFTER INSERT ON tmdb_works BEGIN
+          INSERT INTO tmdb_works_fts(rowid, title, original_title)
+          VALUES (new.id, new.title, new.original_title);
+        END
+      ''');
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS tmdb_works_fts_ad AFTER DELETE ON tmdb_works BEGIN
+          INSERT INTO tmdb_works_fts(tmdb_works_fts, rowid, title, original_title)
+          VALUES ('delete', old.id, old.title, old.original_title);
+        END
+      ''');
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS tmdb_works_fts_au AFTER UPDATE ON tmdb_works BEGIN
+          INSERT INTO tmdb_works_fts(tmdb_works_fts, rowid, title, original_title)
+          VALUES ('delete', old.id, old.title, old.original_title);
+          INSERT INTO tmdb_works_fts(rowid, title, original_title)
+          VALUES (new.id, new.title, new.original_title);
+        END
+      ''');
+      await db.execute(
+        'CREATE VIRTUAL TABLE IF NOT EXISTS douban_works_fts USING fts5('
+        "title, original_title, content='douban_works', content_rowid='id', "
+        "tokenize='trigram')",
+      );
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS douban_works_fts_ai AFTER INSERT ON douban_works BEGIN
+          INSERT INTO douban_works_fts(rowid, title, original_title)
+          VALUES (new.id, new.title, new.original_title);
+        END
+      ''');
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS douban_works_fts_ad AFTER DELETE ON douban_works BEGIN
+          INSERT INTO douban_works_fts(douban_works_fts, rowid, title, original_title)
+          VALUES ('delete', old.id, old.title, old.original_title);
+        END
+      ''');
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS douban_works_fts_au AFTER UPDATE ON douban_works BEGIN
+          INSERT INTO douban_works_fts(douban_works_fts, rowid, title, original_title)
+          VALUES ('delete', old.id, old.title, old.original_title);
+          INSERT INTO douban_works_fts(rowid, title, original_title)
+          VALUES (new.id, new.title, new.original_title);
+        END
+      ''');
+      // 首次建库（或旧库无 FTS 标记）时，用 rebuild 命令把已有 works 补进索引。
+      // 注意：此处必须用传入的 db 而非 _db——_createSchema 可能在 onCreate/
+      // onUpgrade 期间被调用，此时 _database 尚未赋值，_db 会递归打开（死锁）。
+      // trigram 分词器需要 SQLite 3.34+，旧环境建表失败时降级为 LIKE 全表扫描。
+      try {
+        final ftsRows = await db.query(
+          'store_meta',
+          columns: const ['value'],
+          where: 'key = ?',
+          whereArgs: const ['works_fts_built_v1'],
+          limit: 1,
         );
-        await db.execute(
-          "INSERT INTO douban_works_fts(douban_works_fts) VALUES ('rebuild')",
+        if (ftsRows.isEmpty) {
+          await db.execute(
+            "INSERT INTO tmdb_works_fts(tmdb_works_fts) VALUES ('rebuild')",
+          );
+          await db.execute(
+            "INSERT INTO douban_works_fts(douban_works_fts) VALUES ('rebuild')",
+          );
+          await db.insert('store_meta', {
+            'key': 'works_fts_built_v1',
+            'value': '1',
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      } catch (error) {
+        AppLogger.warning(
+          'Storage',
+          'FTS5 works 索引重建失败（降级为 LIKE 查询）：$error',
         );
-        await db.insert('store_meta', {
-          'key': 'works_fts_built_v1',
-          'value': '1',
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
-    } catch (error) {
-      AppLogger.warning(
-        'Storage',
-        'FTS5 works 索引重建失败（降级为 LIKE 查询）：$error',
-      );
     }
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_library_title '
