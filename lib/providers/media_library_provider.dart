@@ -1581,11 +1581,16 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           isActive: true,
         ),
       );
-      await _applyImportedBackup(localBackup.path);
-      _appendBackupLog('恢复完成：${backup.name}');
+      // 第一步：下载完成，不自动覆盖本地数据。保留临时文件供弹窗确认后应用。
+      _pendingImportedBackupPath = localBackup.path;
+      _pendingImportedBackupName = backup.name;
+      _pendingImportedBackupSize = backup.size ?? 0;
+      _pendingImportedTempDir = temporaryDirectory;
+      _appendBackupLog('下载完成，等待确认是否恢复（会清空本地数据）');
       state = state.copyWith(
+        statusMessage: '备份已下载，等待确认恢复',
         cloudBackupSync: CloudBackupSyncProgress(
-          phase: '恢复完成',
+          phase: '等待确认',
           destination: backup.name,
           transferredBytes: backup.size ?? 0,
           totalBytes: backup.size ?? 0,
@@ -1595,11 +1600,11 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     } catch (error) {
       final current = state.cloudBackupSync;
       final reason = _backupFailureReason(error);
-      _appendBackupLog('从云盘恢复失败：$reason', isError: true, error: error);
+      _appendBackupLog('从云盘下载备份失败：$reason', isError: true, error: error);
       state = state.copyWith(
-        errorMessage: '从云盘恢复失败：$reason',
+        errorMessage: '从云盘下载备份失败：$reason',
         cloudBackupSync: CloudBackupSyncProgress(
-          phase: '恢复失败',
+          phase: '下载失败',
           destination: backup.name,
           transferredBytes: current?.transferredBytes ?? 0,
           totalBytes: current?.totalBytes ?? (backup.size ?? 0),
@@ -1608,8 +1613,111 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         ),
       );
     } finally {
-      if (temporaryDirectory != null && await temporaryDirectory.exists()) {
-        await temporaryDirectory.delete(recursive: true);
+      // 不删临时目录——applyDownloadedBackup 或放弃恢复时才清理。
+      state = state.copyWith(isLoading: false);
+    }
+  }
+
+  /// 下载完成待应用的备份路径与元数据。null 表示无待恢复备份。
+  String? _pendingImportedBackupPath;
+  String? _pendingImportedBackupName;
+  int _pendingImportedBackupSize = 0;
+  Directory? _pendingImportedTempDir;
+
+  /// 当前是否有下载完成、等待确认恢复的备份。
+  bool get hasPendingBackup => _pendingImportedBackupPath != null;
+
+  /// 放弃已下载的备份：删除临时文件并清标记。
+  Future<void> discardDownloadedBackup() async {
+    final path = _pendingImportedBackupPath;
+    final tempDir = _pendingImportedTempDir;
+    _pendingImportedBackupPath = null;
+    _pendingImportedBackupName = null;
+    _pendingImportedBackupSize = 0;
+    _pendingImportedTempDir = null;
+    if (path != null) {
+      try {
+        final file = File(path);
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+    }
+    if (tempDir != null && await tempDir.exists()) {
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+    }
+    _appendBackupLog('已放弃恢复，删除下载的备份文件');
+    state = state.copyWith(
+      statusMessage: '已放弃恢复',
+      cloudBackupSync: const CloudBackupSyncProgress(
+        phase: '已放弃',
+        destination: '',
+        transferredBytes: 0,
+        totalBytes: 0,
+        isActive: false,
+      ),
+    );
+  }
+
+  /// 第二步：确认恢复——用已下载的备份覆盖本地数据库并重新加载。
+  /// 调用前应通过 UI 弹窗明确告知用户"会清空本地数据"。
+  Future<void> applyDownloadedBackup() async {
+    final path = _pendingImportedBackupPath;
+    final name = _pendingImportedBackupName ?? '备份';
+    final size = _pendingImportedBackupSize;
+    final tempDir = _pendingImportedTempDir;
+    if (path == null) {
+      _appendBackupLog('无待恢复的备份', isError: true);
+      return;
+    }
+    state = state.copyWith(
+      isLoading: true,
+      clearError: true,
+      clearStatus: true,
+      cloudBackupSync: CloudBackupSyncProgress(
+        phase: '恢复中',
+        destination: name,
+        transferredBytes: 0,
+        totalBytes: size,
+        isActive: true,
+      ),
+    );
+    try {
+      await _applyImportedBackup(path);
+      _appendBackupLog('恢复完成：$name');
+      state = state.copyWith(
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '恢复完成',
+          destination: name,
+          transferredBytes: size,
+          totalBytes: size,
+          isActive: false,
+        ),
+      );
+    } catch (error) {
+      final reason = _backupFailureReason(error);
+      _appendBackupLog('恢复失败：$reason', isError: true, error: error);
+      state = state.copyWith(
+        errorMessage: '恢复失败：$reason',
+        cloudBackupSync: CloudBackupSyncProgress(
+          phase: '恢复失败',
+          destination: name,
+          transferredBytes: 0,
+          totalBytes: size,
+          isActive: false,
+          error: reason,
+        ),
+      );
+    } finally {
+      // 应用完成后清理临时文件与标记。
+      _pendingImportedBackupPath = null;
+      _pendingImportedBackupName = null;
+      _pendingImportedBackupSize = 0;
+      _pendingImportedTempDir = null;
+      if (tempDir != null && await tempDir.exists()) {
+        try {
+          await tempDir.delete(recursive: true);
+        } catch (_) {}
       }
       state = state.copyWith(isLoading: false);
     }
