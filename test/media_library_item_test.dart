@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guangya_flutter/models/cloud_file.dart';
 import 'package:guangya_flutter/models/media_library.dart';
+import 'package:guangya_flutter/models/media_navigation.dart';
 
 void main() {
   test('copyWith can clear individual metadata sources', () {
@@ -50,5 +51,54 @@ void main() {
     expect(item.matchesSearch('豆瓣：34912345'), isTrue);
     expect(item.matchesSearch('douban:7654321'), isFalse);
     expect(item.matchesSearch('tt0000000'), isFalse);
+  });
+
+  test('serialization retains genres and origin countries', () {
+    final item = MediaLibraryItem(
+      libraryID: 'library',
+      file: const CloudFile(id: 'file', name: 'movie.mkv', isDirectory: false),
+      title: '电影',
+      originalTitle: 'Movie',
+      genres: const ['剧情', '动作'],
+      originCountries: const ['CN', 'HK'],
+      updatedAt: DateTime(2026),
+    );
+
+    final restored = MediaLibraryItem.fromJson(item.toJson());
+
+    expect(restored.genres, ['剧情', '动作']);
+    expect(restored.originCountries, ['CN', 'HK']);
+    expect(
+      MediaLibraryItem.fromJson({
+        ...item.toJson(),
+        'origin_country': null,
+        'originCountries': const ['US'],
+      }).originCountries,
+      ['US'],
+    );
+  });
+
+  test('filter normalizes TMDB and Douban genre and country values', () {
+    final item = MediaLibraryItem(
+      libraryID: 'library',
+      file: const CloudFile(id: 'file', name: 'movie.mkv', isDirectory: false),
+      title: 'Movie',
+      originalTitle: 'Movie',
+      genres: const ['Action'],
+      originCountries: const ['DK'],
+      updatedAt: DateTime(2026),
+    );
+
+    expect(normalizeMediaGenre('Action'), '动作');
+    expect(normalizeMediaGenre('动作'), '动作');
+    expect(mediaCountryLabel('DK'), '丹麦');
+    expect(normalizeMediaCountry('丹麦'), 'DK');
+    expect(
+      const MediaLibraryFilter(
+        genres: {'动作'},
+        countries: {'丹麦'},
+      ).matches(item),
+      isTrue,
+    );
   });
 }

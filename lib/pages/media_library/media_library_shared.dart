@@ -1804,12 +1804,22 @@ class _MediaPosterTile extends ConsumerWidget {
       Center(child: Icon(isSeries ? Icons.tv_rounded : Icons.movie_rounded, color: cs.mutedForeground, size: 34));
 }
 
+/// 从当前显示的 works 随机抽一张海报 URL（无海报返回 null）。
+String? _randomPosterFromWorks(List<_MediaWork> works) {
+  final withPoster = works.where((w) => w.primary.posterPath?.isNotEmpty == true).toList();
+  if (withPoster.isEmpty) return null;
+  withPoster.shuffle();
+  return _tmdbImageURL(withPoster.first.primary.posterPath!, size: 'w342');
+}
+
 /// 列表尾部的加载更多块：默认态显示「加载更多」可点击，点击后变 loading 并触发加载。
+/// 背景图由外部传入（从当前显示项目中随机抽取一张海报），叠加半透明遮罩+loading/加载更多态。
 class _MediaPosterLoadingTile extends StatefulWidget {
   final bool isLoading;
+  final String? posterURL;
   final VoidCallback? onLoadMore;
 
-  const _MediaPosterLoadingTile({this.isLoading = false, this.onLoadMore});
+  const _MediaPosterLoadingTile({this.isLoading = false, this.posterURL, this.onLoadMore});
 
   @override
   State<_MediaPosterLoadingTile> createState() => _MediaPosterLoadingTileState();
@@ -1832,6 +1842,7 @@ class _MediaPosterLoadingTileState extends State<_MediaPosterLoadingTile> {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     final loading = widget.isLoading || _busy;
+    final posterURL = widget.posterURL;
     return InkWell(
       borderRadius: BorderRadius.circular(6),
       onTap: loading ? null : _trigger,
@@ -1849,11 +1860,55 @@ class _MediaPosterLoadingTileState extends State<_MediaPosterLoadingTile> {
                     border: Border.all(color: cs.border),
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: Center(
-                    child: loading
-                        ? const AppLoadingIndicator(size: AppLoadingSize.inline)
-                        : Icon(Icons.expand_more_rounded, color: cs.mutedForeground, size: 34),
-                  ),
+                  child: posterURL == null || posterURL.isEmpty
+                      ? Center(
+                          child: loading
+                              ? const AppLoadingIndicator(size: AppLoadingSize.inline)
+                              : Icon(Icons.expand_more_rounded, color: cs.mutedForeground, size: 34),
+                        )
+                      : Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            CachedNetworkImage(
+                              imageUrl: posterURL,
+                              fit: BoxFit.cover,
+                              placeholder: (_, _) => Center(
+                                child: Icon(Icons.expand_more_rounded, color: cs.mutedForeground, size: 34),
+                              ),
+                              errorWidget: (_, _, _) => Center(
+                                child: Icon(Icons.expand_more_rounded, color: cs.mutedForeground, size: 34),
+                              ),
+                            ),
+                            DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: loading ? 0.56 : 0.34),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                            ),
+                            Center(
+                              child: loading
+                                  ? const AppLoadingIndicator(size: AppLoadingSize.inline)
+                                  : Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withValues(alpha: 0.56),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.expand_more_rounded, color: Colors.white, size: 16),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            '加载更多',
+                                            style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                            ),
+                          ],
+                        ),
                 ),
               ],
             ),
