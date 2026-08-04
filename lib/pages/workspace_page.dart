@@ -971,10 +971,6 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
                       child: Column(
                         children: [
-                          if (_mode == WorkspaceMode.cloud) ...[
-                            topBar,
-                            const SizedBox(height: 8),
-                          ],
                           Expanded(child: content),
                         ],
                       ),
@@ -1017,10 +1013,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       Expanded(
                         child: Column(
                           children: [
-                            if (_mode == WorkspaceMode.cloud) ...[
-                              topBar,
-                              const SizedBox(height: 6),
-                            ],
+                            SizedBox(height: _desktopSidebarTopGap),
                             Expanded(child: content),
                           ],
                         ),
@@ -1378,6 +1371,27 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
               _fileSearchReturnQuery = null;
               _searchController.text = _fileSearchQuery!;
             }),
+      onPasteShare: _pasteShareLink,
+      onScanShare: _scanShareQRCode,
+      searchController: _searchController,
+      searchFocusNode: _searchFocusNode,
+      searchOpen: _searchOpen,
+      onSearch: _submitSearch,
+      onToggleSearch: () => setState(() {
+        _searchOpen = !_searchOpen;
+        if (!_searchOpen) {
+          _searchController.clear();
+          if (_fileSearchQuery != null && _fileSearchQuery!.isNotEmpty) {
+            _fileSearchQuery = '';
+            _fileSearchReturnQuery = null;
+            ref.read(fileProvider.notifier).loadFiles(forceRefresh: true);
+          }
+        } else {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _searchFocusNode.requestFocus();
+          });
+        }
+      }),
     );
   }
 
@@ -1551,89 +1565,8 @@ class _TopBar extends StatelessWidget {
       );
     }
     return SizedBox(
-      height: 38,
-      child: Row(
-        children: [
-          const SizedBox(width: 78),
-          const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
-          if (mode == WorkspaceMode.cloud) ...[
-            _TopBarIconButton(
-              tooltip: '粘贴分享链接',
-              icon: Icons.content_paste_rounded,
-              onTap: onPasteShare,
-            ),
-            const SizedBox(width: 8),
-            _TopBarIconButton(
-              tooltip: '扫描分享二维码',
-              icon: Icons.qr_code_scanner_rounded,
-              onTap: onScanShare,
-            ),
-            const SizedBox(width: 8),
-            _UploadListTopButton(progress: uploadProgress),
-            const SizedBox(width: 8),
-          ],
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            width: searchOpen ? 280 : 38,
-            height: 38,
-            child: searchOpen
-                ? OS26Glass(
-                    radius: 19,
-                    opacity: 0.52,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: ClipRect(
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.search_rounded,
-                            size: 18,
-                            color: cs.foreground,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: searchController,
-                              focusNode: searchFocusNode,
-                              style: TextStyle(
-                                color: cs.foreground,
-                                fontSize: 13,
-                              ),
-                              decoration: InputDecoration(
-                                border: InputBorder.none,
-                                isDense: true,
-                                hintText: mode == WorkspaceMode.cloud
-                                    ? '搜索文件'
-                                    : '搜索影视资源',
-                                hintStyle: TextStyle(
-                                  color: cs.mutedForeground,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              textInputAction: TextInputAction.search,
-                              onSubmitted: onSearch,
-                            ),
-                          ),
-                          InkWell(
-                            borderRadius: BorderRadius.circular(12),
-                            onTap: onToggleSearch,
-                            child: Icon(
-                              Icons.close_rounded,
-                              size: 18,
-                              color: cs.mutedForeground,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                : _TopBarIconButton(
-                    tooltip: mode == WorkspaceMode.cloud ? '搜索文件' : '搜索影视资源',
-                    icon: Icons.search_rounded,
-                    onTap: onToggleSearch,
-                  ),
-          ),
-        ],
-      ),
+      height: 46,
+      child: const DragToMoveArea(child: SizedBox.expand()),
     );
   }
 
@@ -1718,7 +1651,14 @@ class _TopBar extends StatelessWidget {
                 _MediaLibraryScanTopAction(compact: true, state: mediaState),
                 const SizedBox(width: 4),
               ],
-              Expanded(child: searchOpen ? searchField : identity),
+              Expanded(
+                child: searchOpen
+                    ? searchField
+                    : Align(
+                        alignment: Alignment.centerLeft,
+                        child: identity,
+                      ),
+              ),
               if (!searchOpen) ...[
                 const SizedBox(width: 4),
                 if (mediaHomeSelected ||
@@ -1759,7 +1699,13 @@ class _TopBar extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Expanded(flex: narrow ? 2 : 3, child: identity),
+                Expanded(
+                  flex: narrow ? 2 : 3,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: identity,
+                  ),
+                ),
                 if (showLibrarySections) ...[
                   const SizedBox(width: 8),
                   Flexible(
@@ -1953,6 +1899,7 @@ class _MediaLibraryTopIdentity extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Icon(
                   Icons.video_library_rounded,
@@ -3379,6 +3326,13 @@ class _CloudWorkspace extends ConsumerStatefulWidget {
   final VoidCallback onToggleSidePanel;
   final ValueChanged<List<CloudFile>> onBatchRename;
   final VoidCallback? onReturnToSearch;
+  final VoidCallback? onPasteShare;
+  final VoidCallback? onScanShare;
+  final TextEditingController? searchController;
+  final FocusNode? searchFocusNode;
+  final bool searchOpen;
+  final ValueChanged<String>? onSearch;
+  final VoidCallback? onToggleSearch;
 
   const _CloudWorkspace({
     required this.state,
@@ -3386,6 +3340,13 @@ class _CloudWorkspace extends ConsumerStatefulWidget {
     required this.onToggleSidePanel,
     required this.onBatchRename,
     this.onReturnToSearch,
+    this.onPasteShare,
+    this.onScanShare,
+    this.searchController,
+    this.searchFocusNode,
+    this.searchOpen = false,
+    this.onSearch,
+    this.onToggleSearch,
   });
 
   @override
@@ -3429,6 +3390,13 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
                     : widget.onToggleSidePanel,
                 onBatchRename: widget.onBatchRename,
                 onReturnToSearch: widget.onReturnToSearch,
+                onPasteShare: widget.onPasteShare,
+                onScanShare: widget.onScanShare,
+                searchController: widget.searchController,
+                searchFocusNode: widget.searchFocusNode,
+                searchOpen: widget.searchOpen,
+                onSearch: widget.onSearch,
+                onToggleSearch: widget.onToggleSearch,
               ),
               SizedBox(height: compact ? 8 : 12),
               Expanded(
@@ -3505,6 +3473,90 @@ class _CloudWorkspaceState extends ConsumerState<_CloudWorkspace> {
   }
 }
 
+/// 云盘工具栏里的搜索框：收起态显示搜索按钮，展开态显示输入框+关闭按钮。
+/// 从 `_TopBar` 移下来，让标题栏只保留拖拽区，搜索能力落到主体工具栏。
+class _CloudToolbarSearchField extends StatelessWidget {
+  final bool compact;
+  final TextEditingController? searchController;
+  final FocusNode? searchFocusNode;
+  final bool searchOpen;
+  final ValueChanged<String>? onSearch;
+  final VoidCallback? onToggleSearch;
+
+  const _CloudToolbarSearchField({
+    required this.compact,
+    this.searchController,
+    this.searchFocusNode,
+    this.searchOpen = false,
+    this.onSearch,
+    this.onToggleSearch,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      width: searchOpen ? (compact ? 180 : 280) : 38,
+      height: 38,
+      child: searchOpen
+          ? OS26Glass(
+              radius: 19,
+              opacity: 0.52,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: ClipRect(
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.search_rounded,
+                      size: 18,
+                      color: cs.foreground,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: searchController,
+                        focusNode: searchFocusNode,
+                        style: TextStyle(
+                          color: cs.foreground,
+                          fontSize: 13,
+                        ),
+                        decoration: InputDecoration(
+                          border: InputBorder.none,
+                          isDense: true,
+                          hintText: '搜索文件',
+                          hintStyle: TextStyle(
+                            color: cs.mutedForeground,
+                            fontSize: 13,
+                          ),
+                        ),
+                        textInputAction: TextInputAction.search,
+                        onSubmitted: onSearch,
+                      ),
+                    ),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: onToggleSearch,
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: cs.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : _ToolbarButton(
+              icon: Icons.search_rounded,
+              label: '搜索文件',
+              compact: compact,
+              onTap: onToggleSearch,
+            ),
+    );
+  }
+}
+
 class _CloudToolbar extends ConsumerWidget {
   final FileState state;
   final bool compact;
@@ -3516,6 +3568,13 @@ class _CloudToolbar extends ConsumerWidget {
   final VoidCallback onToggleSidePanel;
   final ValueChanged<List<CloudFile>> onBatchRename;
   final VoidCallback? onReturnToSearch;
+  final VoidCallback? onPasteShare;
+  final VoidCallback? onScanShare;
+  final TextEditingController? searchController;
+  final FocusNode? searchFocusNode;
+  final bool searchOpen;
+  final ValueChanged<String>? onSearch;
+  final VoidCallback? onToggleSearch;
 
   const _CloudToolbar({
     required this.state,
@@ -3528,6 +3587,13 @@ class _CloudToolbar extends ConsumerWidget {
     required this.onToggleSidePanel,
     required this.onBatchRename,
     this.onReturnToSearch,
+    this.onPasteShare,
+    this.onScanShare,
+    this.searchController,
+    this.searchFocusNode,
+    this.searchOpen = false,
+    this.onSearch,
+    this.onToggleSearch,
   });
 
   @override
@@ -3571,6 +3637,17 @@ class _CloudToolbar extends ConsumerWidget {
     final controls = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (onToggleSearch != null) ...[
+          _CloudToolbarSearchField(
+            compact: compact,
+            searchController: searchController,
+            searchFocusNode: searchFocusNode,
+            searchOpen: searchOpen,
+            onSearch: onSearch,
+            onToggleSearch: onToggleSearch,
+          ),
+          const SizedBox(width: 8),
+        ],
         if (onReturnToSearch != null) ...[
           _ToolbarButton(
             icon: Icons.arrow_back_rounded,
@@ -3643,6 +3720,29 @@ class _CloudToolbar extends ConsumerWidget {
             ),
           ],
         ),
+        if (onPasteShare != null || onScanShare != null) ...[
+          const SizedBox(width: 8),
+          _ToolbarControlGroup(
+            children: [
+              if (onPasteShare != null)
+                _ToolbarButton(
+                  icon: Icons.content_paste_rounded,
+                  label: '粘贴分享链接',
+                  compact: compact,
+                  onTap: onPasteShare,
+                  grouped: true,
+                ),
+              if (onScanShare != null)
+                _ToolbarButton(
+                  icon: Icons.qr_code_scanner_rounded,
+                  label: '扫码分享',
+                  compact: compact,
+                  onTap: onScanShare,
+                  grouped: true,
+                ),
+            ],
+          ),
+        ],
       ],
     );
     if (compact) {
