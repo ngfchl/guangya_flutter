@@ -22,6 +22,8 @@ class _TopBar extends StatelessWidget {
   final UploadProgress? uploadProgress;
   final MediaDetailHeader? mediaDetail;
   final VoidCallback onCloseMediaDetail;
+  final VoidCallback? onToggleFilter;
+  final bool filterActive;
 
   const _TopBar({
     required this.mode,
@@ -45,6 +47,8 @@ class _TopBar extends StatelessWidget {
     required this.uploadProgress,
     required this.mediaDetail,
     required this.onCloseMediaDetail,
+    this.onToggleFilter,
+    this.filterActive = false,
   });
 
   @override
@@ -249,6 +253,15 @@ class _TopBar extends StatelessWidget {
                 ),
                 const SizedBox(width: 4),
               ],
+              if (onToggleFilter != null) ...[
+                _TopBarIconButton(
+                  tooltip: '筛选影视库',
+                  icon: Icons.filter_alt_rounded,
+                  color: filterActive ? cs.primary : null,
+                  onTap: onToggleFilter,
+                ),
+                const SizedBox(width: 4),
+              ],
               _TopBarIconButton(
                 tooltip: '搜索影视资源',
                 icon: Icons.search_rounded,
@@ -314,14 +327,30 @@ class _TopBar extends StatelessWidget {
                 ],
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 160),
-                  width: searchOpen ? (narrow ? 220 : 360) : 40,
+                  width: searchOpen
+                      ? (narrow ? 220 : 360)
+                      : (onToggleFilter != null ? 84 : 40),
                   height: 38,
                   child: searchOpen
                       ? searchField
-                      : _TopBarIconButton(
-                          tooltip: '搜索影视资源',
-                          icon: Icons.search_rounded,
-                          onTap: onToggleSearch,
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (onToggleFilter != null) ...[
+                              _TopBarIconButton(
+                                tooltip: '筛选影视库',
+                                icon: Icons.filter_alt_rounded,
+                                color: filterActive ? cs.primary : null,
+                                onTap: onToggleFilter,
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                            _TopBarIconButton(
+                              tooltip: '搜索影视资源',
+                              icon: Icons.search_rounded,
+                              onTap: onToggleSearch,
+                            ),
+                          ],
                         ),
                 ),
               ],

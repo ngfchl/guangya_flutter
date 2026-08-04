@@ -1804,6 +1804,80 @@ class _MediaPosterTile extends ConsumerWidget {
       Center(child: Icon(isSeries ? Icons.tv_rounded : Icons.movie_rounded, color: cs.mutedForeground, size: 34));
 }
 
+/// 列表尾部的加载更多块：默认态显示「加载更多」可点击，点击后变 loading 并触发加载。
+class _MediaPosterLoadingTile extends StatefulWidget {
+  final bool isLoading;
+  final VoidCallback? onLoadMore;
+
+  const _MediaPosterLoadingTile({this.isLoading = false, this.onLoadMore});
+
+  @override
+  State<_MediaPosterLoadingTile> createState() => _MediaPosterLoadingTileState();
+}
+
+class _MediaPosterLoadingTileState extends State<_MediaPosterLoadingTile> {
+  bool _busy = false;
+
+  Future<void> _trigger() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      widget.onLoadMore?.call();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final loading = widget.isLoading || _busy;
+    return InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: loading ? null : _trigger,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    color: cs.muted,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: cs.border),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Center(
+                    child: loading
+                        ? const AppLoadingIndicator(size: AppLoadingSize.inline)
+                        : Icon(Icons.expand_more_rounded, color: cs.mutedForeground, size: 34),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            loading ? '正在加载' : '加载更多',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: cs.foreground),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            loading ? '请稍候…' : '点击追加下一批',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ManualTMDBMatchDialog extends ConsumerStatefulWidget {
   final String initialQuery;
   final List<Map<String, dynamic>>? initialResults;

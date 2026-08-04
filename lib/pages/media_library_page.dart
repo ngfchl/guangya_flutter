@@ -32,6 +32,7 @@ export '../models/media_navigation.dart' show MediaLibraryBrowseFilter, MediaNav
 part 'media_library/media_library_detail.dart';
 part 'media_library/media_library_backup.dart';
 part 'media_library/media_library_shared.dart';
+part 'media_library/media_library_filter.dart';
 
 
 String _tmdbImageURL(String path, {required String size}) {
@@ -90,6 +91,8 @@ class MediaLibraryPage extends ConsumerStatefulWidget {
   final MediaLibraryBrowseFilter librarySection;
   final String? searchTitle;
   final ValueChanged<String>? onOpenLibrary;
+  final MediaLibraryFilter libraryFilter;
+  final ValueChanged<MediaLibraryFilter>? onLibraryFilterChanged;
 
   const MediaLibraryPage({
     super.key,
@@ -101,6 +104,8 @@ class MediaLibraryPage extends ConsumerStatefulWidget {
     this.librarySection = MediaLibraryBrowseFilter.all,
     this.searchTitle,
     this.onOpenLibrary,
+    this.libraryFilter = const MediaLibraryFilter(),
+    this.onLibraryFilterChanged,
   });
 
   static void showCreateDialog(BuildContext context, WidgetRef ref) {
@@ -135,6 +140,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   var _manualMatchSession = 0;
   late MediaLibraryBrowseFilter _wallFilter;
   late final MediaLibraryNotifier _mediaNotifier;
+  /// 筛选态列表显示条目数上限，点击「加载更多」追加 50。
+  int _filterLimit = 50;
+  /// 筛选态加载更多进行中标志，让加载块在加载期间显示 loading 态。
+  bool _loadingMoreFilter = false;
   void Function(MediaDetailHeader?) _setDetailHeader = (_) {};
   String? _activeCollectionKey;
   final _searchController = TextEditingController();
@@ -809,10 +818,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             _buildHeader(context, state, compact: compact),
             SizedBox(height: compact ? 8 : 12),
           ],
-          if (widget.showManagementToolbar && _detailWork == null) ...[
-            _buildToolbar(context, state),
-            SizedBox(height: compact ? 8 : 12),
-          ],
           Expanded(
             child: widget.showLibrarySidebar && !widget.showManagementToolbar && !compact && !_hideLibrarySection(state)
                 ? Row(
@@ -824,6 +829,74 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                   )
                 : _buildMainPanel(context, state),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterToolbar(BuildContext context, MediaLibraryState state, {required bool compact}) {
+    final cs = ShadTheme.of(context).colorScheme;
+    final activeCount = widget.libraryFilter.kinds.length +
+        widget.libraryFilter.genres.length +
+        widget.libraryFilter.resolutions.length +
+        widget.libraryFilter.countries.length +
+        widget.libraryFilter.decades.length +
+        widget.libraryFilter.matchStates.length +
+        widget.libraryFilter.watchedStates.length;
+    final visibleItems = state.globalVisibleItems;
+    final filtered = widget.libraryFilter.isActive
+        ? visibleItems.where((item) => widget.libraryFilter.matches(item, skipKinds: true)).toList()
+        : visibleItems;
+    final totalCount = visibleItems.length;
+    final resultCount = filtered.length;
+    return Padding(
+      padding: EdgeInsets.only(bottom: compact ? 6 : 8),
+      child: Row(
+        children: [
+          ShadTooltip(
+            builder: (_) => const Text('筛选影视库'),
+            child: ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: () => widget.onLibraryFilterChanged?.call(widget.libraryFilter),
+              leading: Icon(
+                Icons.filter_alt_rounded,
+                size: 16,
+                color: widget.libraryFilter.isActive ? cs.primary : cs.foreground,
+              ),
+              child: const Text('筛选'),
+            ),
+          ),
+          if (widget.libraryFilter.isActive) ...[
+            const SizedBox(width: 4),
+            ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: () => widget.onLibraryFilterChanged?.call(const MediaLibraryFilter()),
+              leading: Icon(Icons.filter_alt_off_rounded, size: 16, color: cs.mutedForeground),
+              child: const Text('清除'),
+            ),
+          ],
+          const Spacer(),
+          Text(
+            widget.libraryFilter.isActive
+                ? '筛选结果 $resultCount / $totalCount 项'
+                : '共 $totalCount 项',
+            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+          ),
+          if (activeCount > 0)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '$activeCount',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: cs.primary),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -896,6 +969,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     );
   }
 
+
   Widget _buildToolbar(BuildContext context, MediaLibraryState state) {
     final cs = ShadTheme.of(context).colorScheme;
     final detailWork = _detailWork;
@@ -933,9 +1007,22 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (detailWork == null && widget.showManagementToolbar) ...[
+                if (detailWork == null) ...[
                   _managementActionStrip(context, state, compact: true),
                 ],
+                if (detailWork == null)
+                  ShadTooltip(
+                    builder: (_) => const Text('筛选影视库'),
+                    child: ShadButton.ghost(
+                      size: ShadButtonSize.sm,
+                      onPressed: () => widget.onLibraryFilterChanged?.call(widget.libraryFilter),
+                      leading: Icon(
+                        Icons.filter_alt_rounded,
+                        size: 16,
+                        color: widget.libraryFilter.isActive ? cs.primary : cs.foreground,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -964,10 +1051,47 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           ),
         ),
         const SizedBox(width: 8),
-        if (detailWork == null && widget.showManagementToolbar) ...[
+        if (detailWork == null) ...[
           _managementActionStrip(context, state, compact: false),
         ],
+        if (detailWork == null) ...[
+          const SizedBox(width: 4),
+          ShadTooltip(
+            builder: (_) => const Text('筛选影视库'),
+            child: ShadButton.ghost(
+              size: ShadButtonSize.sm,
+              onPressed: () => widget.onLibraryFilterChanged?.call(widget.libraryFilter),
+              leading: Icon(
+                Icons.filter_alt_rounded,
+                size: 16,
+                color: widget.libraryFilter.isActive ? cs.primary : cs.foreground,
+              ),
+            ),
+          ),
+        ],
       ],
+    );
+  }
+
+  Widget _buildFilterPanel(BuildContext context, MediaLibraryState state, {required bool compact}) {
+    final visibleItems = state.globalVisibleItems;
+    final availableGenres = <String>{};
+    final availableCountries = <String>{};
+    final hasWatchHistory = state.globalVisibleItems.any((item) =>
+        (item.tmdbID != null && item.tmdbID != 0) ||
+        (item.doubanID != null && item.doubanID!.isNotEmpty));
+    for (final item in visibleItems) {
+      availableGenres.addAll(item.genres);
+      availableCountries.addAll(item.originCountries);
+    }
+    final watchedKeys = hasWatchHistory ? const <String>{'watched', 'unwatched'} : const <String>{};
+    return MediaLibraryFilterPanel(
+      filter: widget.libraryFilter,
+      availableGenres: availableGenres,
+      availableCountries: availableCountries,
+      availableWatchedKeys: watchedKeys,
+      onFilter: (next) => widget.onLibraryFilterChanged?.call(next),
+      onCollapse: () => widget.onLibraryFilterChanged?.call(widget.libraryFilter),
     );
   }
 
@@ -990,6 +1114,19 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ),
       ),
       _backupActionsMenu(state, compact: true),
+      ShadTooltip(
+        builder: (_) => const Text('筛选影视库'),
+        child: ShadButton.ghost(
+          size: ShadButtonSize.sm,
+          onPressed: () => widget.onLibraryFilterChanged?.call(widget.libraryFilter),
+          leading: Icon(
+            Icons.filter_alt_rounded,
+            size: 16,
+            color: widget.libraryFilter.isActive ? cs.primary : cs.foreground,
+          ),
+          child: const Text('筛选'),
+        ),
+      ),
       state.isScanning
           ? ShadButton.destructive(
               size: ShadButtonSize.sm,
@@ -1135,7 +1272,18 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       MediaLibraryBrowseFilter.collections => activeCollection?.resources ?? const [],
       MediaLibraryBrowseFilter.unmatched => visibleItems.where((item) => !item.isMatched).toList(),
     };
-    final works = _MediaWork.fromItems(filteredItems);
+    // 顶部筛选面板的 7 维度过滤（影视分类已由 activeFilter 预筛，这里跳过 kinds 维度）
+    final panelFiltered = widget.libraryFilter.isActive
+        ? filteredItems.where((item) => widget.libraryFilter.matches(item, skipKinds: true)).toList()
+        : filteredItems;
+    final allWorks = _MediaWork.fromItems(panelFiltered);
+    // 筛选态分批显示：默认前 50 条，点击「加载更多」追加下 50 条。
+    final works = widget.libraryFilter.isActive && allWorks.length > _filterLimit
+        ? allWorks.sublist(0, _filterLimit)
+        : allWorks;
+    final hasMoreFiltered = widget.libraryFilter.isActive && allWorks.length > works.length;
+    // 加载更多已在 setState 后通过新 _filterLimit 把下一批纳入 works，重置加载态让块在加载完后消失。
+    if (_loadingMoreFilter && !hasMoreFiltered) _loadingMoreFilter = false;
     if (state.selectedLibrary == null) {
       return _mainEmpty(context, '还没有媒体库', '从云盘根目录或当前目录创建一个媒体库');
     }
@@ -1257,10 +1405,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                     builder: (context, constraints) {
                       final compact = MediaQuery.sizeOf(context).width < 720;
                       final spacing = compact ? 10.0 : 14.0;
-                      final mobileColumns = constraints.maxWidth >= 420 ? 3 : 2;
-                      final cardWidth = compact
-                          ? ((constraints.maxWidth - spacing * (mobileColumns - 1)) / mobileColumns)
-                          : 142.0;
+                      // 列数按可用宽度算，非 compact 也撑满：每列目标 158（卡片 142 + 间距余量）。
+                      final targetCardWidth = compact ? 130.0 : 158.0;
+                      final columns = (constraints.maxWidth ~/ (targetCardWidth + spacing)).clamp(2, 12);
+                      final cardWidth = (constraints.maxWidth - spacing * (columns - 1)) / columns;
                       final cardHeight = cardWidth / 0.52;
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1281,6 +1429,18 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                                         ? null
                                         : () => unawaited(_refreshAndRecognizeDetail(work)),
                                     onManualMatch: () => unawaited(_showManualTMDBMatch(work, work.primary)),
+                                  ),
+                                ),
+                              if (hasMoreFiltered || _loadingMoreFilter)
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: cardHeight,
+                                  child: _MediaPosterLoadingTile(
+                                    isLoading: _loadingMoreFilter,
+                                    onLoadMore: () => setState(() {
+                                      _loadingMoreFilter = true;
+                                      _filterLimit += 50;
+                                    }),
                                   ),
                                 ),
                             ],
@@ -1973,7 +2133,26 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       onImportWorks: _importWorksData,
       onSyncToCloud: _syncScrapedDataToCloud,
       onRestoreFromCloud: _syncScrapedDataFromCloud,
+      onRefreshScrape: _backupBusy || state.hasActiveScans ? null : _refreshScrapedData,
     );
+  }
+
+  Future<void> _refreshScrapedData() async {
+    if (!mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      final count = await ref.read(mediaLibraryProvider.notifier).refreshScrapedData();
+      if (!mounted) return;
+      showShadDialog(
+        context: context,
+        builder: (_) => ShadDialog(
+          title: const Text('刷新刮削数据'),
+          child: Text(count > 0 ? '已刷新 $count 条刮削数据' : '没有可刷新的条目（需先识别并带 TMDB ID）'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
   }
 
   Future<void> _exportWorksData() async {
@@ -3128,6 +3307,24 @@ class _MediaLibraryManagementDialogState extends ConsumerState<_MediaLibraryMana
   final _clearingLibraryIDs = <String>{};
   bool _clearingAllLibraries = false;
 
+  Future<void> _refreshScrapedData() async {
+    if (!mounted) return;
+    setState(() => _backupBusy = true);
+    try {
+      final count = await ref.read(mediaLibraryProvider.notifier).refreshScrapedData();
+      if (!mounted) return;
+      showShadDialog(
+        context: context,
+        builder: (_) => ShadDialog(
+          title: const Text('刷新刮削数据'),
+          child: Text(count > 0 ? '已刷新 $count 条刮削数据' : '没有可刷新的条目（需先识别并带 TMDB ID）'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(mediaLibraryProvider);
@@ -3163,6 +3360,7 @@ class _MediaLibraryManagementDialogState extends ConsumerState<_MediaLibraryMana
                   onImportWorks: _importWorksData,
                   onSyncToCloud: _syncScrapedDataToCloud,
                   onRestoreFromCloud: _syncScrapedDataFromCloud,
+                  onRefreshScrape: _backupBusy || state.hasActiveScans ? null : _refreshScrapedData,
                 ),
                 const SizedBox(width: 8),
                 ShadTooltip(

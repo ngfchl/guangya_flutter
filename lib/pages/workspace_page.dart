@@ -83,6 +83,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   WorkspaceTool? _cloudActiveTool;
   WorkspaceTool? _mediaActiveTool;
   bool _confirmingExit = false;
+  MediaLibraryFilter _mediaLibraryFilter = const MediaLibraryFilter();
+  bool _mediaFilterPanelExpanded = false;
 
   @override
   void initState() {
@@ -261,6 +263,10 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                   onCloseMediaDetail: () =>
                       ref.read(activeMediaDetailHeaderProvider.notifier).state =
                           null,
+                  onToggleFilter: _mediaActiveTool == null
+                      ? () => setState(() => _mediaFilterPanelExpanded = !_mediaFilterPanelExpanded)
+                      : null,
+                  filterActive: _mediaLibraryFilter.isActive || _mediaFilterPanelExpanded,
                 );
                 final rawContent = IndexedStack(
                   index: _mode == WorkspaceMode.cloud ? 0 : 1,
@@ -275,6 +281,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                           children: [
                             if (_mediaActiveTool == null) ...[
                               topBar,
+                              if (_mediaFilterPanelExpanded) _buildMediaFilterPanel(context, ref),
                               const ShadSeparator.horizontal(),
                             ],
                             Expanded(child: rawContent),
@@ -713,6 +720,25 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     );
   }
 
+  Widget _buildMediaFilterPanel(BuildContext context, WidgetRef ref) {
+    final media = ref.read(mediaLibraryProvider);
+    final visibleItems = media.globalVisibleItems;
+    final availableGenres = <String>{};
+    final availableCountries = <String>{};
+    for (final item in visibleItems) {
+      availableGenres.addAll(item.genres);
+      availableCountries.addAll(item.originCountries);
+    }
+    return MediaLibraryFilterPanel(
+      filter: _mediaLibraryFilter,
+      availableGenres: availableGenres,
+      availableCountries: availableCountries,
+      availableWatchedKeys: const {},
+      onFilter: (next) => setState(() => _mediaLibraryFilter = next),
+      onCollapse: () => setState(() => _mediaFilterPanelExpanded = false),
+    );
+  }
+
   Widget _buildMediaContent() {
     if (_mediaActiveTool != null) {
       return WorkspaceToolsPage(
@@ -741,6 +767,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       browseFilter: _mediaBrowseFilter,
       librarySection: _mediaLibrarySection,
       onOpenLibrary: _selectMediaLibrary,
+      libraryFilter: _mediaLibraryFilter,
+      onLibraryFilterChanged: (next) => setState(() => _mediaLibraryFilter = next),
     );
   }
 }
