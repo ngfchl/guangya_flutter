@@ -1126,6 +1126,16 @@ class _CloudSelectionToolbar extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Text('已选择 $selectedCount 项'),
           ),
+          _SelectionActionButton(
+            icon: Icons.select_all_rounded,
+            label: '全选',
+            onTap: onSelectAll,
+          ),
+          _SelectionActionButton(
+            icon: Icons.close_rounded,
+            label: '退出选择',
+            onTap: onExit,
+          ),
         ],
         _SelectionActionButton(
           icon: Icons.copy_all_rounded,
