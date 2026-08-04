@@ -364,8 +364,7 @@ class MediaLibraryStore {
                   WHEN tmdb_id IS NOT NULL THEN 'tmdb:' || tmdb_id
                   WHEN douban_id IS NOT NULL AND douban_id != ''
                     THEN 'douban:' || douban_id
-                  ELSE 'title:' || LOWER(REPLACE(REPLACE(
-                    COALESCE(title, cloud_name, ''), ' ', ''), ',', '')) ||
+                  ELSE 'title:' || COALESCE(title, cloud_name, '') ||
                     ':' || SUBSTR(COALESCE(release_date, ''), 1, 4)
                 END AS work_key
               FROM media_items
@@ -2123,9 +2122,18 @@ class MediaLibraryStore {
         backdrop_path TEXT,
         rating REAL,
         imdb_id TEXT,
+        genres TEXT DEFAULT '',
+        origin_country TEXT DEFAULT '',
         created_at REAL NOT NULL
       )
     ''');
+    // 旧库迁移：补 tmdb_works.genres/origin_country 列（筛选维度扩展）
+    if (!await _hasColumn(db, 'tmdb_works', 'genres')) {
+      await db.execute('ALTER TABLE tmdb_works ADD COLUMN genres TEXT DEFAULT \'\'');
+    }
+    if (!await _hasColumn(db, 'tmdb_works', 'origin_country')) {
+      await db.execute('ALTER TABLE tmdb_works ADD COLUMN origin_country TEXT DEFAULT \'\'');
+    }
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_tmdb_works_tmdb_id '
       'ON tmdb_works(tmdb_id)',
@@ -2270,6 +2278,11 @@ class MediaLibraryStore {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_id '
       'ON media_items(tmdb_id)',
+    );
+    // 筛选态常用 WHERE：library_id + media_kind 复合索引，覆盖电影/剧集/未识别筛选分页。
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_library_kind '
+      'ON media_items(library_id, media_kind)',
     );
     // douban_id drives search, statistics work_key grouping and enrichment,
     // but previously had no index (unlike tmdb_id). Partial index keeps it
@@ -2454,6 +2467,11 @@ class MediaLibraryStore {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_id '
       'ON media_items(tmdb_id)',
+    );
+    // 筛选态常用 WHERE：library_id + media_kind 复合索引，覆盖电影/剧集/未识别筛选分页。
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_media_items_library_kind '
+      'ON media_items(library_id, media_kind)',
     );
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_media_items_douban_id '
@@ -2786,8 +2804,9 @@ class MediaLibraryStore {
       '''
       INSERT OR REPLACE INTO tmdb_works
         (tmdb_id, title, original_title, media_kind, release_date,
-         overview, poster_path, backdrop_path, rating, imdb_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         overview, poster_path, backdrop_path, rating, imdb_id,
+         genres, origin_country, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''',
       [
         work.tmdbID,
@@ -2800,6 +2819,8 @@ class MediaLibraryStore {
         work.backdropPath,
         work.rating,
         work.imdbID,
+        work.genres.join(','),
+        work.originCountries.join(','),
         work.createdAt.millisecondsSinceEpoch / 1000.0,
       ],
     );
@@ -2823,8 +2844,9 @@ class MediaLibraryStore {
           '''
           INSERT OR REPLACE INTO tmdb_works
             (tmdb_id, title, original_title, media_kind, release_date,
-             overview, poster_path, backdrop_path, rating, imdb_id, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             overview, poster_path, backdrop_path, rating, imdb_id,
+             genres, origin_country, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
           [
             work.tmdbID,
@@ -2837,6 +2859,8 @@ class MediaLibraryStore {
             work.backdropPath,
             work.rating,
             work.imdbID,
+            work.genres.join(','),
+            work.originCountries.join(','),
             work.createdAt.millisecondsSinceEpoch / 1000.0,
           ],
         );
