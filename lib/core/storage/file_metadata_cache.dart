@@ -42,6 +42,9 @@ class FileMetadataCache {
     Iterable<String> folderIDs,
   ) => _enqueueWrite(() => _store.removeFolderChildrenSubtrees(folderIDs));
 
+  static Future<void> removeFileEntries(Iterable<String> fileIDs) =>
+      _enqueueWrite(() => _store.removeFileEntries(fileIDs));
+
   static Future<void> removeMissingFolderSubtrees(Iterable<String> folderIDs) {
     final ids = folderIDs.where((id) => id.isNotEmpty).toSet();
     if (ids.isEmpty) return Future<void>.value();

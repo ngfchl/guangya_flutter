@@ -38,7 +38,7 @@ class MediaLibraryFilterPanel extends StatelessWidget {
       _FilterSection(
         title: '类型',
         options: _genreOptions(availableGenres),
-        selected: filter.genres,
+        selected: filter.genres.map(normalizeMediaGenre).toSet(),
         onToggle: (value) => onFilter(filter.copyWith(
           genres: _toggle(filter.genres, value),
         )),
@@ -60,10 +60,18 @@ class MediaLibraryFilterPanel extends StatelessWidget {
         _FilterSection(
           title: '发行地',
           options: availableCountries
-              .map((c) => _FilterOption(value: c, label: _countryLabel(c)))
+              .map(normalizeMediaCountry)
+              .where((country) => country.isNotEmpty)
+              .toSet()
+              .map(
+                (country) => _FilterOption(
+                  value: country,
+                  label: mediaCountryLabel(country),
+                ),
+              )
               .toList()
             ..sort((a, b) => a.label.compareTo(b.label)),
-          selected: filter.countries,
+          selected: filter.countries.map(normalizeMediaCountry).toSet(),
           onToggle: (value) => onFilter(filter.copyWith(
             countries: _toggle(filter.countries, value),
           )),
@@ -161,80 +169,45 @@ class MediaLibraryFilterPanel extends StatelessWidget {
     return {value};
   }
 
-  /// 「类型」分组选项：固定候选清单（TMDB genre 英文名作 value，中文作 label）+ 当前库里已出现但不在清单内的补全。
-  /// value 用英文是因为 item.genres 存的是 TMDB 原始英文名（Adventure/Drama 等），matches 比对需与之对齐。
+  /// 固定候选与媒体库实际值都归一化为中文，避免 TMDB 英文类型与豆瓣中文类型重复。
   static List<_FilterOption> _genreOptions(Set<String> availableGenres) {
     const fixed = <_FilterOption>[
-      _FilterOption(value: 'Adventure', label: '冒险'),
-      _FilterOption(value: 'Drama', label: '剧情'),
-      _FilterOption(value: 'Action', label: '动作'),
-      _FilterOption(value: 'Animation', label: '动画'),
-      _FilterOption(value: 'Comedy', label: '喜剧'),
-      _FilterOption(value: 'Family', label: '家庭'),
-      _FilterOption(value: 'Mystery', label: '悬疑'),
-      _FilterOption(value: 'Crime', label: '犯罪'),
-      _FilterOption(value: 'Documentary', label: '纪录'),
-      _FilterOption(value: 'Western', label: '西部'),
-      _FilterOption(value: 'Science Fiction', label: '科幻'),
-      _FilterOption(value: 'Fantasy', label: '奇幻'),
-      _FilterOption(value: 'War', label: '战争'),
-      _FilterOption(value: 'History', label: '历史'),
-      _FilterOption(value: 'Horror', label: '恐怖'),
-      _FilterOption(value: 'Thriller', label: '惊悚'),
-      _FilterOption(value: 'Romance', label: '爱情'),
-      _FilterOption(value: 'Music', label: '音乐'),
-      _FilterOption(value: 'TV Movie', label: '电视电影'),
-      _FilterOption(value: 'Kids', label: '儿童'),
-      _FilterOption(value: 'Reality', label: '真人秀'),
-      _FilterOption(value: 'Variety', label: '综艺'),
-      _FilterOption(value: 'Wuxia', label: '武侠'),
-      _FilterOption(value: 'Costume', label: '古装'),
-      _FilterOption(value: 'Film Noir', label: '黑色'),
-      _FilterOption(value: 'Short', label: '短片'),
+      _FilterOption(value: '冒险', label: '冒险'),
+      _FilterOption(value: '剧情', label: '剧情'),
+      _FilterOption(value: '动作', label: '动作'),
+      _FilterOption(value: '动画', label: '动画'),
+      _FilterOption(value: '喜剧', label: '喜剧'),
+      _FilterOption(value: '家庭', label: '家庭'),
+      _FilterOption(value: '悬疑', label: '悬疑'),
+      _FilterOption(value: '犯罪', label: '犯罪'),
+      _FilterOption(value: '纪录', label: '纪录'),
+      _FilterOption(value: '西部', label: '西部'),
+      _FilterOption(value: '科幻', label: '科幻'),
+      _FilterOption(value: '奇幻', label: '奇幻'),
+      _FilterOption(value: '战争', label: '战争'),
+      _FilterOption(value: '历史', label: '历史'),
+      _FilterOption(value: '恐怖', label: '恐怖'),
+      _FilterOption(value: '惊悚', label: '惊悚'),
+      _FilterOption(value: '爱情', label: '爱情'),
+      _FilterOption(value: '音乐', label: '音乐'),
+      _FilterOption(value: '电视电影', label: '电视电影'),
+      _FilterOption(value: '儿童', label: '儿童'),
+      _FilterOption(value: '真人秀', label: '真人秀'),
+      _FilterOption(value: '综艺', label: '综艺'),
+      _FilterOption(value: '武侠', label: '武侠'),
+      _FilterOption(value: '古装', label: '古装'),
+      _FilterOption(value: '黑色', label: '黑色'),
+      _FilterOption(value: '短片', label: '短片'),
     ];
     final fixedValues = fixed.map((e) => e.value).toSet();
     final extra = availableGenres
-        .where((g) => !fixedValues.contains(g))
-        .map((g) => _FilterOption(value: g, label: g))
+        .map(normalizeMediaGenre)
+        .where((genre) => genre.isNotEmpty && !fixedValues.contains(genre))
+        .toSet()
+        .map((genre) => _FilterOption(value: genre, label: genre))
         .toList()
       ..sort((a, b) => a.label.compareTo(b.label));
     return [...fixed, ...extra];
-  }
-
-  static String _countryLabel(String code) {
-    return switch (code) {
-      'CN' => '中国',
-      'TW' => '中国台湾',
-      'HK' => '中国香港',
-      'US' => '美国',
-      'GB' => '英国',
-      'JP' => '日本',
-      'KR' => '韩国',
-      'FR' => '法国',
-      'DE' => '德国',
-      'IT' => '意大利',
-      'ES' => '西班牙',
-      'IN' => '印度',
-      'CA' => '加拿大',
-      'AU' => '澳大利亚',
-      'RU' => '俄罗斯',
-      'TH' => '泰国',
-      'SE' => '瑞典',
-      'FI' => '芬兰',
-      'IE' => '爱尔兰',
-      'NL' => '荷兰',
-      'BE' => '比利时',
-      'AT' => '奥地利',
-      'MX' => '墨西哥',
-      'BR' => '巴西',
-      'AR' => '阿根廷',
-      'TR' => '土耳其',
-      'ID' => '印度尼西亚',
-      'SG' => '新加坡',
-      'BG' => '保加利亚',
-      'RS' => '塞尔维亚',
-      _ => code,
-    };
   }
 }
 

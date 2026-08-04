@@ -485,7 +485,9 @@ class MediaLibraryItem {
       collectionID: _toInt(json['collectionID']),
       collectionName: json['collectionName']?.toString(),
       genres: _stringListFromJson(json['genres']),
-      originCountries: _stringListFromJson(json['originCountries']),
+      originCountries: _stringListFromJson(
+        json['origin_country'] ?? json['originCountries'],
+      ),
       updatedAt: _parseDate(json['updatedAt']) ?? DateTime.now(),
     );
   }
@@ -910,9 +912,9 @@ class MediaLibraryScanTask {
         orElse: () => MediaLibraryScanMode.unrecognizedOnly,
       ),
       status: status,
-      progress: MediaLibraryScanProgress.fromJson(progressMap).copyWith(
-        phase: restoredStatus.isActive ? '应用重新启动，任务已停止' : null,
-      ),
+      progress: MediaLibraryScanProgress.fromJson(
+        progressMap,
+      ).copyWith(phase: restoredStatus.isActive ? '应用重新启动，任务已停止' : null),
       logs: logs,
       createdAt: createdAt,
       updatedAt: _parseDate(json['updatedAt']) ?? createdAt,
@@ -1107,50 +1109,53 @@ class ParsedMediaName {
     // 例如文件名"蓝光.1932..."无JAPANESE标记，但父目录"100.Yen.Love.2014.JAPANESE..."有
     if (country == 'CN' && directoryName?.trim().isNotEmpty == true) {
       for (final pattern in countryPatterns) {
-        final dirMatch =
-            RegExp(pattern, caseSensitive: false).firstMatch(directoryName!);
+        final dirMatch = RegExp(
+          pattern,
+          caseSensitive: false,
+        ).firstMatch(directoryName!);
         if (dirMatch != null) {
           final dirCountryCode = dirMatch.group(1)!.toUpperCase();
-          final dirCountry = {
-            'JAPAN': 'JP',
-            'JAPANESE': 'JP',
-            'USA': 'US',
-            'US': 'US',
-            'UNITED STATES': 'US',
-            'UK': 'GB',
-            'UNITED KINGDOM': 'GB',
-            'CN': 'CN',
-            'CHINA': 'CN',
-            '中国': 'CN',
-            'HK': 'HK',
-            'HONG KONG': 'HK',
-            'TW': 'TW',
-            'TAIWAN': 'TW',
-            'KR': 'KR',
-            'KOREA': 'KR',
-            'KOREAN': 'KR',
-            'EU': 'EU',
-            'FR': 'FR',
-            'FRANCE': 'FR',
-            'DE': 'DE',
-            'GERMANY': 'DE',
-            'CA': 'CA',
-            'CANADA': 'CA',
-            'AU': 'AU',
-            'AUSTRALIA': 'AU',
-            'MX': 'MX',
-            'MEXICO': 'MX',
-            'ES': 'ES',
-            'SPAIN': 'ES',
-            'IT': 'IT',
-            'ITALY': 'IT',
-            'NL': 'NL',
-            'NETHERLANDS': 'NL',
-            'BR': 'BR',
-            'BRAZIL': 'BR',
-            'RU': 'RU',
-            'RUSSIA': 'RU',
-          }[dirCountryCode] ??
+          final dirCountry =
+              {
+                'JAPAN': 'JP',
+                'JAPANESE': 'JP',
+                'USA': 'US',
+                'US': 'US',
+                'UNITED STATES': 'US',
+                'UK': 'GB',
+                'UNITED KINGDOM': 'GB',
+                'CN': 'CN',
+                'CHINA': 'CN',
+                '中国': 'CN',
+                'HK': 'HK',
+                'HONG KONG': 'HK',
+                'TW': 'TW',
+                'TAIWAN': 'TW',
+                'KR': 'KR',
+                'KOREA': 'KR',
+                'KOREAN': 'KR',
+                'EU': 'EU',
+                'FR': 'FR',
+                'FRANCE': 'FR',
+                'DE': 'DE',
+                'GERMANY': 'DE',
+                'CA': 'CA',
+                'CANADA': 'CA',
+                'AU': 'AU',
+                'AUSTRALIA': 'AU',
+                'MX': 'MX',
+                'MEXICO': 'MX',
+                'ES': 'ES',
+                'SPAIN': 'ES',
+                'IT': 'IT',
+                'ITALY': 'IT',
+                'NL': 'NL',
+                'NETHERLANDS': 'NL',
+                'BR': 'BR',
+                'BRAZIL': 'BR',
+                'RU': 'RU',
+                'RUSSIA': 'RU',
+              }[dirCountryCode] ??
               'CN';
           if (dirCountry != 'CN') {
             country = dirCountry;
@@ -1238,16 +1243,27 @@ class ParsedMediaName {
         )
         .replaceFirst(RegExp(r'(?:\s|[._-])+第\s*[一二三四五六七八九十两\d]+\s*季$'), '')
         .replaceFirst(
-          RegExp(r'(?:\s|[._-])+\d{1,2}(?:st|nd|rd|th)\s+[Ss]eason\s*$', caseSensitive: false),
+          RegExp(
+            r'(?:\s|[._-])+\d{1,2}(?:st|nd|rd|th)\s+[Ss]eason\s*$',
+            caseSensitive: false,
+          ),
           '',
         )
         .replaceFirst(
-          RegExp(r'(?:\s|[._-])*(?:E|EP|Episode|SP|Special)\s*0?\d{1,4}$', caseSensitive: false),
+          RegExp(
+            r'(?:\s|[._-])*(?:E|EP|Episode|SP|Special)\s*0?\d{1,4}$',
+            caseSensitive: false,
+          ),
           '',
         )
         // Leading compact date YYYYMMDD (e.g. "20260406") is archive metadata,
         // not part of the searchable title. Only strip when it's 8 digits.
-        .replaceFirst(RegExp(r'^\s*(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\s+'), '')
+        .replaceFirst(
+          RegExp(
+            r'^\s*(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\s+',
+          ),
+          '',
+        )
         .trim();
     ParsedMediaName? parent;
     int? directoryEditionYear;
@@ -1306,8 +1322,8 @@ class ParsedMediaName {
     var inheritedTitleFromParent = false;
     // 标题仅包含剧集标记（如"第67集 七擒孟获"、"第1期加更"）时，
     // 应视为"episode-only"，从父目录继承剧集标题。
-    final episodeOnlyTitle = episode != null &&
-        RegExp(r'^第\s*\d{1,4}\s*[集话期]').hasMatch(title);
+    final episodeOnlyTitle =
+        episode != null && RegExp(r'^第\s*\d{1,4}\s*[集话期]').hasMatch(title);
     final genericName =
         title.isEmpty ||
         RegExp(r'^\d+$').hasMatch(title) ||
@@ -1363,7 +1379,8 @@ class ParsedMediaName {
     final numericPrefix = RegExp(r'^\s*(\d{1,4})(?=$|[ ._-])').firstMatch(stem);
     final numericOnly = numericPrefix != null && genericName;
     // 即使 genericName 为 false，但如果标题以数字开头且符合剧集特征，也尝试检测集号
-    final numericEpisode = numericPrefix != null &&
+    final numericEpisode =
+        numericPrefix != null &&
         episode == null &&
         !RegExp(r'^(?:19|20)\d{2}$').hasMatch(numericPrefix.group(1)!);
     if (episode == null &&
@@ -1375,8 +1392,8 @@ class ParsedMediaName {
       if (parentSeason != null) {
         season = parentSeason;
         episode = int.tryParse(digits);
-      } else if (digits.length <= 2 && (parent != null ||
-          directoryName?.trim().isNotEmpty == true)) {
+      } else if (digits.length <= 2 &&
+          (parent != null || directoryName?.trim().isNotEmpty == true)) {
         // 当 parent 为空时，从 _bestParentContext 获取目录上下文
         if (parent == null) {
           parent = _bestParentContext(directoryName, directoryPath);
@@ -1422,7 +1439,9 @@ class ParsedMediaName {
         (directoryName == null ? null : _repairSpacedYear(directoryName)) ??
         (directoryPath == null ? null : _repairSpacedYear(directoryPath));
     final source =
-        first(r'\b(?:WEB[- ]?DL|WEBRip|BluRay|BDRip|REMUX|HDTV|DVD|UHD|原盘)\b') ??
+        first(
+          r'\b(?:WEB[- ]?DL|WEBRip|BluRay|BDRip|REMUX|HDTV|DVD|UHD|原盘)\b',
+        ) ??
         metadataParent?.source;
     final videoCodec =
         first(r'\b(?:x26[45]|h\.?26[45]|AVC|HEVC|AV1|VC-1)\b') ??
@@ -1600,10 +1619,7 @@ class ParsedMediaName {
 
     // Broadcaster/channel prefixes (e.g. CCTV8HD, CCTV5) are station metadata
     // that should not leak into the TMDB search title.
-    title = title.replaceFirst(
-      RegExp(r'^\s*CCTV\d{1,2}[A-Z]*\s+'),
-      '',
-    );
+    title = title.replaceFirst(RegExp(r'^\s*CCTV\d{1,2}[A-Z]*\s+'), '');
 
     // Download sites and uploader labels are transport metadata even when
     // their bracket contains Chinese text. Preserve ordinary localized title
@@ -1659,10 +1675,7 @@ class ParsedMediaName {
 
     // Resolution and format labels that appear inline (e.g. 4K between title
     // words) are release metadata, not part of the TMDB search title.
-    title = title.replaceAll(
-      RegExp(r'\b4K\b', caseSensitive: false),
-      ' ',
-    );
+    title = title.replaceAll(RegExp(r'\b4K\b', caseSensitive: false), ' ');
 
     // Version labels in parentheses such as (美版), (日版), (导演版),
     // (加长版), (剧场版), (重制版) are not part of the searchable title.
@@ -1788,10 +1801,18 @@ class ParsedMediaName {
           ),
           (match) {
             const map = {
-              'II': '2', 'III': '3', 'IV': '4',
-              'VI': '6', 'VII': '7', 'VIII': '8', 'IX': '9',
-              'XI': '11', 'XII': '12',
-              'XIII': '13', 'XIV': '14', 'XV': '15',
+              'II': '2',
+              'III': '3',
+              'IV': '4',
+              'VI': '6',
+              'VII': '7',
+              'VIII': '8',
+              'IX': '9',
+              'XI': '11',
+              'XII': '12',
+              'XIII': '13',
+              'XIV': '14',
+              'XV': '15',
             };
             return map[match.group(0)!.toUpperCase()] ?? match.group(0)!;
           },
@@ -1880,9 +1901,14 @@ DateTime? _parseDate(dynamic value) {
 }
 
 List<String> _stringListFromJson(dynamic value) {
-  if (value is List) return value.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+  if (value is List)
+    return value.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
   if (value is String && value.isNotEmpty) {
-    return value.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    return value
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
   }
   return const [];
 }

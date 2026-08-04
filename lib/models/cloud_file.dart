@@ -54,6 +54,7 @@ class CloudFile {
   final int? subDirectoryCount;
   final int? subFileCount;
   final String modifiedAt;
+  final int? epoch;
   final String cloudPath;
 
   /// Stable parent directory ID from the cloud API, used for directory-scoped
@@ -79,6 +80,7 @@ class CloudFile {
     this.subDirectoryCount,
     this.subFileCount,
     this.modifiedAt = '',
+    this.epoch,
     this.cloudPath = '',
     this.parentID,
     this.fullParentIDs,
@@ -311,6 +313,7 @@ class CloudFile {
           ]) ??
           (epoch == null ? null : _formatEpoch(epoch)) ??
           '',
+      epoch: epoch,
       cloudPath:
           _extractString(json, ['location', 'path', 'fullPath']) ??
           name.toString(),

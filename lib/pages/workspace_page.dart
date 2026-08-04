@@ -264,7 +264,12 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                       ref.read(activeMediaDetailHeaderProvider.notifier).state =
                           null,
                   onToggleFilter: _mediaActiveTool == null
-                      ? () => setState(() => _mediaFilterPanelExpanded = !_mediaFilterPanelExpanded)
+                      ? () => setState(() {
+                            _mediaFilterPanelExpanded = !_mediaFilterPanelExpanded;
+                            if (!_mediaFilterPanelExpanded) {
+                              _mediaLibraryFilter = const MediaLibraryFilter();
+                            }
+                          })
                       : null,
                   filterActive: _mediaLibraryFilter.isActive || _mediaFilterPanelExpanded,
                 );

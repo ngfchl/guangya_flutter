@@ -1271,6 +1271,27 @@ class MediaLibraryStore {
     });
   }
 
+  Future<void> removeFileEntries(Iterable<String> fileIDs) async {
+    final pending = fileIDs.where((id) => id.isNotEmpty).toSet();
+    if (pending.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final id in pending) {
+        await txn.delete('file_index', where: 'file_id = ?', whereArgs: [id]);
+        await txn.delete(
+          'resource_metadata',
+          where: 'resource_id = ?',
+          whereArgs: [id],
+        );
+        await txn.delete(
+          'folder_children',
+          where: 'folder_id = ?',
+          whereArgs: [id],
+        );
+      }
+    });
+  }
+
   Future<List<CloudFile>?> folderChildren(String? folderID) async {
     final rows = await (await _db).rawQuery(
       '''SELECT d.file_json FROM folder_children f
@@ -1659,7 +1680,10 @@ class MediaLibraryStore {
             final files = snapshot
                 .map((row) => jsonDecode(row['file_json']?.toString() ?? '{}'))
                 .whereType<Map>()
-                .map((value) => CloudFile.fromJson(Map<String, dynamic>.from(value)))
+                .map(
+                  (value) =>
+                      CloudFile.fromJson(Map<String, dynamic>.from(value)),
+                )
                 .toList();
             if (files.any((file) => file.id == fileID)) return files;
           } catch (_) {
@@ -1874,7 +1898,9 @@ class MediaLibraryStore {
     }
     final updates = <String, List<CloudFile>>{};
     for (final entry in byFolder.entries) {
-      final retained = entry.value.where((file) => !ids.contains(file.id)).toList();
+      final retained = entry.value
+          .where((file) => !ids.contains(file.id))
+          .toList();
       if (retained.length != entry.value.length) updates[entry.key] = retained;
     }
     await db.transaction((txn) async {
@@ -1882,9 +1908,7 @@ class MediaLibraryStore {
         final retained = entry.value;
         await txn.update(
           'folder_children',
-          {
-            'child_ids': jsonEncode(retained.map((file) => file.id).toList()),
-          },
+          {'child_ids': jsonEncode(retained.map((file) => file.id).toList())},
           where: 'folder_id = ?',
           whereArgs: [entry.key],
         );
@@ -1935,15 +1959,13 @@ class MediaLibraryStore {
         } catch (_) {}
       }
       for (final entry in byFolder.entries) {
-        final retained = entry.value.where((file) => !ids.contains(file.id)).toList();
+        final retained = entry.value
+            .where((file) => !ids.contains(file.id))
+            .toList();
         if (retained.length != entry.value.length) {
           await txn.update(
             'folder_children',
-            {
-              'child_ids': jsonEncode(
-                retained.map((file) => file.id).toList(),
-              ),
-            },
+            {'child_ids': jsonEncode(retained.map((file) => file.id).toList())},
             where: 'folder_id = ?',
             whereArgs: [entry.key],
           );
@@ -1963,7 +1985,9 @@ class MediaLibraryStore {
         final parentFiles = parentRows
             .map((row) => jsonDecode(row['file_json']?.toString() ?? '{}'))
             .whereType<Map>()
-            .map((value) => CloudFile.fromJson(Map<String, dynamic>.from(value)))
+            .map(
+              (value) => CloudFile.fromJson(Map<String, dynamic>.from(value)),
+            )
             .toList();
         await _updateParentChildrenInTxn(txn, parentKey, parentFiles, ids);
       }
@@ -1980,9 +2004,7 @@ class MediaLibraryStore {
     if (retained.length == existing.length) return;
     await txn.update(
       'folder_children',
-      {
-        'child_ids': jsonEncode(retained.map((file) => file.id).toList()),
-      },
+      {'child_ids': jsonEncode(retained.map((file) => file.id).toList())},
       where: 'folder_id = ?',
       whereArgs: [parentKey],
     );
@@ -2038,6 +2060,8 @@ class MediaLibraryStore {
         collection_id INTEGER,
         collection_name TEXT,
         updated_at REAL NOT NULL,
+        genres TEXT DEFAULT '',
+        origin_country TEXT DEFAULT '',
         PRIMARY KEY (library_id, file_id)
       )
     ''');
@@ -2082,9 +2106,7 @@ class MediaLibraryStore {
     // 完整文件信息已由 gcid_details 按 file_id 统一存储）。
     // 先查列是否存在再 DROP，避免已迁移状态报 "no such column" 噪音日志。
     if (await _hasColumn(db, 'folder_children', 'children_json')) {
-      await db.execute(
-        'ALTER TABLE folder_children DROP COLUMN children_json',
-      );
+      await db.execute('ALTER TABLE folder_children DROP COLUMN children_json');
     }
     await db.execute('''
       CREATE TABLE IF NOT EXISTS resource_metadata (
@@ -2129,10 +2151,25 @@ class MediaLibraryStore {
     ''');
     // 旧库迁移：补 tmdb_works.genres/origin_country 列（筛选维度扩展）
     if (!await _hasColumn(db, 'tmdb_works', 'genres')) {
-      await db.execute('ALTER TABLE tmdb_works ADD COLUMN genres TEXT DEFAULT \'\'');
+      await db.execute(
+        'ALTER TABLE tmdb_works ADD COLUMN genres TEXT DEFAULT \'\'',
+      );
     }
     if (!await _hasColumn(db, 'tmdb_works', 'origin_country')) {
-      await db.execute('ALTER TABLE tmdb_works ADD COLUMN origin_country TEXT DEFAULT \'\'');
+      await db.execute(
+        'ALTER TABLE tmdb_works ADD COLUMN origin_country TEXT DEFAULT \'\'',
+      );
+    }
+    // 旧库迁移：补 media_items.genres/origin_country 列（筛选维度扩展，发行地筛选依赖）
+    if (!await _hasColumn(db, 'media_items', 'genres')) {
+      await db.execute(
+        'ALTER TABLE media_items ADD COLUMN genres TEXT DEFAULT \'\'',
+      );
+    }
+    if (!await _hasColumn(db, 'media_items', 'origin_country')) {
+      await db.execute(
+        'ALTER TABLE media_items ADD COLUMN origin_country TEXT DEFAULT \'\'',
+      );
     }
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_tmdb_works_tmdb_id '
@@ -2171,12 +2208,16 @@ class MediaLibraryStore {
     // 短查询由调用方回退 LIKE。
     // 只有本地已有 tmdb_works/douban_works 数据时才建——新安装无媒体信息
     // 时建虚拟表既无数据可索也无必要，且部分 SQLite 编译未启用 fts5 会直接崩。
-    final tmdbWorksCount = Sqflite.firstIntValue(
-      await db.rawQuery('SELECT COUNT(*) FROM tmdb_works'),
-    ) ?? 0;
-    final doubanWorksCount = Sqflite.firstIntValue(
-      await db.rawQuery('SELECT COUNT(*) FROM douban_works'),
-    ) ?? 0;
+    final tmdbWorksCount =
+        Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM tmdb_works'),
+        ) ??
+        0;
+    final doubanWorksCount =
+        Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM douban_works'),
+        ) ??
+        0;
     if (tmdbWorksCount > 0 || doubanWorksCount > 0) {
       await db.execute(
         'CREATE VIRTUAL TABLE IF NOT EXISTS tmdb_works_fts USING fts5('
@@ -2253,10 +2294,7 @@ class MediaLibraryStore {
           }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
       } catch (error) {
-        AppLogger.warning(
-          'Storage',
-          'FTS5 works 索引重建失败（降级为 LIKE 查询）：$error',
-        );
+        AppLogger.warning('Storage', 'FTS5 works 索引重建失败（降级为 LIKE 查询）：$error');
       }
     }
     await db.execute(
@@ -2521,6 +2559,8 @@ class MediaLibraryStore {
       'hasChineseSubtitle': row['has_chinese_subtitle'] == 1,
       'collectionID': row['collection_id'],
       'collectionName': row['collection_name'],
+      'genres': row['genres'],
+      'origin_country': row['origin_country'],
       'updatedAt': _dateFromEpoch(row['updated_at'])?.toIso8601String(),
     });
   }
@@ -2552,6 +2592,8 @@ class MediaLibraryStore {
     'collection_id': item.collectionID,
     'collection_name': item.collectionName,
     'updated_at': _epoch(item.updatedAt) ?? 0,
+    'genres': item.genres.join(','),
+    'origin_country': item.originCountries.join(','),
   };
 
   Future<void> _upsertItem(Transaction txn, MediaLibraryItem item) async {
@@ -2608,6 +2650,8 @@ class MediaLibraryStore {
     'collection_id',
     'collection_name',
     'updated_at',
+    'genres',
+    'origin_country',
   ];
   static String _folderID(String? folderID) => folderID ?? _rootFolderID;
 
