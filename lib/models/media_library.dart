@@ -292,6 +292,8 @@ class MediaLibraryItem {
   final bool hasChineseSubtitle;
   final int? collectionID;
   final String? collectionName;
+  final List<String> genres;
+  final List<String> originCountries;
   final DateTime updatedAt;
 
   const MediaLibraryItem({
@@ -313,6 +315,8 @@ class MediaLibraryItem {
     this.hasChineseSubtitle = false,
     this.collectionID,
     this.collectionName,
+    this.genres = const [],
+    this.originCountries = const [],
     required this.updatedAt,
   });
 
@@ -386,6 +390,8 @@ class MediaLibraryItem {
     bool clearCollectionID = false,
     String? collectionName,
     bool clearCollectionName = false,
+    List<String>? genres,
+    List<String>? originCountries,
     DateTime? updatedAt,
   }) {
     return MediaLibraryItem(
@@ -413,6 +419,8 @@ class MediaLibraryItem {
       collectionName: clearCollectionName
           ? null
           : (collectionName ?? this.collectionName),
+      genres: genres ?? this.genres,
+      originCountries: originCountries ?? this.originCountries,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -476,6 +484,8 @@ class MediaLibraryItem {
       hasChineseSubtitle: json['hasChineseSubtitle'] == true,
       collectionID: _toInt(json['collectionID']),
       collectionName: json['collectionName']?.toString(),
+      genres: _stringListFromJson(json['genres']),
+      originCountries: _stringListFromJson(json['originCountries']),
       updatedAt: _parseDate(json['updatedAt']) ?? DateTime.now(),
     );
   }
@@ -507,6 +517,8 @@ class MediaLibraryItem {
     'hasChineseSubtitle': hasChineseSubtitle,
     'collectionID': collectionID,
     'collectionName': collectionName,
+    'genres': genres,
+    'originCountries': originCountries,
     'updatedAt': updatedAt.toIso8601String(),
   };
 }
@@ -1867,6 +1879,14 @@ DateTime? _parseDate(dynamic value) {
   return DateTime.tryParse(value.toString());
 }
 
+List<String> _stringListFromJson(dynamic value) {
+  if (value is List) return value.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+  if (value is String && value.isNotEmpty) {
+    return value.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+  }
+  return const [];
+}
+
 /// TMDB 影视作品数据，存储在独立表中
 class TMDBWork {
   final int id;
@@ -1880,6 +1900,8 @@ class TMDBWork {
   final String? backdropPath;
   final double? rating;
   final String? imdbID;
+  final List<String> genres;
+  final List<String> originCountries;
   final DateTime createdAt;
 
   const TMDBWork({
@@ -1894,6 +1916,8 @@ class TMDBWork {
     this.backdropPath,
     this.rating,
     this.imdbID,
+    this.genres = const [],
+    this.originCountries = const [],
     required this.createdAt,
   });
 
@@ -1910,6 +1934,8 @@ class TMDBWork {
       backdropPath: json['backdrop_path']?.toString(),
       rating: _toDouble(json['rating']),
       imdbID: json['imdb_id']?.toString(),
+      genres: _stringListFromJson(json['genres']),
+      originCountries: _stringListFromJson(json['origin_country']),
       createdAt: _parseDate(json['created_at']) ?? DateTime.now(),
     );
   }
@@ -1926,6 +1952,8 @@ class TMDBWork {
     'backdrop_path': backdropPath,
     'rating': rating,
     'imdb_id': imdbID,
+    'genres': genres,
+    'origin_country': originCountries,
     'created_at': createdAt.toIso8601String(),
   };
 }
