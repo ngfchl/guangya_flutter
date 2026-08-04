@@ -1635,56 +1635,54 @@ class _TopBar extends StatelessWidget {
       ),
     );
     if (compact) {
-      return SizedBox(
-        height: 48,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 5, 10, 0),
-          child: Row(
-            children: [
-              _TopBarIconButton(
-                tooltip: '打开菜单',
-                icon: Icons.menu_rounded,
-                onTap: onOpenMenu,
-              ),
-              const SizedBox(width: 6),
-              if (showLibraryScan) ...[
-                _MediaLibraryScanTopAction(compact: true, state: mediaState),
-                const SizedBox(width: 4),
-              ],
-              Expanded(
-                child: searchOpen
-                    ? searchField
-                    : Align(
-                        alignment: Alignment.centerLeft,
-                        child: identity,
-                      ),
-              ),
-              if (!searchOpen) ...[
-                const SizedBox(width: 4),
-                if (mediaHomeSelected ||
-                    mediaFilter == MediaLibraryBrowseFilter.movies ||
-                    mediaFilter == MediaLibraryBrowseFilter.series ||
-                    mediaFilter == MediaLibraryBrowseFilter.unmatched) ...[
-                  _GlobalScanTopAction(compact: true),
-                  const SizedBox(width: 4),
-                ],
-                if (!mediaHomeSelected) ...[
-                  _MediaSortTopAction(
-                    selected: mediaState.sort,
-                    direction: mediaState.sortDirection,
-                    onSelected: onMediaSortChanged,
-                    onDirectionSelected: onMediaSortDirectionChanged,
-                  ),
-                  const SizedBox(width: 4),
-                ],
-                _TopBarIconButton(
-                  tooltip: '搜索影视资源',
-                  icon: Icons.search_rounded,
-                  onTap: onToggleSearch,
-                ),
-              ],
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(10, 5, 10, 0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _TopBarIconButton(
+              tooltip: '打开菜单',
+              icon: Icons.menu_rounded,
+              onTap: onOpenMenu,
+            ),
+            const SizedBox(width: 6),
+            if (showLibraryScan) ...[
+              _MediaLibraryScanTopAction(compact: true, state: mediaState),
+              const SizedBox(width: 4),
             ],
-          ),
+            Expanded(
+              child: searchOpen
+                  ? searchField
+                  : Align(
+                      alignment: Alignment.centerLeft,
+                      child: identity,
+                    ),
+            ),
+            if (!searchOpen) ...[
+              const SizedBox(width: 4),
+              if (mediaHomeSelected ||
+                  mediaFilter == MediaLibraryBrowseFilter.movies ||
+                  mediaFilter == MediaLibraryBrowseFilter.series ||
+                  mediaFilter == MediaLibraryBrowseFilter.unmatched) ...[
+                _GlobalScanTopAction(compact: true),
+                const SizedBox(width: 4),
+              ],
+              if (!mediaHomeSelected) ...[
+                _MediaSortTopAction(
+                  selected: mediaState.sort,
+                  direction: mediaState.sortDirection,
+                  onSelected: onMediaSortChanged,
+                  onDirectionSelected: onMediaSortDirectionChanged,
+                ),
+                const SizedBox(width: 4),
+              ],
+              _TopBarIconButton(
+                tooltip: '搜索影视资源',
+                icon: Icons.search_rounded,
+                onTap: onToggleSearch,
+              ),
+            ],
+          ],
         ),
       );
     }
@@ -1782,7 +1780,7 @@ class _MediaDetailTopBar extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.fromLTRB(
           compact ? 10 : 14,
-          compact ? 5 : 4,
+          compact ? 15 : 14,
           compact ? 10 : 14,
           compact ? 3 : 0,
         ),
@@ -1891,59 +1889,60 @@ class _MediaLibraryTopIdentity extends StatelessWidget {
     return Semantics(
       button: onTap != null,
       label: tapHint == null ? '$title，$subtitle' : '$title，$tapHint',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.video_library_rounded,
+                size: compact ? 20 : 19,
+                color: cs.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  // mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: compact ? 15 : 14,
+                        height: 1.15,
+                        fontWeight: FontWeight.w700,
+                        color: cs.foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        height: 1.15,
+                        color: cs.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (onTap != null) ...[
+                const SizedBox(width: 6),
                 Icon(
-                  Icons.video_library_rounded,
-                  size: compact ? 20 : 19,
-                  color: cs.primary,
+                  Icons.keyboard_arrow_down_rounded,
+                  size: 18,
+                  color: cs.mutedForeground,
                 ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: compact ? 15 : 14,
-                          height: 1.05,
-                          fontWeight: FontWeight.w700,
-                          color: cs.foreground,
-                        ),
-                      ),
-                      Text(
-                        subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: cs.mutedForeground,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (onTap != null)
-                  Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    size: 18,
-                    color: cs.mutedForeground,
-                  ),
               ],
-            ),
+            ],
           ),
         ),
       ),
