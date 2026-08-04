@@ -562,6 +562,22 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     try {
       await _store.initialize();
       await _migrateLegacyHiveIfNeeded();
+      // 启动恢复持久化的排序选择。
+      final persistedSort = StorageManager.get<String>(StorageKeys.mediaLibrarySort);
+      final persistedDirection = StorageManager.get<String>(StorageKeys.mediaLibrarySortDirection);
+      final sort = persistedSort != null
+          ? MediaLibrarySort.values.firstWhere(
+              (s) => s.name == persistedSort,
+              orElse: () => MediaLibrarySort.addedAt,
+            )
+          : MediaLibrarySort.addedAt;
+      final direction = persistedDirection != null
+          ? MediaSortDirection.values.firstWhere(
+              (d) => d.name == persistedDirection,
+              orElse: () => MediaSortDirection.descending,
+            )
+          : MediaSortDirection.descending;
+      state = state.copyWith(sort: sort, sortDirection: direction);
       final libraries = await _loadLibraries();
       final selectedID = libraries.isEmpty ? null : libraries.first.id;
       final statistics = await _store.statistics();
@@ -3889,6 +3905,9 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<List<CloudFile>> _allGlobalRemoteFilesByType({
     int? resType,
     required int concurrency,
+    int orderBy = 0,
+    int sortType = 0,
+    int? cutoff,
   }) async {
     const pageSize = 1000;
     final values = <CloudFile>[];
@@ -3897,6 +3916,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     var nextPage = 0;
     var reachedEnd = false;
     var apiTotal = 0;
+    // 增量态：按修改时间降序拉，批内出现 epoch<=cutoff 即截断（后续更旧无需拉）。
+    final useCutoff = cutoff != null;
 
     while (!reachedEnd) {
       final pages = List.generate(concurrency, (index) => nextPage + index);
@@ -3909,13 +3930,14 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
             parentID: '*',
             page: page,
             pageSize: pageSize,
-            orderBy: 0,
-            sortType: 0,
+            orderBy: orderBy,
+            sortType: sortType,
             resType: resType,
           );
         },
       );
       var allNewEmpty = true;
+      var hitCutoff = false;
       for (var index = 0; index < responses.length; index++) {
         final page = pages[index];
         final respData = responses[index]['data'];
@@ -3924,6 +3946,31 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           if (t is int && t > apiTotal) apiTotal = t;
         }
         final batch = _extractFiles(responses[index]);
+        // 增量态截断：本页出现 epoch<=cutoff 处，保留其前改动项，丢弃其后旧数据，并停拉后续页。
+        if (useCutoff) {
+          final fresh = <CloudFile>[];
+          for (final file in batch) {
+            if ((file.epoch ?? 0) <= cutoff!) {
+              hitCutoff = true;
+              break;
+            }
+            fresh.add(file);
+          }
+          final added = fresh.where((file) => seenIDs.add(file.id)).toList();
+          values.addAll(added);
+          AppLogger.info(
+            'CloudIndex',
+            '全盘$typeLabel索引第 ${page + 1} 页完成（增量），获取 ${batch.length} 项，'
+                '新增 ${added.length} 项，累计 ${values.length} 项 / $apiTotal'
+                '${hitCutoff ? "，已到 cutoff 截断" : ""}',
+          );
+          if (added.isNotEmpty) allNewEmpty = false;
+          if (hitCutoff || batch.isEmpty) {
+            reachedEnd = true;
+            break;
+          }
+          continue;
+        }
         final added = batch.where((file) => seenIDs.add(file.id)).toList();
         values.addAll(added);
         AppLogger.info(
@@ -3949,113 +3996,97 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return values;
   }
 
-  Future<_CloudIndexRefreshResult> _rebuildGlobalCloudIndexByFolder() async {
-    await FileMetadataCache.clearFolderChildrenIndex();
-    final folders = <_CloudIndexFolder>[const _CloudIndexFolder(null, '根目录')];
-    final visited = <String>{};
-    final concurrency = _cloudIndexConcurrency;
-    var nextFolder = 0;
-    var updatedFolders = 0;
-    var updatedEntries = 0;
-
-    AppLogger.info('CloudIndex', '全量索引目录请求并发数：$concurrency');
-    while (nextFolder < folders.length) {
-      final batch = <_CloudIndexFolder>[];
-      while (nextFolder < folders.length && batch.length < concurrency) {
-        final folder = folders[nextFolder++];
-        if (visited.add(folder.id ?? '@root')) batch.add(folder);
-      }
-      if (batch.isEmpty) continue;
-
-      final snapshots = await concurrentMapOrdered(
-        batch,
-        concurrency: concurrency,
-        action: _loadCloudIndexFolder,
-      );
-      await FileMetadataCache.cacheFolderChildrenBatch({
-        for (var index = 0; index < batch.length; index++)
-          batch[index].id: snapshots[index],
-      });
-      updatedFolders += batch.length;
-      for (final snapshot in snapshots) {
-        updatedEntries += snapshot.length;
-        for (final child in snapshot.where((file) => file.isDirectory)) {
-          folders.add(_CloudIndexFolder(child.id, child.name));
-        }
-      }
-    }
-    return _CloudIndexRefreshResult(
-      checkedFolders: updatedFolders,
-      updatedFolders: updatedFolders,
-      updatedEntries: updatedEntries,
-    );
-  }
 
   Future<_CloudIndexRefreshResult> _refreshChangedCloudIndex() async {
-    final root = const _CloudIndexFolder(null, '根目录');
-    final folders = <_CloudIndexFolder>[root];
-    final queued = <String>{'@root'};
-    final concurrency = _cloudIndexConcurrency;
-    var nextFolder = 0;
-    var checkedFolders = 0;
-    var updatedFolders = 0;
-    var updatedEntries = 0;
-
-    AppLogger.info('CloudIndex', '增量索引目录请求并发数：$concurrency');
-    while (nextFolder < folders.length) {
-      final end = (nextFolder + concurrency).clamp(0, folders.length);
-      final batch = folders.sublist(nextFolder, end);
-      nextFolder = end;
-      final previousSnapshots = await Future.wait(
-        batch.map(
-          (folder) async =>
-              await FileMetadataCache.folderChildren(folder.id) ??
-              const <CloudFile>[],
-        ),
+    // 增量索引：主要针对目录。按修改时间降序拉目录（parentID:'*'，cutoff 截断），
+    // 改动目录拉其子项更新缓存；本地缓存里已不存在的目录对应移除。
+    try {
+      final lastUpdated = int.tryParse(
+        StorageManager.get<String>(StorageKeys.cloudIndexLastUpdatedAt) ?? '',
       );
-      final currentSnapshots = await concurrentMapOrdered(
-        batch,
+      final concurrency = _cloudIndexConcurrency;
+      final cutoff = lastUpdated ?? 0;
+      AppLogger.info('CloudIndex', '增量索引复用全盘分页接口（按目录修改时间降序），并发 $concurrency，lastUpdated=$lastUpdated');
+
+      // 1. 按修改时间降序拉目录，cutoff 截断只拿改动目录。
+      final changedDirs = await _allGlobalRemoteFilesByType(
+        resType: 2,
         concurrency: concurrency,
-        action: _loadCloudIndexFolder,
+        orderBy: 2,
+        sortType: 1,
+        cutoff: lastUpdated,
       );
-      checkedFolders += batch.length;
+      AppLogger.info('CloudIndex', '增量索引改动目录 ${changedDirs.length} 个');
 
-      final changed = <String?, List<CloudFile>>{};
-      final removedFolders = <String>[];
-      for (var index = 0; index < batch.length; index++) {
-        final folder = batch[index];
-        final previous = previousSnapshots[index];
-        final current = currentSnapshots[index];
-        if (!_sameCloudIndexSnapshot(previous, current)) {
-          changed[folder.id] = current;
-          updatedFolders += 1;
-          updatedEntries += current.length;
-          final currentIDs = current.map((file) => file.id).toSet();
-          removedFolders.addAll(
-            previous
-                .where(
-                  (file) => file.isDirectory && !currentIDs.contains(file.id),
-                )
-                .map((file) => file.id),
-          );
+      // 2. 改动目录拉其子项（文件+子目录）更新缓存。
+      final updatedFolders = <String?, List<CloudFile>>{};
+      var updatedEntries = 0;
+      for (final dir in changedDirs) {
+        final children = await _loadCloudIndexFolder(_CloudIndexFolder(dir.id, dir.name));
+        updatedFolders[dir.id] = children;
+        updatedEntries += children.length;
+        // 改动目录的父目录也要刷（目录列表本身变了）。
+        final parentID = dir.parentID;
+        (updatedFolders[parentID] ??= []).add(dir);
+      }
+      // 改动目录的父目录若未在改动列表里，单独拉一遍其当前子目录列表补回。
+      final parentIDsToRefresh = <String?>{};
+      for (final dir in changedDirs) {
+        final parentID = dir.parentID;
+        if (!updatedFolders.containsKey(parentID) || updatedFolders[parentID]!.every((c) => c.id != dir.id)) {
+          parentIDsToRefresh.add(parentID);
         }
-        _queueChangedIndexFolders(
-          folders: folders,
-          queued: queued,
-          previous: previous,
-          current: current,
-        );
       }
-      await FileMetadataCache.cacheFolderChildrenBatch(changed);
-      if (removedFolders.isNotEmpty) {
-        await FileMetadataCache.removeFolderChildrenSubtrees(removedFolders);
+      for (final parentID in parentIDsToRefresh) {
+        final siblings = await _loadCloudIndexFolder(_CloudIndexFolder(parentID ?? '', parentID == null ? '根目录' : ''));
+        updatedFolders[parentID] = siblings;
       }
+
+      // 3. 已删除项目对应移除本地缓存：改动目录的旧缓存里不在当前子项中的文件/目录都清掉。
+      final removedFolderIDs = <String>[];
+      final removedFileIDs = <String>[];
+      for (final parentID in updatedFolders.keys) {
+        final current = updatedFolders[parentID]!;
+        final currentIDs = current.map((f) => f.id).toSet();
+        final previous = await FileMetadataCache.folderChildren(parentID) ?? const <CloudFile>[];
+        for (final prev in previous) {
+          if (!currentIDs.contains(prev.id)) {
+            if (prev.isDirectory) {
+              removedFolderIDs.add(prev.id);
+            } else {
+              removedFileIDs.add(prev.id);
+            }
+          }
+        }
+      }
+      if (removedFolderIDs.isNotEmpty) {
+        AppLogger.info('CloudIndex', '增量索引移除已删除目录子树 ${removedFolderIDs.length} 个');
+        await FileMetadataCache.removeFolderChildrenSubtrees(removedFolderIDs);
+      }
+      if (removedFileIDs.isNotEmpty) {
+        AppLogger.info('CloudIndex', '增量索引清理已删除文件缓存 ${removedFileIDs.length} 个');
+        await FileMetadataCache.removeFileEntries(removedFileIDs);
+      }
+
+      // 4. 改动目录及其父目录的缓存写回。
+      if (updatedFolders.isNotEmpty) {
+        await FileMetadataCache.cacheFolderChildrenBatch(updatedFolders);
+      }
+      AppLogger.info('CloudIndex', '增量索引完成：改动目录 ${changedDirs.length} 个，更新缓存 ${updatedFolders.length} 个文件夹，移除 ${removedFolderIDs.length} 个目录');
+      return _CloudIndexRefreshResult(
+        checkedFolders: updatedFolders.length,
+        updatedFolders: updatedFolders.length,
+        updatedEntries: updatedEntries,
+      );
+    } catch (error, stackTrace) {
+      AppLogger.warning('CloudIndex', '增量索引刷新失败：$error');
+      AppLogger.warning('CloudIndex', '堆栈：$stackTrace');
+      return _CloudIndexRefreshResult(
+        checkedFolders: 0,
+        updatedFolders: 0,
+        updatedEntries: 0,
+      );
     }
-    return _CloudIndexRefreshResult(
-      checkedFolders: checkedFolders,
-      updatedFolders: updatedFolders,
-      updatedEntries: updatedEntries,
-    );
   }
 
   Future<List<CloudFile>> _loadCloudIndexFolder(
@@ -4268,6 +4299,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<void> setSort(MediaLibrarySort sort) async {
     if (sort == state.sort) return;
     state = state.copyWith(sort: sort);
+    await StorageManager.set(StorageKeys.mediaLibrarySort, sort.name);
     await loadContent(
       home: _contentHome,
       filter: _contentFilter,
@@ -4278,6 +4310,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   Future<void> setSortDirection(MediaSortDirection direction) async {
     if (direction == state.sortDirection) return;
     state = state.copyWith(sortDirection: direction);
+    await StorageManager.set(StorageKeys.mediaLibrarySortDirection, direction.name);
     await loadContent(
       home: _contentHome,
       filter: _contentFilter,
@@ -7714,6 +7747,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         ? candidate['id']?.toString()
         : candidate['douban_id']?.toString();
     final candidateRating = _ratingValue(candidate['vote_average']);
+    // 搜索候选 dict 里通常已带 genres/production_countries，即时落库时也拉回，
+    // 让详情页在后台 _enrichManualMatchInBackground 补全前就能显示类型/发行地区。
+    final candidateGenres = _stringListFromJsonValue(
+      candidate['genres'],
+      key: 'name',
+      fallbackKey: 'english_name',
+    );
+    final candidateCountries = _stringListFromJsonValue(
+      candidate['production_countries'] ??
+          candidate['origin_country'] ??
+          candidate['countries'],
+      key: 'iso_3166_1',
+      fallbackKey: 'code',
+    );
     return fallback.copyWith(
       // Only overwrite the id belonging to the matched source; leave the other
       // untouched (copyWith keeps the existing value when the arg is null).
@@ -7744,6 +7791,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       tmdbRating: isDouban ? null : candidateRating,
       doubanRating: isDouban ? candidateRating : null,
       imdbID: _extractImdbID(candidate) ?? fallback.imdbID,
+      genres: candidateGenres.isNotEmpty ? candidateGenres : null,
+      originCountries: candidateCountries.isNotEmpty ? candidateCountries : null,
       updatedAt: DateTime.now(),
     );
   }
@@ -7769,6 +7818,32 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     );
   }
 
+
+  /// 宽容解析 TMDB 接口返的字符串列表字段：支持 List<Map>（按 key/fallbackKey 取值）、
+  /// List<String>、逗号拼接 String。返回非空字符串列表。
+  List<String> _stringListFromJsonValue(
+    Object? raw, {
+    required String key,
+    String? fallbackKey,
+  }) {
+    if (raw is List) {
+      final result = <String>[];
+      for (final entry in raw) {
+        if (entry is Map) {
+          final v = entry[key]?.toString() ?? (fallbackKey != null ? entry[fallbackKey]?.toString() : null);
+          if (v != null && v.isNotEmpty) result.add(v);
+        } else if (entry is String && entry.isNotEmpty) {
+          result.add(entry);
+        }
+      }
+      return result;
+    }
+    if (raw is String && raw.isNotEmpty) {
+      return raw.split(',').where((e) => e.trim().isNotEmpty).map((e) => e.trim()).toList();
+    }
+    return const <String>[];
+  }
+
   MediaLibraryItem _itemFromTMDBDetails(
     MediaLibraryItem item,
     Map<String, dynamic> details,
@@ -7782,27 +7857,26 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         (details['release_date'] ?? details['first_air_date'])?.toString() ??
         item.releaseDate;
     final collection = details['belongs_to_collection'];
+    final genresRaw = details['genres'];
+    final genreList = _stringListFromJsonValue(
+      genresRaw,
+      key: 'name',
+      fallbackKey: 'english_name',
+    );
+    final countriesRaw = details['production_countries'] ?? details['origin_country'];
+    final originList = _stringListFromJsonValue(
+      countriesRaw,
+      key: 'iso_3166_1',
+      fallbackKey: 'code',
+    );
+    AppLogger.debug(
+      'Media',
+      '_itemFromTMDBDetails 解析 genres=$genreList originCountries=$originList '
+          '(genresRaw=${genresRaw.runtimeType} countriesRaw=${countriesRaw.runtimeType})',
+    );
     final collectionMap = collection is Map
         ? Map<String, dynamic>.from(collection)
         : const <String, dynamic>{};
-    final genres = details['genres'];
-    final genreList = genres is List
-        ? genres
-            .whereType<Map>()
-            .map((e) => e['name']?.toString())
-            .where((e) => e != null && e!.isNotEmpty)
-            .cast<String>()
-            .toList()
-        : const <String>[];
-    final originCountries = details['production_countries'];
-    final originList = originCountries is List
-        ? originCountries
-            .whereType<Map>()
-            .map((e) => e['iso_3166_1']?.toString())
-            .where((e) => e != null && e!.isNotEmpty)
-            .cast<String>()
-            .toList()
-        : const <String>[];
     return item.copyWith(
       title: title == null || title.isEmpty ? item.title : title,
       originalTitle: originalTitle == null || originalTitle.isEmpty
@@ -9055,6 +9129,63 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return _store.deleteItems(removed);
   }
 
+  /// 刷新单条条目的刮削数据：按其 tmdbID 重拉 TMDB 详情重建 item 落库。返回是否刷新成功。
+  Future<bool> refreshScrapedDataForItem(MediaLibraryItem item) async {
+    if (_api == null) return false;
+    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    if (apiKey.trim().isEmpty || item.tmdbID == null || item.tmdbID == 0) return false;
+    final proxyHost = StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
+    final proxyPort = StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
+    try {
+      AppLogger.info('Media', '刷新单条刮削数据：tmdbID=${item.tmdbID} title="${item.title}"');
+      // mediaKind 已知就走对应 endpoint；为 null 时先按 movie 再按 tv 都试拉，取返回 200 的那条。
+      final declaredKind = item.mediaKind;
+      final tried = <TMDBMediaKind, Map<String, dynamic>>{};
+      if (declaredKind != null) {
+        tried[declaredKind] = await _tmdbDetails(
+          item.tmdbID!,
+          declaredKind,
+          apiKey: apiKey,
+          proxyHost: proxyHost,
+          proxyPort: proxyPort,
+        );
+      } else {
+        for (final kind in const [TMDBMediaKind.movie, TMDBMediaKind.tv]) {
+          try {
+            tried[kind] = await _tmdbDetails(
+              item.tmdbID!,
+              kind,
+              apiKey: apiKey,
+              proxyHost: proxyHost,
+              proxyPort: proxyPort,
+            );
+          } catch (_) {
+            // 某 endpoint 404/失败就跳，试下一个。
+          }
+        }
+      }
+      // 选拉到数据的那条（优先 declaredKind；为 null 时选 genres/production_countries 非空的）。
+      final Map<String, dynamic> details;
+      if (tried.length == 1) {
+        details = tried.values.first;
+      } else {
+        final preferred = tried.entries.firstWhere(
+          (e) => e.value['genres'] is List && (e.value['genres'] as List).isNotEmpty,
+          orElse: () => tried.entries.first,
+        );
+        details = preferred.value;
+      }
+      final rebuilt = _itemFromTMDBDetails(item, details);
+      await _upsertItems([rebuilt]);
+      AppLogger.info('Media', '刷新单条刮削数据完成：tmdbID=${item.tmdbID} title="${item.title}"');
+      return true;
+    } catch (error, stackTrace) {
+      AppLogger.warning('Media', '刷新单条刮削数据失败 tmdbID=${item.tmdbID}：$error');
+      AppLogger.error('Media', '刷新单条刮削数据异常', error: error, stackTrace: stackTrace);
+      return false;
+    }
+  }
+
   /// 刷新刮削数据：对所有已带 tmdbID 的条目按 ID 重拉 TMDB 详情，用最新数据重建 item 并落库。
   /// 启用协程，并发量 6。返回刷新成功的条目数。豆瓣 ID 暂无按 ID 直拉接口，本轮只刷新 TMDB。
   Future<int> refreshScrapedData() async {
@@ -9067,13 +9198,20 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       ...state.items,
       ...state.allItems.where((i) => !state.items.any((s) => s.id == i.id)),
     ].where((i) => i.tmdbID != null && i.tmdbID != 0 && i.title.trim().isNotEmpty).toList();
-    if (candidates.isEmpty) return 0;
+    if (candidates.isEmpty) {
+      AppLogger.info('Media', '刷新刮削数据：没有已带 TMDB ID 的候选条目，跳过');
+      return 0;
+    }
+    AppLogger.info('Media', '刷新刮削数据开始：候选 ${candidates.length} 条，协程并发量 6');
 
     // 协程并发量 6：每批最多 6 个并发拉取，批间串行，避免一次性发起太多请求。
     const concurrency = 6;
     final refreshed = <MediaLibraryItem>[];
+    var batchIndex = 0;
     for (var i = 0; i < candidates.length; i += concurrency) {
       final batch = candidates.sublist(i, (i + concurrency).clamp(0, candidates.length));
+      batchIndex++;
+      AppLogger.info('Media', '刷新刮削数据第 $batchIndex 批：${batch.length} 条（${i + 1}–${i + batch.length}/${candidates.length}）');
       final results = await Future.wait(batch.map((item) async {
         try {
           final details = await _tmdbDetails(
@@ -9090,12 +9228,21 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           return null;
         }
       }));
+      var ok = 0;
       for (final r in results) {
-        if (r != null) refreshed.add(r);
+        if (r != null) {
+          refreshed.add(r);
+          ok++;
+        }
       }
+      AppLogger.info('Media', '刷新刮削数据第 $batchIndex 批完成：成功 $ok/${batch.length} 条');
     }
-    if (refreshed.isEmpty) return 0;
+    if (refreshed.isEmpty) {
+      AppLogger.warning('Media', '刷新刮削数据完成：全部失败，无条目落库');
+      return 0;
+    }
     await _upsertItems(refreshed);
+    AppLogger.info('Media', '刷新刮削数据完成：成功 $refreshed.length/${candidates.length} 条已落库');
     return refreshed.length;
   }
 
@@ -9104,8 +9251,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     await _store.upsertItems(list);
     // Mirror matched metadata into the shared TMDB/Douban works cache so that
     // enrichItemsWithWorkDetails can rehydrate any item that merely carries a
-    // tmdb_id / douban_id. Runs in the background; never blocks the scan.
-    unawaited(_mirrorWorksCache(list));
+    // tmdb_id / douban_id. 串行执行而非 unawaited：避免与 upsertItems 事务并发争同一 db 触发锁竞争。
+    await _mirrorWorksCache(list);
   }
 
   /// Fills in TMDB detail fields for rows that were matched with deferred
