@@ -10,6 +10,7 @@ class _BackupActionsMenu extends StatefulWidget {
   final VoidCallback onImportWorks;
   final VoidCallback onSyncToCloud;
   final VoidCallback onRestoreFromCloud;
+  final VoidCallback? onRefreshScrape;
 
   const _BackupActionsMenu({
     required this.compact,
@@ -21,6 +22,7 @@ class _BackupActionsMenu extends StatefulWidget {
     required this.onImportWorks,
     required this.onSyncToCloud,
     required this.onRestoreFromCloud,
+    this.onRefreshScrape,
   });
 
   @override
@@ -56,7 +58,7 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
         ? '❌ 导出失败'
         : progress?.phase == '导入失败'
         ? '❌ 导入失败'
-        : '备份设置';
+        : '备份恢复';
     return ShadPopover(
       controller: _controller,
       popover: (_) => SizedBox(
@@ -115,6 +117,8 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
             ],
             _item(icon: Icons.ios_share_rounded, label: '导出刮削数据', onPressed: widget.onExportWorks),
             _item(icon: Icons.download_rounded, label: '导入刮削数据', onPressed: widget.onImportWorks),
+            if (widget.onRefreshScrape != null)
+              _item(icon: Icons.sync_rounded, label: '刷新刮削数据', onPressed: widget.onRefreshScrape!),
             _item(icon: Icons.save_alt_rounded, label: '导出数据库', onPressed: widget.onExport),
             _item(icon: Icons.upload_file_rounded, label: '导入数据库', onPressed: widget.onImport),
             _item(icon: Icons.cloud_upload_rounded, label: '同步到云盘', onPressed: widget.onSyncToCloud),

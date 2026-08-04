@@ -7785,6 +7785,24 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     final collectionMap = collection is Map
         ? Map<String, dynamic>.from(collection)
         : const <String, dynamic>{};
+    final genres = details['genres'];
+    final genreList = genres is List
+        ? genres
+            .whereType<Map>()
+            .map((e) => e['name']?.toString())
+            .where((e) => e != null && e!.isNotEmpty)
+            .cast<String>()
+            .toList()
+        : const <String>[];
+    final originCountries = details['production_countries'];
+    final originList = originCountries is List
+        ? originCountries
+            .whereType<Map>()
+            .map((e) => e['iso_3166_1']?.toString())
+            .where((e) => e != null && e!.isNotEmpty)
+            .cast<String>()
+            .toList()
+        : const <String>[];
     return item.copyWith(
       title: title == null || title.isEmpty ? item.title : title,
       originalTitle: originalTitle == null || originalTitle.isEmpty
@@ -7806,6 +7824,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       collectionID: _toInt(collectionMap['id']) ?? item.collectionID,
       collectionName: collectionMap['name']?.toString() ?? item.collectionName,
       imdbID: _extractImdbID(details) ?? item.imdbID,
+      genres: genreList.isNotEmpty ? genreList : null,
+      originCountries: originList.isNotEmpty ? originList : null,
       updatedAt: DateTime.now(),
     );
   }
@@ -9035,6 +9055,50 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     return _store.deleteItems(removed);
   }
 
+  /// 刷新刮削数据：对所有已带 tmdbID 的条目按 ID 重拉 TMDB 详情，用最新数据重建 item 并落库。
+  /// 启用协程，并发量 6。返回刷新成功的条目数。豆瓣 ID 暂无按 ID 直拉接口，本轮只刷新 TMDB。
+  Future<int> refreshScrapedData() async {
+    if (_api == null) return 0;
+    final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
+    if (apiKey.trim().isEmpty) return 0;
+    final proxyHost = StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '';
+    final proxyPort = StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '';
+    final candidates = [
+      ...state.items,
+      ...state.allItems.where((i) => !state.items.any((s) => s.id == i.id)),
+    ].where((i) => i.tmdbID != null && i.tmdbID != 0 && i.title.trim().isNotEmpty).toList();
+    if (candidates.isEmpty) return 0;
+
+    // 协程并发量 6：每批最多 6 个并发拉取，批间串行，避免一次性发起太多请求。
+    const concurrency = 6;
+    final refreshed = <MediaLibraryItem>[];
+    for (var i = 0; i < candidates.length; i += concurrency) {
+      final batch = candidates.sublist(i, (i + concurrency).clamp(0, candidates.length));
+      final results = await Future.wait(batch.map((item) async {
+        try {
+          final details = await _tmdbDetails(
+            item.tmdbID!,
+            item.mediaKind ?? TMDBMediaKind.movie,
+            apiKey: apiKey,
+            proxyHost: proxyHost,
+            proxyPort: proxyPort,
+          );
+          return _itemFromTMDBDetails(item, details);
+        } catch (error, stackTrace) {
+          AppLogger.warning('Media', '刷新 tmdbID=${item.tmdbID} 刮削数据失败：$error');
+          AppLogger.error('Media', '刷新刮削数据异常', error: error, stackTrace: stackTrace);
+          return null;
+        }
+      }));
+      for (final r in results) {
+        if (r != null) refreshed.add(r);
+      }
+    }
+    if (refreshed.isEmpty) return 0;
+    await _upsertItems(refreshed);
+    return refreshed.length;
+  }
+
   Future<void> _upsertItems(Iterable<MediaLibraryItem> items) async {
     final list = items.toList(growable: false);
     await _store.upsertItems(list);
@@ -9166,6 +9230,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           backdropPath: item.backdropPath,
           rating: item.tmdbRating,
           imdbID: item.imdbID,
+          genres: item.genres,
+          originCountries: item.originCountries,
           createdAt: now,
         );
       }
