@@ -50,20 +50,22 @@ class _GuangyaAppState extends ConsumerState<GuangyaApp> {
       theme: lightTheme,
       darkTheme: darkTheme,
       themeMode: themeState.themeMode,
-      home: RemoteControlHandler(
-        child: auth.isLoading
-            ? const Scaffold(
-                body: Center(
-                  child: AppLoadingIndicator(
-                    size: AppLoadingSize.page,
-                    label: '正在准备光鸭',
-                    description: '正在检查登录状态与本地配置',
+      home: ShadToaster(
+        child: RemoteControlHandler(
+          child: auth.isLoading
+              ? const Scaffold(
+                  body: Center(
+                    child: AppLoadingIndicator(
+                      size: AppLoadingSize.page,
+                      label: '正在准备光鸭',
+                      description: '正在检查登录状态与本地配置',
+                    ),
                   ),
-                ),
-              )
-            : auth.isSignedIn
-            ? const WorkspacePage()
-            : const LoginPage(),
+                )
+              : auth.isSignedIn
+              ? const WorkspacePage()
+              : const LoginPage(),
+        ),
       ),
     );
   }

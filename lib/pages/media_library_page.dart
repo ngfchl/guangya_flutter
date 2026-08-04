@@ -1318,6 +1318,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
             onRecognize: () => unawaited(_refreshAndRecognizeDetail(selectedWork)),
             onManualMatch: (resource) => unawaited(_showManualTMDBMatch(selectedWork, resource)),
             onRefreshDetail: () => unawaited(_refreshDetailData(selectedWork)),
+            onRefreshScrape: () => unawaited(_refreshCurrentScrape(selectedWork)),
             onRenameFile: _renameMediaFile,
             onMoveMediaResource: _moveMediaFile,
             onMoveCloudFile: _moveCloudResource,
@@ -1340,7 +1341,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
         ? _homePanel(context, state)
         : showingCollectionOverview
         ? _collectionOverview(context, collections)
-        : works.isEmpty
+        : works.isEmpty && !widget.libraryFilter.isActive
         ? _mainEmpty(
             context,
             hasExternalSearch
@@ -1437,6 +1438,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                                   height: cardHeight,
                                   child: _MediaPosterLoadingTile(
                                     isLoading: _loadingMoreFilter,
+                                    posterURL: _randomPosterFromWorks(works),
                                     onLoadMore: () => setState(() {
                                       _loadingMoreFilter = true;
                                       _filterLimit += 50;
@@ -2143,11 +2145,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     try {
       final count = await ref.read(mediaLibraryProvider.notifier).refreshScrapedData();
       if (!mounted) return;
-      showShadDialog(
-        context: context,
-        builder: (_) => ShadDialog(
+      ShadToaster.of(context).show(
+        ShadToast(
           title: const Text('刷新刮削数据'),
-          child: Text(count > 0 ? '已刷新 $count 条刮削数据' : '没有可刷新的条目（需先识别并带 TMDB ID）'),
+          description: Text(count > 0 ? '已刷新 $count 条刮削数据' : '没有可刷新的条目（需先识别并带 TMDB ID）'),
         ),
       );
     } finally {
@@ -2639,6 +2640,20 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     if (matched != null && mounted) {
       setState(() => _detailWork = matched);
     }
+  }
+
+  Future<void> _refreshCurrentScrape(_MediaWork work) async {
+    final ok = await ref.read(mediaLibraryProvider.notifier).refreshScrapedDataForItem(work.primary);
+    if (!mounted) return;
+    if (ok) {
+      await _refreshDetailData(work);
+    }
+    ShadToaster.of(context).show(
+      ShadToast(
+        title: const Text('刷新刮削数据'),
+        description: Text(ok ? '已刷新当前条目刮削数据' : '刷新失败（需先识别并带 TMDB ID）'),
+      ),
+    );
   }
 
   Future<void> _showManualTMDBMatch(_MediaWork work, MediaLibraryItem target) async {
@@ -3313,11 +3328,10 @@ class _MediaLibraryManagementDialogState extends ConsumerState<_MediaLibraryMana
     try {
       final count = await ref.read(mediaLibraryProvider.notifier).refreshScrapedData();
       if (!mounted) return;
-      showShadDialog(
-        context: context,
-        builder: (_) => ShadDialog(
+      ShadToaster.of(context).show(
+        ShadToast(
           title: const Text('刷新刮削数据'),
-          child: Text(count > 0 ? '已刷新 $count 条刮削数据' : '没有可刷新的条目（需先识别并带 TMDB ID）'),
+          description: Text(count > 0 ? '已刷新 $count 条刮削数据' : '没有可刷新的条目（需先识别并带 TMDB ID）'),
         ),
       );
     } finally {

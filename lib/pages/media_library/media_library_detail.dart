@@ -12,6 +12,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
   final VoidCallback onRecognize;
   final ValueChanged<MediaLibraryItem> onManualMatch;
   final VoidCallback onRefreshDetail;
+  final VoidCallback? onRefreshScrape;
   final Future<void> Function(List<MediaLibraryItem>) onRemoveRecords;
   final Future<bool> Function(List<MediaLibraryItem>) onDeleteFiles;
   final Set<String> manualMatchBusyResourceKeys;
@@ -32,6 +33,7 @@ class _MediaDetailPanel extends ConsumerStatefulWidget {
     required this.onRecognize,
     required this.onManualMatch,
     required this.onRefreshDetail,
+    this.onRefreshScrape,
     required this.onRemoveRecords,
     required this.onDeleteFiles,
     this.manualMatchBusyResourceKeys = const {},
@@ -56,6 +58,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   int _tmdbDetailRequestSerial = 0;
   bool _loadingEpisodeDetails = false;
   bool _removingRecords = false;
+  bool _refreshScrapeBusy = false;
+  bool _pageLoading = false;
   bool _initialEpisodeSelectionRequested = false;
   final _backdropController = PageController();
   final _removeMenuController = ShadPopoverController();
@@ -81,7 +85,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       _episodeDetails = null;
       Future.microtask(_selectInitialEpisode);
     }
-    final updatedResource = widget.work.resources.where((item) => item.id == _resource.id).firstOrNull;
+    final updatedResource = widget.work.resources
+        .where((item) => item.id == _resource.id)
+        .firstOrNull;
     if (updatedResource != null) {
       _resource = updatedResource;
     } else {
@@ -93,7 +99,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         Future.microtask(_selectInitialEpisode);
       }
     }
-    if (widget.work.primary.tmdbID != _loadedTMDBID || widget.work.primary.mediaKind != _loadedTMDBKind) {
+    if (widget.work.primary.tmdbID != _loadedTMDBID ||
+        widget.work.primary.mediaKind != _loadedTMDBKind) {
       _tmdbDetails = null;
       _selectedSeason = null;
       _selectedEpisodeID = null;
@@ -126,13 +133,17 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       return;
     }
     final apiKey = StorageManager.get<String>(StorageKeys.tmdbApiKey) ?? '';
-    if (kind == null || apiKey.isEmpty || (!force && _loadedTMDBID == tmdbID && _loadedTMDBKind == kind)) {
+    if (kind == null ||
+        apiKey.isEmpty ||
+        (!force && _loadedTMDBID == tmdbID && _loadedTMDBKind == kind)) {
       return;
     }
     final requestSerial = ++_tmdbDetailRequestSerial;
     // 如果条目已有 TMDB 基础信息（posterPath），识别已完成，
     // 详情页不应显示 loading，而是在后台静默加载额外富数据（演职员、海报等）
-    final itemHasBasicData = item.posterPath?.isNotEmpty == true || item.overview?.isNotEmpty == true;
+    final itemHasBasicData =
+        item.posterPath?.isNotEmpty == true ||
+        item.overview.isNotEmpty;
     if (!itemHasBasicData) {
       setState(() => _loadingTMDBDetails = true);
     }
@@ -144,10 +155,14 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             tmdbID,
             mediaKind: kind == TMDBMediaKind.tv ? 'tv' : 'movie',
             apiKey: apiKey,
-            proxyHost: StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
-            proxyPort: StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+            proxyHost:
+                StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+            proxyPort:
+                StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
           );
-      if (mounted && requestSerial == _tmdbDetailRequestSerial && widget.work.primary.tmdbID == tmdbID) {
+      if (mounted &&
+          requestSerial == _tmdbDetailRequestSerial &&
+          widget.work.primary.tmdbID == tmdbID) {
         setState(() {
           _tmdbDetails = details;
           _loadedTMDBID = tmdbID;
@@ -204,8 +219,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             season: season,
             episode: episode,
             apiKey: apiKey,
-            proxyHost: StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
-            proxyPort: StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
+            proxyHost:
+                StorageManager.get<String>(StorageKeys.tmdbProxyHost) ?? '',
+            proxyPort:
+                StorageManager.get<String>(StorageKeys.tmdbProxyPort) ?? '',
           );
       if (mounted && _selectedEpisodeID == resource.id) {
         _episodeDetailsCache[cacheKey] = details;
@@ -221,7 +238,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   }
 
   Future<void> _selectInitialEpisode() async {
-    if (_initialEpisodeSelectionRequested || widget.work.primary.mediaKind != TMDBMediaKind.tv) {
+    if (_initialEpisodeSelectionRequested ||
+        widget.work.primary.mediaKind != TMDBMediaKind.tv) {
       return;
     }
     _initialEpisodeSelectionRequested = true;
@@ -239,19 +257,30 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             .where((entry) => entry.parsed.episode != null)
             .toList()
           ..sort((left, right) {
-            final season = (left.parsed.season ?? 1).compareTo(right.parsed.season ?? 1);
+            final season = (left.parsed.season ?? 1).compareTo(
+              right.parsed.season ?? 1,
+            );
             if (season != 0) return season;
-            return (left.parsed.episode ?? 0).compareTo(right.parsed.episode ?? 0);
+            return (left.parsed.episode ?? 0).compareTo(
+              right.parsed.episode ?? 0,
+            );
           });
     if (episodes.isEmpty) return;
-    final historyByID = {for (final entry in ref.read(watchHistoryProvider)) entry.fileID: entry};
+    final historyByID = {
+      for (final entry in ref.read(watchHistoryProvider)) entry.fileID: entry,
+    };
     final lastPlayed = episodes
         .where((entry) => historyByID.containsKey(entry.resource.id))
-        .fold<({MediaLibraryItem resource, ParsedMediaName parsed})?>(null, (current, entry) {
+        .fold<({MediaLibraryItem resource, ParsedMediaName parsed})?>(null, (
+          current,
+          entry,
+        ) {
           if (current == null) return entry;
           final currentHistory = historyByID[current.resource.id]!;
           final candidateHistory = historyByID[entry.resource.id]!;
-          return candidateHistory.updatedAt.isAfter(currentHistory.updatedAt) ? entry : current;
+          return candidateHistory.updatedAt.isAfter(currentHistory.updatedAt)
+              ? entry
+              : current;
         });
     await _selectEpisode((lastPlayed ?? episodes.first).resource);
   }
@@ -260,10 +289,43 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final images = _tmdbDetails?['images'];
     final paths = <String>[
       ?mediaBackdropPath(item),
-      if (_tmdbDetails?['backdrop_path']?.toString().isNotEmpty == true) _tmdbDetails!['backdrop_path'].toString(),
+      if (_tmdbDetails?['backdrop_path']?.toString().isNotEmpty == true)
+        _tmdbDetails!['backdrop_path'].toString(),
       if (images is Map) ..._imagePaths(images['backdrops']),
     ];
     return paths.toSet().take(10).toList();
+  }
+
+  List<String> _detailStringList(
+    MediaLibraryItem item, {
+    required bool genres,
+  }) {
+    final persisted = genres ? item.genres : item.originCountries;
+    if (persisted.isNotEmpty) return persisted;
+    final Object? raw;
+    if (genres) {
+      raw = _tmdbDetails?['genres'];
+    } else {
+      raw =
+          _tmdbDetails?['production_countries'] ??
+          _tmdbDetails?['origin_country'];
+    }
+    if (raw is! List) return const [];
+    return raw
+        .map((entry) {
+          if (entry is Map) {
+            return (genres
+                    ? (entry['name'] ?? entry['english_name'])
+                    : (entry['iso_3166_1'] ?? entry['code']))
+                ?.toString()
+                .trim();
+          }
+          return entry?.toString().trim();
+        })
+        .whereType<String>()
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
   }
 
   void _restartBackdropCarousel() {
@@ -288,32 +350,68 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final cs = ShadTheme.of(context).colorScheme;
     final item = widget.work.primary;
     final isSeries = item.mediaKind == TMDBMediaKind.tv;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Stack(
       children: [
-        Expanded(
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _detailInformation(context, item, isSeries),
-                const SizedBox(height: 22),
-                if (item.isMatched) ...[_tmdbEnrichment(context, showPosters: false), const SizedBox(height: 22)],
-                _resourceList(context, cs),
-                if (item.isMatched) ...[const SizedBox(height: 22), _tmdbEnrichment(context, showCast: false)],
-                const SizedBox(height: 22),
-                _fileInformation(context, item),
-              ],
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _detailInformation(context, item, isSeries),
+                    const SizedBox(height: 22),
+                    if (item.isMatched) ...[
+                      _tmdbEnrichment(context, showPosters: false),
+                      const SizedBox(height: 22),
+                    ],
+                    _resourceList(context, cs),
+                    if (item.isMatched) ...[
+                      const SizedBox(height: 22),
+                      _tmdbEnrichment(context, showCast: false),
+                    ],
+                    const SizedBox(height: 22),
+                    _fileInformation(context, item),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (_pageLoading)
+          Positioned.fill(
+            child: AbsorbPointer(
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.34),
+                child: Center(
+                  child: const AppLoadingIndicator(
+                    size: AppLoadingSize.page,
+                    semanticsLabel: '正在重新加载',
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
       ],
     );
   }
 
-  Widget _detailInformation(BuildContext context, MediaLibraryItem item, bool isSeries) {
+  Widget _detailInformation(
+    BuildContext context,
+    MediaLibraryItem item,
+    bool isSeries,
+  ) {
     final cs = ShadTheme.of(context).colorScheme;
-    final posterURL = item.posterPath?.isNotEmpty == true ? _tmdbImageURL(item.posterPath!, size: 'w342') : null;
+    final genres = _detailStringList(item, genres: true);
+    final originCountries = _detailStringList(
+      item,
+      genres: false,
+    ).map(mediaCountryLabel).toSet().toList(growable: false);
+    final ratingBadges = _ratingBadges(item);
+    final posterURL = item.posterPath?.isNotEmpty == true
+        ? _tmdbImageURL(item.posterPath!, size: 'w342')
+        : null;
     final backdrops = _heroBackdropPaths(item);
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -348,7 +446,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                   child: Flex(
                     direction: compact ? Axis.vertical : Axis.horizontal,
                     mainAxisAlignment: MainAxisAlignment.end,
-                    crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+                    crossAxisAlignment: compact
+                        ? CrossAxisAlignment.start
+                        : CrossAxisAlignment.end,
                     children: [
                       SizedBox(
                         width: compact ? 104 : 150,
@@ -363,12 +463,18 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                                   errorWidget: (_, _, _) => _tmdbDirectFallback(
                                     path: item.posterPath!,
                                     size: 'w342',
-                                    fallback: _detailPosterFallback(cs, isSeries),
+                                    fallback: _detailPosterFallback(
+                                      cs,
+                                      isSeries,
+                                    ),
                                   ),
                                 ),
                         ),
                       ),
-                      SizedBox(width: compact ? 0 : 20, height: compact ? 12 : 0),
+                      SizedBox(
+                        width: compact ? 0 : 20,
+                        height: compact ? 12 : 0,
+                      ),
                       Expanded(
                         child: SingleChildScrollView(
                           child: Column(
@@ -383,11 +489,15 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                                   color: Colors.white,
                                 ),
                               ),
-                              if (item.originalTitle.isNotEmpty && item.originalTitle != item.title) ...[
+                              if (item.originalTitle.isNotEmpty &&
+                                  item.originalTitle != item.title) ...[
                                 const SizedBox(height: 3),
                                 SelectableText(
                                   item.originalTitle,
-                                  style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.72)),
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.white.withValues(alpha: 0.72),
+                                  ),
                                 ),
                               ],
                               const SizedBox(height: 10),
@@ -396,16 +506,47 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                                 runSpacing: 6,
                                 crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
-                                  ShadBadge(child: Text(isSeries ? '剧集' : '电影')),
-                                  if (item.year.isNotEmpty) ShadBadge.outline(child: Text(item.year)),
-                                  ..._ratingBadges(item),
-                                  if (item.hasChineseAudio) const ShadBadge.outline(child: Text('中文音轨')),
-                                  if (item.hasChineseSubtitle) const ShadBadge.outline(child: Text('中文字幕')),
+                                  ShadBadge(
+                                    child: Text(isSeries ? '剧集' : '电影'),
+                                  ),
+                                  if (item.year.isNotEmpty)
+                                    ShadBadge.outline(child: Text(item.year)),
+                                  if (genres.isNotEmpty)
+                                    ShadBadge.outline(
+                                      child: Text(genres.join(' / ')),
+                                    ),
+                                  if (originCountries.isNotEmpty)
+                                    ShadBadge.outline(
+                                      child: Text(
+                                        originCountries.join(' / '),
+                                      ),
+                                    ),
+                                  // ShadBadge.outline(
+                                  //   child: Text(item.file.typeName),
+                                  // ),
+                                  if (item.hasChineseAudio)
+                                    const ShadBadge.outline(
+                                      child: Text('中文音轨'),
+                                    ),
+                                  if (item.hasChineseSubtitle)
+                                    const ShadBadge.outline(
+                                      child: Text('中文字幕'),
+                                    ),
                                 ],
                               ),
+                              if (ratingBadges.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: ratingBadges,
+                                ),
+                              ],
                               const SizedBox(height: 14),
                               Text(
-                                item.overview.isEmpty ? '暂无影视简介。' : item.overview,
+                                item.overview.isEmpty
+                                    ? '暂无影视简介。'
+                                    : item.overview,
                                 maxLines: compact ? 3 : 4,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -450,7 +591,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       );
     }
     final doubanRating = item.doubanRating;
-    if (doubanRating != null && doubanRating > 0 && item.doubanID != null && item.doubanID!.isNotEmpty) {
+    if (doubanRating != null &&
+        doubanRating > 0 &&
+        item.doubanID != null &&
+        item.doubanID!.isNotEmpty) {
       badges.add(
         _ratingBadge(
           label: '豆瓣',
@@ -463,7 +607,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     return badges;
   }
 
-  Widget _ratingBadge({required String label, required double score, required Color color, required String url}) {
+  Widget _ratingBadge({
+    required String label,
+    required double score,
+    required Color color,
+    required String url,
+  }) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -483,7 +632,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               const SizedBox(width: 3),
               Text(
                 '$label ${score.toStringAsFixed(1)}',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
               ),
             ],
           ),
@@ -496,13 +649,25 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final links = <(String, String, IconData)>[];
     if (item.tmdbID != null) {
       final kind = item.mediaKind == TMDBMediaKind.tv ? 'tv' : 'movie';
-      links.add(('TMDB', 'https://www.themoviedb.org/$kind/${item.tmdbID}', Icons.movie_filter_rounded));
+      links.add((
+        'TMDB',
+        'https://www.themoviedb.org/$kind/${item.tmdbID}',
+        Icons.movie_filter_rounded,
+      ));
     }
     if (item.doubanID != null) {
-      links.add(('豆瓣', 'https://movie.douban.com/subject/${item.doubanID}/', Icons.rate_review_rounded));
+      links.add((
+        '豆瓣',
+        'https://movie.douban.com/subject/${item.doubanID}/',
+        Icons.rate_review_rounded,
+      ));
     }
     if (item.imdbID != null && item.imdbID!.isNotEmpty) {
-      links.add(('IMDB', 'https://www.imdb.com/title/${item.imdbID}/', Icons.star_rounded));
+      links.add((
+        'IMDB',
+        'https://www.imdb.com/title/${item.imdbID}/',
+        Icons.star_rounded,
+      ));
     }
     if (links.isEmpty) return const SizedBox.shrink();
     return Wrap(
@@ -531,7 +696,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       children: [
         Text(
           '文件与媒体信息',
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: cs.foreground),
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: cs.foreground,
+          ),
         ),
         const SizedBox(height: 12),
         Wrap(
@@ -539,28 +708,43 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           runSpacing: 8,
           children: [
             _metadataPill(context, 'TMDB', item.tmdbID?.toString() ?? '未匹配'),
-            if (item.doubanID != null && item.doubanID!.isNotEmpty) _metadataPill(context, '豆瓣', item.doubanID!),
-            if (item.imdbID != null && item.imdbID!.isNotEmpty) _metadataPill(context, 'IMDB', item.imdbID!),
+            if (item.doubanID != null && item.doubanID!.isNotEmpty)
+              _metadataPill(context, '豆瓣', item.doubanID!),
+            if (item.imdbID != null && item.imdbID!.isNotEmpty)
+              _metadataPill(context, 'IMDB', item.imdbID!),
             _metadataPill(context, '资源', '${widget.work.resources.length}'),
             _metadataPill(context, '大小', _resource.file.formattedSize),
-            if (parsed.resolution != null) _metadataPill(context, '分辨率', parsed.resolution!),
-            if (parsed.videoCodec != null) _metadataPill(context, '编码', parsed.videoCodec!),
-            if (parsed.audio != null) _metadataPill(context, '音频', parsed.audio!),
+            if (parsed.resolution != null)
+              _metadataPill(context, '分辨率', parsed.resolution!),
+            if (parsed.videoCodec != null)
+              _metadataPill(context, '编码', parsed.videoCodec!),
+            if (parsed.audio != null)
+              _metadataPill(context, '音频', parsed.audio!),
           ],
         ),
         const SizedBox(height: 14),
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(color: cs.muted.withValues(alpha: 0.35), borderRadius: BorderRadius.circular(8)),
+          decoration: BoxDecoration(
+            color: cs.muted.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(8),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _metadataRow(context, '文件', _resource.file.name),
               _metadataRow(context, '文件 ID', _resource.file.id),
-              _metadataRow(context, 'GCID', _resource.file.gcid?.isNotEmpty == true ? _resource.file.gcid! : '未获取'),
+              _metadataRow(
+                context,
+                'GCID',
+                _resource.file.gcid?.isNotEmpty == true
+                    ? _resource.file.gcid!
+                    : '未获取',
+              ),
               _metadataRow(context, '云盘位置', _resource.file.cloudPath),
-              if (item.doubanID != null && item.doubanID!.isNotEmpty) _metadataRow(context, '豆瓣 ID', item.doubanID!),
+              if (item.doubanID != null && item.doubanID!.isNotEmpty)
+                _metadataRow(context, '豆瓣 ID', item.doubanID!),
             ],
           ),
         ),
@@ -570,12 +754,17 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
 
   bool get _removalBlocked => widget.removalDisabled || _removingRecords;
 
-  bool get _manualMatchBusy => widget.manualMatchBusyResourceKeys.contains(_mediaRecordKey(_resource));
+  bool get _manualMatchBusy =>
+      widget.manualMatchBusyResourceKeys.contains(_mediaRecordKey(_resource));
 
-  bool get _manualMatchLoading => widget.manualMatchLoadingResourceKeys.contains(_mediaRecordKey(_resource));
+  bool get _manualMatchLoading => widget.manualMatchLoadingResourceKeys
+      .contains(_mediaRecordKey(_resource));
 
   ParsedMediaName _parsedResource(MediaLibraryItem resource) =>
-      ParsedMediaName.parse(resource.file.name, directoryName: _parentDirectoryName(resource.file.cloudPath));
+      ParsedMediaName.parse(
+        resource.file.name,
+        directoryName: _parentDirectoryName(resource.file.cloudPath),
+      );
 
   List<MediaLibraryItem> _episodeRecords(MediaLibraryItem resource) {
     final parsed = _parsedResource(resource);
@@ -585,27 +774,39 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     return widget.work.resources.where((candidate) {
       if (candidate.libraryID != resource.libraryID) return false;
       final candidateParsed = _parsedResource(candidate);
-      return (candidateParsed.season ?? 1) == season && candidateParsed.episode == episode;
+      return (candidateParsed.season ?? 1) == season &&
+          candidateParsed.episode == episode;
     }).toList();
   }
 
-  List<MediaLibraryItem> _currentLibraryWorkRecords() =>
-      widget.work.resources.where((resource) => resource.libraryID == _resource.libraryID).toList();
+  List<MediaLibraryItem> _currentLibraryWorkRecords() => widget.work.resources
+      .where((resource) => resource.libraryID == _resource.libraryID)
+      .toList();
 
   MediaLibraryItem? _nextResourceAfterRemoving(Set<String> removedKeys) {
     final ordered = widget.work.resources.toList()
       ..sort((left, right) {
         final leftParsed = _parsedResource(left);
         final rightParsed = _parsedResource(right);
-        final season = (leftParsed.season ?? 1).compareTo(rightParsed.season ?? 1);
+        final season = (leftParsed.season ?? 1).compareTo(
+          rightParsed.season ?? 1,
+        );
         if (season != 0) return season;
-        final episode = (leftParsed.episode ?? 0).compareTo(rightParsed.episode ?? 0);
+        final episode = (leftParsed.episode ?? 0).compareTo(
+          rightParsed.episode ?? 0,
+        );
         if (episode != 0) return episode;
-        return left.file.name.toLowerCase().compareTo(right.file.name.toLowerCase());
+        return left.file.name.toLowerCase().compareTo(
+          right.file.name.toLowerCase(),
+        );
       });
-    final currentIndex = ordered.indexWhere((resource) => _mediaRecordKey(resource) == _mediaRecordKey(_resource));
+    final currentIndex = ordered.indexWhere(
+      (resource) => _mediaRecordKey(resource) == _mediaRecordKey(_resource),
+    );
     if (currentIndex < 0) {
-      return ordered.where((resource) => !removedKeys.contains(_mediaRecordKey(resource))).firstOrNull;
+      return ordered
+          .where((resource) => !removedKeys.contains(_mediaRecordKey(resource)))
+          .firstOrNull;
     }
     for (var index = currentIndex + 1; index < ordered.length; index++) {
       if (!removedKeys.contains(_mediaRecordKey(ordered[index]))) {
@@ -637,7 +838,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         title: Text(title),
         description: Text(description),
         actions: [
-          ShadButton.outline(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('取消')),
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
           ShadButton.destructive(
             onPressed: () => Navigator.of(dialogContext).pop(true),
             leading: const Icon(LucideIcons.trash2, size: 16),
@@ -654,7 +858,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
 
     final removedKeys = unique.map(_mediaRecordKey).toSet();
     final removesCurrent = removedKeys.contains(_mediaRecordKey(_resource));
-    final nextResource = removesCurrent ? _nextResourceAfterRemoving(removedKeys) : null;
+    final nextResource = removesCurrent
+        ? _nextResourceAfterRemoving(removedKeys)
+        : null;
     setState(() => _removingRecords = true);
     try {
       AppLogger.info(
@@ -662,7 +868,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         '[详情页-移除记录] 确认移除 ${unique.length} 条记录，标题「${widget.work.primary.title}」，媒体库ID=${unique.first.libraryID}',
       );
       for (final r in unique) {
-        AppLogger.info('Media', '[详情页-移除记录] 待移除：${r.file.name}，路径=${r.file.cloudPath}，ID=${r.id}');
+        AppLogger.info(
+          'Media',
+          '[详情页-移除记录] 待移除：${r.file.name}，路径=${r.file.cloudPath}，ID=${r.id}',
+        );
       }
       await widget.onRemoveRecords(unique);
     } finally {
@@ -677,7 +886,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   }
 
   Future<void> _removeResource(MediaLibraryItem resource) =>
-      _confirmAndRemoveRecords(records: [resource], title: '仅删除当前条目？', description: resource.file.name);
+      _confirmAndRemoveRecords(
+        records: [resource],
+        title: '仅删除当前条目？',
+        description: resource.file.name,
+      );
 
   Future<void> _deleteResourceFile(MediaLibraryItem resource) async {
     if (_removalBlocked) return;
@@ -721,7 +934,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     return _confirmAndRemoveRecords(
       records: records,
       title: episode == null ? '移除当前剧集资源？' : '移除第 $season 季第 $episode 集？',
-      description: records.length == 1 ? records.first.file.name : '将移除本集的 ${records.length} 个资源版本。',
+      description: records.length == 1
+          ? records.first.file.name
+          : '将移除本集的 ${records.length} 个资源版本。',
     );
   }
 
@@ -742,6 +957,37 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           ? '将移除整部剧集的 $episodeCount 集，共 ${records.length} 个资源记录。'
           : '将移除整部电影的 ${records.length} 个资源版本。',
     );
+  }
+
+  Future<void> _refreshCurrentScrape() async {
+    if (_refreshScrapeBusy || _pageLoading) return;
+    setState(() {
+      _refreshScrapeBusy = true;
+      _pageLoading = true;
+    });
+    try {
+      widget.onRefreshScrape?.call();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _refreshScrapeBusy = false;
+          _pageLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshDetailWithLoading() async {
+    if (_pageLoading) return;
+    setState(() => _pageLoading = true);
+    try {
+      widget.onRefreshDetail.call();
+      // 给 onRefreshDetail 的 unawaited 透传留一帧执行时间，下轮 build 会因 _pageLoading 仍 true 保持遮罩，
+      // 实际清掉由 _refreshDetailData 完成后父层 setState 触发——这里延时兜底避免卡死。
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    } finally {
+      if (mounted) setState(() => _pageLoading = false);
+    }
   }
 
   Widget _mediaActions() {
@@ -774,24 +1020,44 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           size: ShadButtonSize.sm,
           onPressed: widget.recognizing ? null : widget.onRecognize,
           leading: widget.recognizing
-              ? const AppLoadingIndicator(size: AppLoadingSize.inline, semanticsLabel: '正在识别媒体信息')
+              ? const AppLoadingIndicator(
+                  size: AppLoadingSize.inline,
+                  semanticsLabel: '正在识别媒体信息',
+                )
               : const Icon(Icons.auto_awesome_rounded, size: 16),
           child: const Text('媒体识别'),
         ),
         ShadButton.outline(
           size: ShadButtonSize.sm,
-          onPressed: _manualMatchBusy ? null : () => widget.onManualMatch(_resource),
+          onPressed: _manualMatchBusy
+              ? null
+              : () => widget.onManualMatch(_resource),
           leading: manualMatchLoading
-              ? const AppLoadingIndicator(size: AppLoadingSize.inline, semanticsLabel: '正在准备手动匹配')
+              ? const AppLoadingIndicator(
+                  size: AppLoadingSize.inline,
+                  semanticsLabel: '正在准备手动匹配',
+                )
               : const Icon(Icons.manage_search_rounded, size: 16),
           child: Text(manualMatchLoading ? '正在匹配' : '手动匹配'),
         ),
         ShadButton.outline(
           size: ShadButtonSize.sm,
-          onPressed: widget.onRefreshDetail,
+          onPressed: _pageLoading ? null : _refreshDetailWithLoading,
           leading: const Icon(Icons.refresh_rounded, size: 16),
           child: const Text('刷新'),
         ),
+        if (widget.onRefreshScrape != null)
+          ShadButton.outline(
+            size: ShadButtonSize.sm,
+            onPressed: _refreshScrapeBusy ? null : _refreshCurrentScrape,
+            leading: _refreshScrapeBusy
+                ? const AppLoadingIndicator(
+                    size: AppLoadingSize.inline,
+                    semanticsLabel: '正在刷新刮削数据',
+                  )
+                : const Icon(Icons.sync_rounded, size: 16),
+            child: Text(_refreshScrapeBusy ? '正在刷新' : '刷新刮削'),
+          ),
         _removeActionsPopover(),
       ],
     );
@@ -806,7 +1072,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       children: [
         Text(
           '资源版本 (${episodeResources.length})',
-          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.mutedForeground),
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: cs.mutedForeground,
+          ),
         ),
         const SizedBox(height: 4),
         Wrap(
@@ -818,13 +1088,20 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                 size: ShadButtonSize.sm,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 backgroundColor: r.id == _resource.id ? cs.primary : null,
-                foregroundColor: r.id == _resource.id ? cs.primaryForeground : null,
+                foregroundColor: r.id == _resource.id
+                    ? cs.primaryForeground
+                    : null,
                 onPressed: () => unawaited(_selectEpisode(r)),
                 child: Text(
                   r.file.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: r.id == _resource.id ? cs.primaryForeground : cs.foreground),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: r.id == _resource.id
+                        ? cs.primaryForeground
+                        : cs.foreground,
+                  ),
                 ),
               ),
           ],
@@ -844,7 +1121,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       popover: (_) => SizedBox(
         width: 292,
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: (MediaQuery.sizeOf(context).height - 96).clamp(260.0, 520.0)),
+          constraints: BoxConstraints(
+            maxHeight: (MediaQuery.sizeOf(context).height - 96).clamp(
+              260.0,
+              520.0,
+            ),
+          ),
           child: SingleChildScrollView(
             child: Padding(
               padding: const EdgeInsets.all(6),
@@ -856,7 +1138,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                     padding: const EdgeInsets.fromLTRB(8, 4, 8, 7),
                     child: Text(
                       '资源操作',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.mutedForeground),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: cs.mutedForeground,
+                      ),
                     ),
                   ),
                   _removalMenuItem(
@@ -866,36 +1152,61 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                     destructive: false,
                     onPressed: () => widget.onMoveMediaResource(_resource),
                   ),
-                  if (widget.work.resources.any((item) => item.tmdbID != null) ||
-                      widget.work.resources.any((item) => item.doubanID?.trim().isNotEmpty == true)) ...[
-                    const Padding(padding: EdgeInsets.symmetric(vertical: 5), child: ShadSeparator.horizontal()),
+                  if (widget.work.resources.any(
+                        (item) => item.tmdbID != null,
+                      ) ||
+                      widget.work.resources.any(
+                        (item) => item.doubanID?.trim().isNotEmpty == true,
+                      )) ...[
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 5),
+                      child: ShadSeparator.horizontal(),
+                    ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
-                      child: Text('清理刮削信息', style: TextStyle(fontSize: 11, color: cs.mutedForeground)),
+                      child: Text(
+                        '清理刮削信息',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
                     ),
                   ],
-                  if (widget.work.resources.any((item) => item.tmdbID != null)) ...[
+                  if (widget.work.resources.any(
+                    (item) => item.tmdbID != null,
+                  )) ...[
                     const SizedBox(height: 3),
                     _removalMenuItem(
                       icon: LucideIcons.unlink,
                       title: '清理 TMDB 信息',
                       description: '保留豆瓣信息（如有）',
-                      onPressed: () => widget.onClearMetadata(_MediaMetadataSource.tmdb),
+                      onPressed: () =>
+                          widget.onClearMetadata(_MediaMetadataSource.tmdb),
                     ),
                   ],
-                  if (widget.work.resources.any((item) => item.doubanID?.trim().isNotEmpty == true)) ...[
+                  if (widget.work.resources.any(
+                    (item) => item.doubanID?.trim().isNotEmpty == true,
+                  )) ...[
                     const SizedBox(height: 3),
                     _removalMenuItem(
                       icon: LucideIcons.unlink,
                       title: '清理豆瓣信息',
                       description: '保留 TMDB 信息（如有）',
-                      onPressed: () => widget.onClearMetadata(_MediaMetadataSource.douban),
+                      onPressed: () =>
+                          widget.onClearMetadata(_MediaMetadataSource.douban),
                     ),
                   ],
-                  const Padding(padding: EdgeInsets.symmetric(vertical: 5), child: ShadSeparator.horizontal()),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 5),
+                    child: ShadSeparator.horizontal(),
+                  ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
-                    child: Text('删除', style: TextStyle(fontSize: 11, color: cs.mutedForeground)),
+                    child: Text(
+                      '删除',
+                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                    ),
                   ),
                   _removalMenuItem(
                     icon: LucideIcons.fileX,
@@ -915,19 +1226,29 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                     _removalMenuItem(
                       icon: LucideIcons.listX,
                       title: '移除第 ${parsed.season ?? 1} 季第 ${parsed.episode} 集',
-                      description: episodeRecords.length > 1 ? '包含 ${episodeRecords.length} 个资源版本' : '移除当前单集记录',
+                      description: episodeRecords.length > 1
+                          ? '包含 ${episodeRecords.length} 个资源版本'
+                          : '移除当前单集记录',
                       onPressed: () => _removeEpisode(_resource),
                     ),
                   ],
-                  const Padding(padding: EdgeInsets.symmetric(vertical: 5), child: ShadSeparator.horizontal()),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 5),
+                    child: ShadSeparator.horizontal(),
+                  ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
-                    child: Text('批量删除条目', style: TextStyle(fontSize: 11, color: cs.mutedForeground)),
+                    child: Text(
+                      '批量删除条目',
+                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+                    ),
                   ),
                   _removalMenuItem(
                     icon: LucideIcons.trash2,
                     title: isSeries ? '移除当前媒体库内整部剧集' : '移除当前媒体库内整部电影',
-                    description: isSeries ? '${libraryRecords.length} 个资源记录' : '${libraryRecords.length} 个资源版本',
+                    description: isSeries
+                        ? '${libraryRecords.length} 个资源记录'
+                        : '${libraryRecords.length} 个资源版本',
                     onPressed: _removeCurrentLibraryWork,
                   ),
                 ],
@@ -942,7 +1263,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           size: ShadButtonSize.sm,
           onPressed: _removalBlocked ? null : _removeMenuController.toggle,
           leading: _removingRecords
-              ? const AppLoadingIndicator(size: AppLoadingSize.inline, semanticsLabel: '正在移除媒体库记录')
+              ? const AppLoadingIndicator(
+                  size: AppLoadingSize.inline,
+                  semanticsLabel: '正在移除媒体库记录',
+                )
               : const Icon(Icons.more_horiz_rounded, size: 16),
           child: Text(_removingRecords ? '正在移除' : '更多'),
         ),
@@ -981,7 +1305,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
             ),
             const SizedBox(height: 2),
             Text(
@@ -1000,28 +1328,45 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final cs = ShadTheme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: cs.muted.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(6)),
+      decoration: BoxDecoration(
+        color: cs.muted.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(6),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('$label ', style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
+          Text(
+            '$label ',
+            style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+          ),
           SelectableText(
             value,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.foreground),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: cs.foreground,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _tmdbEnrichment(BuildContext context, {bool showPosters = true, bool showCast = true}) {
+  Widget _tmdbEnrichment(
+    BuildContext context, {
+    bool showPosters = true,
+    bool showCast = true,
+  }) {
     final cs = ShadTheme.of(context).colorScheme;
     if (_loadingTMDBDetails && _tmdbDetails == null) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 14),
         child: Align(
           alignment: Alignment.centerLeft,
-          child: AppLoadingIndicator(size: AppLoadingSize.compact, label: '正在加载影视资料'),
+          child: AppLoadingIndicator(
+            size: AppLoadingSize.compact,
+            label: '正在加载影视资料',
+          ),
         ),
       );
     }
@@ -1050,7 +1395,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         if (showPosters && posters.isNotEmpty) ...[
           Text(
             '更多海报',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: cs.foreground),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: cs.foreground,
+            ),
           ),
           const SizedBox(height: 10),
           SizedBox(
@@ -1064,7 +1413,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
                   boxShadow: [
-                    BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 8, offset: const Offset(0, 3)),
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
                   ],
                 ),
                 child: ClipRRect(
@@ -1079,7 +1432,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                       size: 'w342',
                       width: 120,
                       height: 180,
-                      fallback: Container(width: 120, height: 180, color: cs.muted),
+                      fallback: Container(
+                        width: 120,
+                        height: 180,
+                        color: cs.muted,
+                      ),
                     ),
                   ),
                 ),
@@ -1091,7 +1448,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         if (showCast && cast.isNotEmpty) ...[
           Text(
             '演职员',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: cs.foreground),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: cs.foreground,
+            ),
           ),
           const SizedBox(height: 10),
           SizedBox(
@@ -1116,8 +1477,15 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                             ? Container(
                                 width: 100,
                                 height: 130,
-                                decoration: BoxDecoration(color: cs.muted, borderRadius: BorderRadius.circular(8)),
-                                child: Icon(Icons.person_rounded, color: cs.mutedForeground, size: 32),
+                                decoration: BoxDecoration(
+                                  color: cs.muted,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  Icons.person_rounded,
+                                  color: cs.mutedForeground,
+                                  size: 32,
+                                ),
                               )
                             : CachedNetworkImage(
                                 imageUrl: _tmdbImageURL(profile, size: 'w185'),
@@ -1129,7 +1497,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                                   size: 'w185',
                                   width: 100,
                                   height: 130,
-                                  fallback: Container(width: 100, height: 130, color: cs.muted),
+                                  fallback: Container(
+                                    width: 100,
+                                    height: 130,
+                                    color: cs.muted,
+                                  ),
                                 ),
                               ),
                       ),
@@ -1139,7 +1511,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                           name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: cs.foreground),
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: cs.foreground,
+                          ),
                         ),
                       if (character.isNotEmpty) ...[
                         const SizedBox(height: 1),
@@ -1147,7 +1523,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                           character,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 10.5, color: cs.mutedForeground),
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: cs.mutedForeground,
+                          ),
                         ),
                       ],
                     ],
@@ -1174,7 +1553,13 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
 
   Widget _detailPosterFallback(ShadColorScheme cs, bool isSeries) => Container(
     color: cs.muted,
-    child: Center(child: Icon(isSeries ? Icons.tv_rounded : Icons.movie_rounded, color: cs.mutedForeground, size: 42)),
+    child: Center(
+      child: Icon(
+        isSeries ? Icons.tv_rounded : Icons.movie_rounded,
+        color: cs.mutedForeground,
+        size: 42,
+      ),
+    ),
   );
 
   Widget _metadataRow(BuildContext context, String label, String value) {
@@ -1186,10 +1571,17 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         children: [
           SizedBox(
             width: 58,
-            child: Text(label, style: TextStyle(fontSize: 11.5, color: cs.mutedForeground)),
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 11.5, color: cs.mutedForeground),
+            ),
           ),
           Expanded(
-            child: SelectableText(value, style: TextStyle(fontSize: 11.5, color: cs.foreground), maxLines: 2),
+            child: SelectableText(
+              value,
+              style: TextStyle(fontSize: 11.5, color: cs.foreground),
+              maxLines: 2,
+            ),
           ),
         ],
       ),
@@ -1210,10 +1602,20 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       for (final values in episodesBySeason.values) {
         values.sort((a, b) {
           final aEpisode =
-              ParsedMediaName.parse(a.file.name, directoryName: _parentDirectoryName(a.file.cloudPath)).episode ?? 9999;
+              ParsedMediaName.parse(
+                a.file.name,
+                directoryName: _parentDirectoryName(a.file.cloudPath),
+              ).episode ??
+              9999;
           final bEpisode =
-              ParsedMediaName.parse(b.file.name, directoryName: _parentDirectoryName(b.file.cloudPath)).episode ?? 9999;
-          return aEpisode == bEpisode ? a.file.name.compareTo(b.file.name) : aEpisode.compareTo(bEpisode);
+              ParsedMediaName.parse(
+                b.file.name,
+                directoryName: _parentDirectoryName(b.file.cloudPath),
+              ).episode ??
+              9999;
+          return aEpisode == bEpisode
+              ? a.file.name.compareTo(b.file.name)
+              : aEpisode.compareTo(bEpisode);
         });
       }
     }
@@ -1226,22 +1628,32 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               : widget.work.resources.length > 1
               ? '资源版本 (${widget.work.resources.length})'
               : '媒体资源',
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: cs.foreground),
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: cs.foreground,
+          ),
         ),
         const SizedBox(height: 8),
         if (isSeries && episodesBySeason.isNotEmpty) ...[
           _seasonPicker(episodesBySeason, cs),
           const SizedBox(height: 10),
-          _episodePicker(episodesBySeason[_activeSeason(episodesBySeason)]!, cs),
+          _episodePicker(
+            episodesBySeason[_activeSeason(episodesBySeason)]!,
+            cs,
+          ),
           _episodeIntroduction(context, cs),
         ] else
-          ...widget.work.resources.map((resource) => _resourceTile(resource, cs)),
+          ...widget.work.resources.map(
+            (resource) => _resourceTile(resource, cs),
+          ),
       ],
     );
   }
 
   int _activeSeason(Map<int, List<MediaLibraryItem>> episodesBySeason) {
-    if (_selectedSeason != null && episodesBySeason.containsKey(_selectedSeason)) {
+    if (_selectedSeason != null &&
+        episodesBySeason.containsKey(_selectedSeason)) {
       return _selectedSeason!;
     }
     return episodesBySeason.keys.reduce((a, b) => a < b ? a : b);
@@ -1250,13 +1662,19 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
   int _episodeCount(List<MediaLibraryItem> episodes) {
     final seen = <int?>{};
     for (final r in episodes) {
-      final parsed = ParsedMediaName.parse(r.file.name, directoryName: _parentDirectoryName(r.file.cloudPath));
+      final parsed = ParsedMediaName.parse(
+        r.file.name,
+        directoryName: _parentDirectoryName(r.file.cloudPath),
+      );
       seen.add(parsed.episode);
     }
     return seen.length;
   }
 
-  Widget _seasonPicker(Map<int, List<MediaLibraryItem>> episodesBySeason, ShadColorScheme cs) {
+  Widget _seasonPicker(
+    Map<int, List<MediaLibraryItem>> episodesBySeason,
+    ShadColorScheme cs,
+  ) {
     final selectedSeason = _activeSeason(episodesBySeason);
     final seasons = episodesBySeason.keys.toList()..sort();
     return SingleChildScrollView(
@@ -1274,8 +1692,12 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                   _episodeDetails = null;
                 }),
                 backgroundColor: season == selectedSeason ? cs.primary : null,
-                foregroundColor: season == selectedSeason ? cs.primaryForeground : null,
-                child: Text('第 $season 季 · ${_episodeCount(episodesBySeason[season]!)} 集'),
+                foregroundColor: season == selectedSeason
+                    ? cs.primaryForeground
+                    : null,
+                child: Text(
+                  '第 $season 季 · ${_episodeCount(episodesBySeason[season]!)} 集',
+                ),
               ),
             ),
         ],
@@ -1292,7 +1714,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       );
       (grouped[parsed.episode] ??= []).add(resource);
     }
-    final entries = grouped.entries.toList()..sort((a, b) => (a.key ?? 9999).compareTo(b.key ?? 9999));
+    final entries = grouped.entries.toList()
+      ..sort((a, b) => (a.key ?? 9999).compareTo(b.key ?? 9999));
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -1304,8 +1727,13 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
               final resources = entry.value;
               final multi = resources.length > 1;
               final selected = resources.any((r) => r.id == _selectedEpisodeID);
-              final label = episode == null ? '未编号' : 'E${episode.toString().padLeft(2, '0')}';
-              final current = resources.firstWhere((r) => r.id == _selectedEpisodeID, orElse: () => resources.first);
+              final label = episode == null
+                  ? '未编号'
+                  : 'E${episode.toString().padLeft(2, '0')}';
+              final current = resources.firstWhere(
+                (r) => r.id == _selectedEpisodeID,
+                orElse: () => resources.first,
+              );
               return ShadContextMenuRegion(
                 tapEnabled: false,
                 items: [
@@ -1313,18 +1741,33 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                     for (final resource in resources)
                       ShadContextMenuItem.inset(
                         leading: Icon(
-                          resource.id == _selectedEpisodeID ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                          resource.id == _selectedEpisodeID
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_unchecked,
                           size: 16,
                           color: cs.foreground,
                         ),
                         onPressed: () => unawaited(_selectEpisode(resource)),
-                        child: Text(resource.file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        child: Text(
+                          resource.file.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                   if (multi) const Divider(),
                   ShadContextMenuItem.inset(
-                    leading: Icon(LucideIcons.trash2, size: 16, color: cs.destructive),
-                    onPressed: _removalBlocked ? null : () => unawaited(_removeEpisode(current)),
-                    child: Text(episode == null ? '移除当前剧集资源' : '移除本集', style: TextStyle(color: cs.destructive)),
+                    leading: Icon(
+                      LucideIcons.trash2,
+                      size: 16,
+                      color: cs.destructive,
+                    ),
+                    onPressed: _removalBlocked
+                        ? null
+                        : () => unawaited(_removeEpisode(current)),
+                    child: Text(
+                      episode == null ? '移除当前剧集资源' : '移除本集',
+                      style: TextStyle(color: cs.destructive),
+                    ),
                   ),
                 ],
                 child: ShadTooltip(
@@ -1356,7 +1799,10 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                     onPressed: () => unawaited(_selectEpisode(resources.first)),
                     child: SizedBox(
                       width: 50,
-                      child: FittedBox(fit: BoxFit.scaleDown, child: Text(label, maxLines: 1)),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(label, maxLines: 1),
+                      ),
                     ),
                   ),
                 ),
@@ -1372,13 +1818,19 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     if (!selected) {
       return Padding(
         padding: const EdgeInsets.only(top: 8),
-        child: Text('选择一集查看当前集介绍', style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
+        child: Text(
+          '选择一集查看当前集介绍',
+          style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+        ),
       );
     }
     if (_loadingEpisodeDetails) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 16),
-        child: AppLoadingIndicator(size: AppLoadingSize.compact, label: '正在加载剧集资料'),
+        child: AppLoadingIndicator(
+          size: AppLoadingSize.compact,
+          label: '正在加载剧集资料',
+        ),
       );
     }
     final parsed = ParsedMediaName.parse(
@@ -1425,36 +1877,69 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SelectableText(
-                  title?.isNotEmpty == true ? title! : '第 ${parsed.episode?.toString() ?? '-'} 集',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: cs.foreground),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SelectableText(
+                            title?.isNotEmpty == true
+                                ? title!
+                                : '第 ${parsed.episode?.toString() ?? '-'} 集',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: cs.foreground,
+                            ),
+                          ),
+                          if (airDate?.isNotEmpty == true || runtime != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              [
+                                if (airDate?.isNotEmpty == true) airDate!,
+                                if (runtime != null) '$runtime 分钟',
+                              ].join(' · '),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: cs.mutedForeground,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (!_resource.file.isIso) ...[
+                      const SizedBox(width: 12),
+                      ShadButton.ghost(
+                        size: ShadButtonSize.sm,
+                        onPressed: () => widget.onPlay(_resource),
+                        leading: const Icon(Icons.play_arrow_rounded, size: 16),
+                        child: const Text('播放'),
+                      ),
+                    ],
+                  ],
                 ),
-                const SizedBox(height: 4),
-                if (airDate?.isNotEmpty == true || runtime != null)
-                  Text(
-                    [if (airDate?.isNotEmpty == true) airDate!, if (runtime != null) '$runtime 分钟'].join(' · '),
-                    style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-                  ),
                 if (overview?.isNotEmpty == true) ...[
                   const SizedBox(height: 6),
-                  SelectableText(overview!, style: TextStyle(fontSize: 12, height: 1.45, color: cs.foreground)),
-                ] else ...[
-                  const SizedBox(height: 6),
-                  Text('暂无本集简介', style: TextStyle(fontSize: 12, color: cs.mutedForeground)),
-                ],
-                const SizedBox(height: 10),
-                if (!_resource.file.isIso)
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: ShadButton(
-                      size: ShadButtonSize.sm,
-                      onPressed: () => widget.onPlay(_resource),
-                      leading: const Icon(Icons.play_arrow_rounded, size: 16),
-                      child: const Text('播放本集'),
+                  SelectableText(
+                    overview!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.45,
+                      color: cs.foreground,
                     ),
                   ),
-                // 同集多版本切换，放在"播放本集"按钮下方
-                if (widget.work.resources.length > 1 && widget.work.primary.mediaKind == TMDBMediaKind.tv) ...[
+                ] else ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    '暂无本集简介',
+                    style: TextStyle(fontSize: 12, color: cs.mutedForeground),
+                  ),
+                ],
+                if (widget.work.resources.length > 1 &&
+                    widget.work.primary.mediaKind == TMDBMediaKind.tv) ...[
                   const SizedBox(height: 10),
                   _episodeVersionSwitcher(cs),
                 ],
@@ -1466,7 +1951,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     );
   }
 
-  Widget _resourceTile(MediaLibraryItem resource, ShadColorScheme cs, {int? episode}) {
+  Widget _resourceTile(
+    MediaLibraryItem resource,
+    ShadColorScheme cs, {
+    int? episode,
+  }) {
     final selected = resource.id == _resource.id;
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -1504,7 +1993,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
           const Divider(height: 8),
           ShadContextMenuItem.inset(
             leading: Icon(LucideIcons.trash2, size: 16, color: cs.destructive),
-            onPressed: _removalBlocked ? null : () => unawaited(_removeResource(resource)),
+            onPressed: _removalBlocked
+                ? null
+                : () => unawaited(_removeResource(resource)),
             child: Text('从媒体库移除此资源', style: TextStyle(color: cs.destructive)),
           ),
         ],
@@ -1521,7 +2012,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                 color: selected ? cs.primary.withValues(alpha: 0.08) : cs.card,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: selected ? cs.primary.withValues(alpha: 0.8) : cs.border,
+                  color: selected
+                      ? cs.primary.withValues(alpha: 0.8)
+                      : cs.border,
                   width: selected ? 1.4 : 1,
                 ),
               ),
@@ -1535,7 +2028,9 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                       height: 40,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: selected ? cs.primary : cs.primary.withValues(alpha: 0.10),
+                        color: selected
+                            ? cs.primary
+                            : cs.primary.withValues(alpha: 0.10),
                         borderRadius: BorderRadius.circular(7),
                       ),
                       child: Text(
@@ -1552,9 +2047,14 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                       width: 40,
                       height: 40,
                       alignment: Alignment.center,
-                      decoration: BoxDecoration(color: cs.muted, borderRadius: BorderRadius.circular(7)),
+                      decoration: BoxDecoration(
+                        color: cs.muted,
+                        borderRadius: BorderRadius.circular(7),
+                      ),
                       child: Icon(
-                        resource.file.isIso ? LucideIcons.disc : LucideIcons.clapperboard,
+                        resource.file.isIso
+                            ? LucideIcons.disc
+                            : LucideIcons.clapperboard,
                         size: 18,
                         color: cs.mutedForeground,
                       ),
@@ -1569,7 +2069,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                           resource.file.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: cs.foreground),
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: cs.foreground,
+                          ),
                         ),
                         const SizedBox(height: 6),
                         _resourceTags(resource, cs),
@@ -1578,7 +2082,11 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                   ),
                   if (selected) ...[
                     const SizedBox(width: 8),
-                    Icon(Icons.check_circle_rounded, size: 18, color: cs.primary),
+                    Icon(
+                      Icons.check_circle_rounded,
+                      size: 18,
+                      color: cs.primary,
+                    ),
                   ],
                   const SizedBox(width: 8),
                   if (!resource.file.isIso)
@@ -1619,13 +2127,20 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         _resourceChip(resource.file.formattedSize, cs, muted: true),
         for (final spec in specs) _resourceChip(spec, cs),
         if (resource.hasChineseAudio) _resourceChip('中文音轨', cs, accent: true),
-        if (resource.hasChineseSubtitle) _resourceChip('中文字幕', cs, accent: true),
-        if (resource.file.modifiedAt.isNotEmpty) _resourceChip(resource.file.modifiedAt, cs, muted: true),
+        if (resource.hasChineseSubtitle)
+          _resourceChip('中文字幕', cs, accent: true),
+        if (resource.file.modifiedAt.isNotEmpty)
+          _resourceChip(resource.file.modifiedAt, cs, muted: true),
       ],
     );
   }
 
-  Widget _resourceChip(String label, ShadColorScheme cs, {bool muted = false, bool accent = false}) {
+  Widget _resourceChip(
+    String label,
+    ShadColorScheme cs, {
+    bool muted = false,
+    bool accent = false,
+  }) {
     final Color bg;
     final Color fg;
     if (accent) {
@@ -1643,11 +2158,17 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(4),
-        border: muted ? null : Border.all(color: cs.border.withValues(alpha: 0.6)),
+        border: muted
+            ? null
+            : Border.all(color: cs.border.withValues(alpha: 0.6)),
       ),
       child: Text(
         label,
-        style: TextStyle(fontSize: 10.5, fontWeight: accent ? FontWeight.w600 : FontWeight.w500, color: fg),
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: accent ? FontWeight.w600 : FontWeight.w500,
+          color: fg,
+        ),
       ),
     );
   }
