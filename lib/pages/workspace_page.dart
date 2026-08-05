@@ -22,6 +22,7 @@ import '../models/media_navigation.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../providers/watch_history_provider.dart';
 import '../widgets/app_dialog.dart';
 import '../widgets/breadcrumb_bar.dart';
 import '../widgets/app_loading_indicator.dart';
@@ -232,6 +233,12 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final compact = constraints.maxWidth < 720;
+                final showMediaListFilters =
+                    _mode == WorkspaceMode.media &&
+                    _mediaActiveTool == null &&
+                    _mediaSearchQuery == null &&
+                    mediaDetail == null &&
+                    !_mediaHomeSelected;
                 final topBar = _TopBar(
                   mode: _mode,
                   compact: compact,
@@ -263,7 +270,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                   onCloseMediaDetail: () =>
                       ref.read(activeMediaDetailHeaderProvider.notifier).state =
                           null,
-                  onToggleFilter: _mediaActiveTool == null
+                  onToggleFilter: showMediaListFilters
                       ? () => setState(() {
                             _mediaFilterPanelExpanded = !_mediaFilterPanelExpanded;
                             if (!_mediaFilterPanelExpanded) {
@@ -286,7 +293,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                           children: [
                             if (_mediaActiveTool == null) ...[
                               topBar,
-                              if (_mediaFilterPanelExpanded) _buildMediaFilterPanel(context, ref),
+                              if (showMediaListFilters && _mediaFilterPanelExpanded)
+                                _buildMediaFilterPanel(context, ref),
                               const ShadSeparator.horizontal(),
                             ],
                             Expanded(child: rawContent),
@@ -422,6 +430,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     setState(() {
       _cloudActiveTool = null;
       _mediaActiveTool = null;
+      _mediaFilterPanelExpanded = false;
       _fileSearchQuery = null;
       _fileSearchReturnQuery = null;
       _fileSearchResultsCache = null;
@@ -441,6 +450,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       _mediaLibrarySection = MediaLibraryBrowseFilter.all;
       _mediaHomeSelected = false;
       _mediaActiveTool = null;
+      _mediaFilterPanelExpanded = false;
     });
   }
 
@@ -487,7 +497,10 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     if (query.isEmpty) return;
     if (_mode == WorkspaceMode.media) {
       ref.read(activeMediaDetailHeaderProvider.notifier).state = null;
-      setState(() => _mediaSearchQuery = query);
+      setState(() {
+        _mediaSearchQuery = query;
+        _mediaFilterPanelExpanded = false;
+      });
     } else {
       setState(() {
         _fileSearchQuery = query;
@@ -727,18 +740,12 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
 
   Widget _buildMediaFilterPanel(BuildContext context, WidgetRef ref) {
     final media = ref.read(mediaLibraryProvider);
-    final visibleItems = media.globalVisibleItems;
-    final availableGenres = <String>{};
-    final availableCountries = <String>{};
-    for (final item in visibleItems) {
-      availableGenres.addAll(item.genres);
-      availableCountries.addAll(item.originCountries);
-    }
+    final hasWatchHistory = ref.read(watchHistoryProvider).isNotEmpty;
     return MediaLibraryFilterPanel(
       filter: _mediaLibraryFilter,
-      availableGenres: availableGenres,
-      availableCountries: availableCountries,
-      availableWatchedKeys: const {},
+      availableGenres: media.filterOptions.genres,
+      availableCountries: media.filterOptions.countries,
+      availableWatchedKeys: hasWatchHistory ? const {'watched', 'unwatched'} : const {},
       onFilter: (next) => setState(() => _mediaLibraryFilter = next),
       onCollapse: () => setState(() => _mediaFilterPanelExpanded = false),
     );
@@ -777,4 +784,3 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     );
   }
 }
-

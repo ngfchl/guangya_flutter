@@ -308,6 +308,8 @@ class MediaLibraryStore {
     MediaLibrarySort sort = MediaLibrarySort.addedAt,
     MediaSortDirection direction = MediaSortDirection.descending,
     bool distinctWorks = false,
+    MediaLibraryFilter filter = const MediaLibraryFilter(),
+    Set<String> watchedFileIDs = const {},
   }) async {
     final db = await _db;
     await _ensureMediaItemLocationColumns(db);
@@ -326,6 +328,7 @@ class MediaLibraryStore {
         '(media_kind IS NULL OR (tmdb_id IS NULL AND douban_id IS NULL))',
       );
     }
+    _appendMediaFilterWhere(where, args, filter, watchedFileIDs);
     final query = search.trim().toLowerCase();
     if (query.isNotEmpty) {
       final prefixed = RegExp(
@@ -392,6 +395,77 @@ class MediaLibraryStore {
             offset: safeOffset,
           );
     return rows.map(_itemFromRow).toList(growable: false);
+  }
+
+  void _appendMediaFilterWhere(
+    List<String> where,
+    List<Object?> args,
+    MediaLibraryFilter filter,
+    Set<String> watchedFileIDs,
+  ) {
+    void addCSVFilter(String column, Iterable<String> values) {
+      final normalized = values.map((value) => value.trim().toLowerCase()).where((value) => value.isNotEmpty).toSet();
+      if (normalized.isEmpty) return;
+      where.add('(${List.filled(normalized.length, "(',' || LOWER(REPLACE($column, ', ', ',')) || ',') LIKE ?").join(' OR ')})');
+      args.addAll(normalized.map((value) => '%,$value,%'));
+    }
+
+    if (filter.kinds.isNotEmpty) {
+      where.add('LOWER(media_kind) IN (${List.filled(filter.kinds.length, '?').join(', ')})');
+      args.addAll(filter.kinds.map((value) => value.toLowerCase()));
+    }
+    addCSVFilter('genres', filter.genres.expand(mediaGenreQueryValues));
+    addCSVFilter('origin_country', filter.countries.expand(mediaCountryQueryValues));
+
+    final pathExpression = "LOWER(COALESCE(cloud_name, '') || ' ' || COALESCE(resource_path, ''))";
+    if (filter.resolutions.contains('4K')) {
+      where.add("($pathExpression LIKE '%4k%' OR $pathExpression LIKE '%2160p%')");
+    } else if (filter.resolutions.contains('1080P')) {
+      where.add("$pathExpression LIKE '%1080p%'");
+    } else if (filter.resolutions.contains('720P')) {
+      where.add("$pathExpression LIKE '%720p%'");
+    } else if (filter.resolutions.contains('other')) {
+      where.add("$pathExpression NOT LIKE '%4k%' AND $pathExpression NOT LIKE '%2160p%' AND $pathExpression NOT LIKE '%1080p%' AND $pathExpression NOT LIKE '%720p%'");
+    }
+
+    final decade = filter.decades.firstOrNull;
+    final currentYear = DateTime.now().year;
+    if (decade == 'thisYear') {
+      where.add("SUBSTR(COALESCE(release_date, ''), 1, 4) = ?");
+      args.add('$currentYear');
+    } else if (decade != null && RegExp(r'^\d{4}s$').hasMatch(decade)) {
+      final start = int.parse(decade.substring(0, 4));
+      where.add("(CAST(SUBSTR(COALESCE(release_date, ''), 1, 4) AS INTEGER) BETWEEN ? AND ? AND SUBSTR(COALESCE(release_date, ''), 1, 4) != ?)");
+      args.addAll([start, start + 9, '$currentYear']);
+    } else if (decade == 'other') {
+      where.add("(CAST(SUBSTR(COALESCE(release_date, ''), 1, 4) AS INTEGER) < 1970 OR CAST(SUBSTR(COALESCE(release_date, ''), 1, 4) AS INTEGER) >= 2030)");
+    }
+
+    if (filter.matchStates.contains('matched')) {
+      where.add("(tmdb_id IS NOT NULL OR (douban_id IS NOT NULL AND douban_id != ''))");
+    } else if (filter.matchStates.contains('unmatched')) {
+      where.add("(tmdb_id IS NULL AND (douban_id IS NULL OR douban_id = ''))");
+    }
+    if (filter.watchedStates.isNotEmpty) {
+      final placeholders = List.filled(watchedFileIDs.length, '?').join(', ');
+      if (filter.watchedStates.contains('watched')) {
+        where.add(watchedFileIDs.isEmpty ? '0 = 1' : 'file_id IN ($placeholders)');
+      } else if (watchedFileIDs.isNotEmpty) {
+        where.add('file_id NOT IN ($placeholders)');
+      }
+      args.addAll(watchedFileIDs);
+    }
+  }
+
+  Future<MediaLibraryFilterOptions> mediaFilterOptions() async {
+    final rows = await (await _db).query('media_items', columns: const ['genres', 'origin_country']);
+    final genres = <String>{};
+    final countries = <String>{};
+    for (final row in rows) {
+      genres.addAll((row['genres']?.toString() ?? '').split(',').map(normalizeMediaGenre).where((value) => value.isNotEmpty));
+      countries.addAll((row['origin_country']?.toString() ?? '').split(',').map(normalizeMediaCountry).where((value) => value.isNotEmpty));
+    }
+    return MediaLibraryFilterOptions(genres: genres, countries: countries);
   }
 
   String _mediaItemsOrderBy(

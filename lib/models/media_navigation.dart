@@ -124,6 +124,34 @@ String mediaCountryLabel(String value) {
   return _mediaCountryLabels[country] ?? country;
 }
 
+Set<String> mediaGenreQueryValues(String value) {
+  final normalized = normalizeMediaGenre(value);
+  return {
+    normalized,
+    for (final entry in _mediaGenreLabels.entries)
+      if (entry.value == normalized) entry.key,
+  };
+}
+
+Set<String> mediaCountryQueryValues(String value) {
+  final normalized = normalizeMediaCountry(value);
+  return {
+    normalized,
+    if (_mediaCountryLabels[normalized] case final label?) label,
+    if (normalized == 'CN') '中国',
+  };
+}
+
+class MediaLibraryFilterOptions {
+  final Set<String> genres;
+  final Set<String> countries;
+
+  const MediaLibraryFilterOptions({
+    this.genres = const {},
+    this.countries = const {},
+  });
+}
+
 /// The top-level surfaces in the media workspace.  Keeping this separate
 /// from widgets prevents combinations such as "home + search + management"
 /// from being represented by several nullable fields.

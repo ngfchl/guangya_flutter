@@ -120,6 +120,8 @@ class _FakeMediaLibraryStore extends MediaLibraryStore {
     MediaLibrarySort sort = MediaLibrarySort.addedAt,
     MediaSortDirection direction = MediaSortDirection.descending,
     bool distinctWorks = false,
+    MediaLibraryFilter filter = const MediaLibraryFilter(),
+    Set<String> watchedFileIDs = const {},
   }) async {
     itemPageCalls += 1;
     final delay = libraryID == null ? null : itemDelays[libraryID];
@@ -139,6 +141,10 @@ class _FakeMediaLibraryStore extends MediaLibraryStore {
           if (query.isNotEmpty && !item.matchesSearch(query)) {
             return false;
           }
+          if (filter.kinds.isNotEmpty && !filter.kinds.contains(item.mediaKind?.name)) return false;
+          if (filter.isActive && !filter.matches(item)) return false;
+          if (filter.watchedStates.contains('watched') && !watchedFileIDs.contains(item.id)) return false;
+          if (filter.watchedStates.contains('unwatched') && watchedFileIDs.contains(item.id)) return false;
           return true;
         })
         .toList(growable: false);
@@ -177,6 +183,12 @@ class _FakeMediaLibraryStore extends MediaLibraryStore {
     });
     return values.skip(offset).take(limit).toList(growable: false);
   }
+
+  @override
+  Future<MediaLibraryFilterOptions> mediaFilterOptions() async => MediaLibraryFilterOptions(
+        genres: records.expand((item) => item.genres).toSet(),
+        countries: records.expand((item) => item.originCountries).toSet(),
+      );
 
   @override
   Future<List<MediaLibraryItem>> workPreviewPage({
@@ -357,6 +369,35 @@ void main() {
 
     await notifier.loadContent(force: true);
     expect(store.itemPageCalls, 2);
+  });
+
+  test('media filters reload the SQL page and return matching records', () async {
+    final movie = _item(_libraryA.id, 'movie').copyWith(
+      mediaKind: TMDBMediaKind.movie,
+      genres: const ['Drama'],
+    );
+    final series = _item(_libraryA.id, 'series').copyWith(
+      mediaKind: TMDBMediaKind.tv,
+      genres: const ['Comedy'],
+    );
+    final store = _FakeMediaLibraryStore(
+      definitions: const [_libraryA],
+      records: [movie, series],
+    );
+    final notifier = MediaLibraryNotifier(store: store);
+    addTearDown(notifier.dispose);
+
+    await notifier.load();
+    await notifier.loadContent();
+    await notifier.loadContent(
+      libraryFilter: const MediaLibraryFilter(
+        kinds: {'movie'},
+        genres: {'剧情'},
+      ),
+    );
+
+    expect(store.itemPageCalls, 2);
+    expect(notifier.state.items.map((item) => item.id), ['movie']);
   });
 
   test(

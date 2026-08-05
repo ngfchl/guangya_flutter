@@ -177,6 +177,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
           home: widget.showHomePanel,
           filter: _wallFilter,
           search: widget.searchTitle ?? '',
+          libraryFilter: widget.libraryFilter,
+          watchedFileIDs: _watchedFileIDs(),
         );
       }
     });
@@ -188,7 +190,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     final browseFilterChanged = oldWidget.browseFilter != widget.browseFilter;
     final enteredHome = !oldWidget.showHomePanel && widget.showHomePanel;
     final externalSearchChanged = oldWidget.searchTitle != widget.searchTitle;
-    if (browseFilterChanged || enteredHome || externalSearchChanged) {
+    final libraryFilterChanged = oldWidget.libraryFilter != widget.libraryFilter;
+    if (browseFilterChanged || enteredHome || externalSearchChanged || libraryFilterChanged) {
       _wallFilter = widget.browseFilter;
       _activeCollectionKey = null;
       _detailWork = null;
@@ -204,12 +207,20 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
               home: widget.showHomePanel,
               filter: _wallFilter,
               search: widget.searchTitle ?? '',
+              libraryFilter: widget.libraryFilter,
+              watchedFileIDs: _watchedFileIDs(),
             ),
           );
         }
       });
     }
   }
+
+  Set<String> _watchedFileIDs() => ref
+      .read(watchHistoryProvider)
+      .map((entry) => entry.fileID)
+      .where((id) => id.isNotEmpty)
+      .toSet();
 
   Future<void> _openDetail(_MediaWork work) async {
     // 保存当前滚动位置，返回时恢复
@@ -291,25 +302,39 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     // Prefer the work that still owns any of the tracked resource ids.
     final refreshed = works.where((work) => work.resources.any((item) => resourceIDs.contains(item.id))).firstOrNull;
     if (refreshed == null) return;
+    // The items list is a distinct-works page and normally contains only one
+    // representative episode. Keep the complete resource list loaded by
+    // _openDetail, replacing only records that are actually present here.
+    final refreshedByID = {for (final item in refreshed.resources) item.id: item};
+    final refreshedPrimary = refreshedByID[current.primary.id] ?? refreshed.primary;
+    final mergedResources = <MediaLibraryItem>[
+      for (final item in current.resources) refreshedByID.remove(item.id) ?? item,
+      ...refreshedByID.values,
+    ]..sort((a, b) => a.file.name.toLowerCase().compareTo(b.file.name.toLowerCase()));
+    final merged = _MediaWork(
+      key: refreshed.key,
+      primary: refreshedPrimary,
+      resources: mergedResources,
+    );
     // Skip redundant rebuilds when nothing observable changed.
     final before = current.primary;
-    final after = refreshed.primary;
+    final after = merged.primary;
     String resourceSignature(_MediaWork work) => work.resources.map((item) => '${item.id}|${item.file.name}').join(',');
     final unchanged =
-        refreshed.key == current.key &&
+        merged.key == current.key &&
         after.tmdbID == before.tmdbID &&
         after.doubanID == before.doubanID &&
         after.title == before.title &&
         after.posterPath == before.posterPath &&
         after.overview == before.overview &&
-        resourceSignature(refreshed) == resourceSignature(current);
+        resourceSignature(merged) == resourceSignature(current);
     if (unchanged) return;
-    setState(() => _detailWork = refreshed);
+    setState(() => _detailWork = merged);
     _setDetailHeader(
       MediaDetailHeader(
-        title: refreshed.primary.title,
-        mediaKind: refreshed.primary.mediaKind,
-        year: refreshed.primary.year,
+        title: merged.primary.title,
+        mediaKind: merged.primary.mediaKind,
+        year: merged.primary.year,
       ),
     );
   }
@@ -1288,15 +1313,9 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       return _mainEmpty(context, '还没有媒体库', '从云盘根目录或当前目录创建一个媒体库');
     }
     if (_detailWork != null) {
-      final detailResourceIDs = _detailWork!.resources.map((resource) => resource.id).toSet();
-      final current = works
-          .where(
-            (work) =>
-                work.key == _detailWork!.key ||
-                work.resources.any((resource) => detailResourceIDs.contains(resource.id)),
-          )
-          .firstOrNull;
-      final selectedWork = current ?? _detailWork!;
+      // The paged wall contains one representative row per work. The detail
+      // work was expanded from SQLite and owns the authoritative episode list.
+      final selectedWork = _detailWork!;
       return Stack(
         children: [
           _MediaDetailPanel(
@@ -3779,4 +3798,3 @@ class _LibraryRow extends StatelessWidget {
     );
   }
 }
-

@@ -305,6 +305,7 @@ class MediaLibraryState {
   final String searchQuery;
   final MediaLibrarySort sort;
   final MediaSortDirection sortDirection;
+  final MediaLibraryFilterOptions filterOptions;
   final String? errorMessage;
   final String? statusMessage;
 
@@ -329,6 +330,7 @@ class MediaLibraryState {
     this.searchQuery = '',
     this.sort = MediaLibrarySort.addedAt,
     this.sortDirection = MediaSortDirection.descending,
+    this.filterOptions = const MediaLibraryFilterOptions(),
     this.errorMessage,
     this.statusMessage,
   });
@@ -416,6 +418,7 @@ class MediaLibraryState {
     String? searchQuery,
     MediaLibrarySort? sort,
     MediaSortDirection? sortDirection,
+    MediaLibraryFilterOptions? filterOptions,
     String? errorMessage,
     bool clearError = false,
     String? statusMessage,
@@ -450,6 +453,7 @@ class MediaLibraryState {
       searchQuery: searchQuery ?? this.searchQuery,
       sort: sort ?? this.sort,
       sortDirection: sortDirection ?? this.sortDirection,
+      filterOptions: filterOptions ?? this.filterOptions,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       statusMessage: clearStatus ? null : (statusMessage ?? this.statusMessage),
     );
@@ -540,6 +544,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   MediaLibraryBrowseFilter _contentFilter = MediaLibraryBrowseFilter.all;
   String _contentSearch = '';
   bool _contentHome = false;
+  MediaLibraryFilter _contentLibraryFilter = const MediaLibraryFilter();
+  Set<String> _contentWatchedFileIDs = const {};
   int _contentOffset = 0;
   int _contentLoadSerial = 0;
   bool _nextContentPageInFlight = false;
@@ -581,6 +587,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       final libraries = await _loadLibraries();
       final selectedID = libraries.isEmpty ? null : libraries.first.id;
       final statistics = await _store.statistics();
+      final filterOptions = await _store.mediaFilterOptions();
       final logs = _loadScanHistory();
       final scanTasks = _loadScanTaskHistory();
       state = state.copyWith(
@@ -590,6 +597,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         allItems: const [],
         libraryStatistics: statistics.libraries,
         storedGlobalStatistics: statistics.global,
+        filterOptions: filterOptions,
         clearLoadedLibrary: true,
         allItemsLoaded: false,
         scanLogs: logs,
@@ -610,6 +618,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
     String search = '',
     bool reset = true,
     bool force = false,
+    MediaLibraryFilter libraryFilter = const MediaLibraryFilter(),
+    Set<String> watchedFileIDs = const {},
   }) async {
     final serial = reset ? ++_contentLoadSerial : _contentLoadSerial;
     await load();
@@ -624,8 +634,19 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         filter == MediaLibraryBrowseFilter.unmatched;
     final sort = state.sort;
     final direction = state.sortDirection;
+    String values(Set<String> source) => (source.toList()..sort()).join(',');
+    final filterKey = [
+      values(libraryFilter.kinds),
+      values(libraryFilter.genres),
+      values(libraryFilter.resolutions),
+      values(libraryFilter.countries),
+      values(libraryFilter.decades),
+      values(libraryFilter.matchStates),
+      values(libraryFilter.watchedStates),
+      if (libraryFilter.watchedStates.isNotEmpty) values(watchedFileIDs),
+    ].join('|');
     final key =
-        '$selectedID|$home|${filter.name}|$normalizedSearch|${sort.name}|${direction.name}';
+        '$selectedID|$home|${filter.name}|$normalizedSearch|${sort.name}|${direction.name}|$filterKey';
     if (!reset && (_contentKey != key || !state.hasMoreContent)) return;
     if (reset &&
         _contentKey == key &&
@@ -639,6 +660,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       _contentFilter = filter;
       _contentSearch = normalizedSearch;
       _contentHome = home;
+      _contentLibraryFilter = libraryFilter;
+      _contentWatchedFileIDs = Set.unmodifiable(watchedFileIDs);
       _contentOffset = 0;
       state = state.copyWith(
         isLoading: true,
@@ -719,6 +742,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
           sort: sort,
           direction: direction,
           distinctWorks: true,
+          filter: libraryFilter,
+          watchedFileIDs: watchedFileIDs,
         );
         if (serial != _contentLoadSerial || _contentKey != key) return;
         _contentOffset += page.length;
@@ -757,6 +782,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
         home: _contentHome,
         filter: _contentFilter,
         search: _contentSearch,
+        libraryFilter: _contentLibraryFilter,
+        watchedFileIDs: _contentWatchedFileIDs,
         reset: false,
       );
     } finally {
@@ -4292,7 +4319,13 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   void setSearchQuery(String query) {
     state = state.copyWith(searchQuery: query);
     unawaited(
-      loadContent(home: _contentHome, filter: _contentFilter, search: query),
+      loadContent(
+        home: _contentHome,
+        filter: _contentFilter,
+        search: query,
+        libraryFilter: _contentLibraryFilter,
+        watchedFileIDs: _contentWatchedFileIDs,
+      ),
     );
   }
 
@@ -4304,6 +4337,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       home: _contentHome,
       filter: _contentFilter,
       search: _contentSearch,
+      libraryFilter: _contentLibraryFilter,
+      watchedFileIDs: _contentWatchedFileIDs,
     );
   }
 
@@ -4315,6 +4350,8 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       home: _contentHome,
       filter: _contentFilter,
       search: _contentSearch,
+      libraryFilter: _contentLibraryFilter,
+      watchedFileIDs: _contentWatchedFileIDs,
     );
   }
 

@@ -118,47 +118,53 @@ class MediaLibraryFilterPanel extends StatelessWidget {
         ),
     ];
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      decoration: BoxDecoration(
-        color: cs.card,
-        border: Border(
-          bottom: BorderSide(color: cs.border, width: 1),
+    return SizedBox(
+      width: double.infinity,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        decoration: BoxDecoration(
+          color: cs.card,
+          border: Border(
+            bottom: BorderSide(color: cs.border, width: 1),
+          ),
         ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final section in sections)
-            Padding(
-              padding: const EdgeInsets.only(top: 6, bottom: 4),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 4),
-                    child: Text(
-                      section.title,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: cs.mutedForeground,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final section in sections)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 6, bottom: 4),
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: Text(
+                          section.title,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: cs.mutedForeground,
+                          ),
+                        ),
                       ),
-                    ),
+                      for (final opt in section.options)
+                        _FilterChip(
+                          label: opt.label,
+                          selected: section.selected.contains(opt.value),
+                          onTap: () => section.onToggle(opt.value),
+                        ),
+                    ],
                   ),
-                  for (final opt in section.options)
-                    _FilterChip(
-                      label: opt.label,
-                      selected: section.selected.contains(opt.value),
-                      onTap: () => section.onToggle(opt.value),
-                    ),
-                ],
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
