@@ -69,6 +69,7 @@ class WorkspacePage extends ConsumerStatefulWidget {
 class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
+  final _mediaSearchFocusNode = FocusNode();
   bool _readingClipboard = false;
   bool _shareDialogOpen = false;
   WorkspaceMode _mode = WorkspaceMode.cloud;
@@ -180,6 +181,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   void dispose() {
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _mediaSearchFocusNode.dispose();
     super.dispose();
   }
 
@@ -243,7 +245,9 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                   mode: _mode,
                   compact: compact,
                   searchController: _searchController,
-                  searchFocusNode: _searchFocusNode,
+                  searchFocusNode: _mode == WorkspaceMode.media
+                      ? _mediaSearchFocusNode
+                      : _searchFocusNode,
                   searchOpen: _searchOpen,
                   onSearch: _submitSearch,
                   onToggleSearch: _toggleSearch,
@@ -517,7 +521,11 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _searchFocusNode.requestFocus(),
+      (_) {
+        if (!mounted) return;
+        (_mode == WorkspaceMode.media ? _mediaSearchFocusNode : _searchFocusNode)
+            .requestFocus();
+      },
     );
   }
 
@@ -718,7 +726,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       onScanShare: _scanShareQRCode,
       searchController: _searchController,
       searchFocusNode: _searchFocusNode,
-      searchOpen: _searchOpen,
+      searchOpen: _mode == WorkspaceMode.cloud && _searchOpen,
       onSearch: _submitSearch,
       onToggleSearch: () => setState(() {
         _searchOpen = !_searchOpen;

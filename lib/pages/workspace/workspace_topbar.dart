@@ -190,8 +190,12 @@ class _TopBar extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
+              key: const ValueKey('media-top-search-field'),
               controller: searchController,
               focusNode: searchFocusNode,
+              autofocus: true,
+              enabled: true,
+              readOnly: false,
               style: TextStyle(color: cs.foreground, fontSize: 13),
               decoration: InputDecoration(
                 border: InputBorder.none,
@@ -202,6 +206,11 @@ class _TopBar extends StatelessWidget {
               textInputAction: TextInputAction.search,
               onSubmitted: onSearch,
             ),
+          ),
+          _TopBarIconButton(
+            tooltip: '搜索',
+            icon: Icons.search_rounded,
+            onTap: () => onSearch(searchController.text),
           ),
           _TopBarIconButton(
             tooltip: '关闭搜索',
