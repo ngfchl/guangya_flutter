@@ -28,6 +28,7 @@ import '../widgets/app_loading_indicator.dart';
 import '../widgets/file_detail_dialog.dart';
 import '../widgets/file_preview_dialog.dart';
 import '../widgets/media_player_dialog.dart';
+import '../widgets/remote_focusable_button.dart';
 import 'media_library_page.dart';
 import 'organize_page.dart';
 
@@ -35,7 +36,6 @@ part 'workspace_tools/workspace_tools_organize.dart';
 part 'workspace_tools/workspace_tools_rename.dart';
 part 'workspace_tools/workspace_tools_dedup.dart';
 part 'workspace_tools/workspace_tools_shared.dart';
-
 
 class _ToolHeader extends ConsumerWidget {
   final WorkspaceTool tool;
@@ -149,49 +149,51 @@ class _ToolMediaLibrarySwitcherState extends State<_ToolMediaLibrarySwitcher> {
         .firstOrNull;
     return ShadPopover(
       controller: _controller,
-      popover: (_) => SizedBox(
-        width: 240,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 280),
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.all(6),
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
-                child: Text(
-                  '切换媒体库',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: cs.mutedForeground,
-                  ),
-                ),
-              ),
-              for (final library in widget.libraries)
-                ShadButton.ghost(
-                  width: double.infinity,
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  leading: Icon(
-                    library.kind == MediaLibraryKind.series
-                        ? Icons.live_tv_rounded
-                        : Icons.movie_rounded,
-                    size: 16,
-                  ),
-                  trailing: library.id == widget.selectedLibraryID
-                      ? Icon(Icons.check_rounded, size: 16, color: cs.primary)
-                      : null,
-                  onPressed: () {
-                    _controller.hide();
-                    widget.onSelected(library.id);
-                  },
+      popover: (_) => RemoteFocusMenu(
+        child: SizedBox(
+          width: 240,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 280),
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.all(6),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
                   child: Text(
-                    library.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    '切换媒体库',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: cs.mutedForeground,
+                    ),
                   ),
                 ),
-            ],
+                for (final library in widget.libraries)
+                  ShadButton.ghost(
+                    width: double.infinity,
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    leading: Icon(
+                      library.kind == MediaLibraryKind.series
+                          ? Icons.live_tv_rounded
+                          : Icons.movie_rounded,
+                      size: 16,
+                    ),
+                    trailing: library.id == widget.selectedLibraryID
+                        ? Icon(Icons.check_rounded, size: 16, color: cs.primary)
+                        : null,
+                    onPressed: () {
+                      _controller.hide();
+                      widget.onSelected(library.id);
+                    },
+                    child: Text(
+                      library.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -288,4 +290,3 @@ class _ToolSection extends StatelessWidget {
     );
   }
 }
-

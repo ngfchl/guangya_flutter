@@ -5971,49 +5971,51 @@ class _ScopedWorkspaceScanToolState
   Widget _duplicateQuickSelectControl(ShadColorScheme cs) {
     return ShadPopover(
       controller: _duplicateQuickSelectController,
-      popover: (_) => SizedBox(
-        width: 280,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            ShadButton.ghost(
-              mainAxisAlignment: MainAxisAlignment.start,
-              onPressed: () => _applyDuplicateQuickSelection(
-                const _DuplicateQuickSelect(
-                  _DuplicateQuickSelectKind.keepShortestPath,
+      popover: (_) => RemoteFocusMenu(
+        child: SizedBox(
+          width: 280,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ShadButton.ghost(
+                mainAxisAlignment: MainAxisAlignment.start,
+                onPressed: () => _applyDuplicateQuickSelection(
+                  const _DuplicateQuickSelect(
+                    _DuplicateQuickSelectKind.keepShortestPath,
+                  ),
                 ),
+                child: const Text('保留路径最短'),
               ),
-              child: const Text('保留路径最短'),
-            ),
-            ShadButton.ghost(
-              mainAxisAlignment: MainAxisAlignment.start,
-              onPressed: () => _applyDuplicateQuickSelection(
-                const _DuplicateQuickSelect(
-                  _DuplicateQuickSelectKind.keepLongestPath,
+              ShadButton.ghost(
+                mainAxisAlignment: MainAxisAlignment.start,
+                onPressed: () => _applyDuplicateQuickSelection(
+                  const _DuplicateQuickSelect(
+                    _DuplicateQuickSelectKind.keepLongestPath,
+                  ),
                 ),
+                child: const Text('保留路径最长'),
               ),
-              child: const Text('保留路径最长'),
-            ),
-            const Divider(height: 14),
-            ShadButton.ghost(
-              mainAxisAlignment: MainAxisAlignment.start,
-              onPressed: () => _applyDuplicateQuickSelection(
-                const _DuplicateQuickSelect(
-                  _DuplicateQuickSelectKind.keepNewestFile,
+              const Divider(height: 14),
+              ShadButton.ghost(
+                mainAxisAlignment: MainAxisAlignment.start,
+                onPressed: () => _applyDuplicateQuickSelection(
+                  const _DuplicateQuickSelect(
+                    _DuplicateQuickSelectKind.keepNewestFile,
+                  ),
                 ),
+                child: const Text('保留最新文件'),
               ),
-              child: const Text('保留最新文件'),
-            ),
-            const Divider(height: 14),
-            ShadButton.ghost(
-              mainAxisAlignment: MainAxisAlignment.start,
-              onPressed: () => _applyDuplicateQuickSelection(
-                const _DuplicateQuickSelect(_DuplicateQuickSelectKind.clear),
+              const Divider(height: 14),
+              ShadButton.ghost(
+                mainAxisAlignment: MainAxisAlignment.start,
+                onPressed: () => _applyDuplicateQuickSelection(
+                  const _DuplicateQuickSelect(_DuplicateQuickSelectKind.clear),
+                ),
+                child: const Text('清除快速选择'),
               ),
-              child: const Text('清除快速选择'),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
       child: ShadButton.outline(
