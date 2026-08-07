@@ -26,6 +26,7 @@ import '../widgets/app_dialog.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/media_player_dialog.dart';
+import '../widgets/remote_focusable_button.dart';
 import '../core/logging/app_logger.dart';
 
 export '../models/media_navigation.dart' show MediaLibraryBrowseFilter, MediaNavigationState, MediaWorkspaceView;
@@ -1424,10 +1425,13 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final compact = MediaQuery.sizeOf(context).width < 720;
-                      final spacing = compact ? 10.0 : 14.0;
-                      // 列数按可用宽度算，非 compact 也撑满：每列目标 158（卡片 142 + 间距余量）。
-                      final targetCardWidth = compact ? 130.0 : 158.0;
-                      final columns = (constraints.maxWidth ~/ (targetCardWidth + spacing)).clamp(2, 12);
+                      final spacing = compact ? 8.0 : 10.0;
+                      // TV/宽屏端每列目标更小，以显示更多内容；窄屏适当放大。
+                      // 上一版 108/110/130 仍显太大，本版进一步缩小到 92/96/116。
+                      final targetCardWidth = compact
+                          ? 92.0
+                          : (constraints.maxWidth > 1200 ? 96.0 : 116.0);
+                      final columns = (constraints.maxWidth ~/ (targetCardWidth + spacing)).clamp(2, 24);
                       final cardWidth = (constraints.maxWidth - spacing * (columns - 1)) / columns;
                       final cardHeight = cardWidth / 0.52;
                       return Column(
@@ -1805,7 +1809,10 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     }
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = (constraints.maxWidth / 154).floor().clamp(2, 7);
+        final columns = (constraints.maxWidth > 1200
+                ? (constraints.maxWidth / 132).floor()
+                : (constraints.maxWidth / 154).floor())
+            .clamp(2, 16);
         return GridView.builder(
           padding: const EdgeInsets.only(bottom: 10),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -2334,41 +2341,53 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                     ),
                   ),
                 Expanded(
-                  child: ShadButton.ghost(
-                    expands: false,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    leading: Icon(Icons.dataset_rounded, size: 18, color: cs.primary),
-                    onPressed: () =>
+                  child: RemoteFocusableButton(
+                    onTap: () =>
                         Navigator.of(context).pop(_CloudBackupAction(_CloudBackupActionKind.restore, backup)),
-                    child: Text(
-                      backup.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.foreground),
+                    child: ShadButton.ghost(
+                      expands: false,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      leading: Icon(Icons.dataset_rounded, size: 18, color: cs.primary),
+                      onPressed: () =>
+                          Navigator.of(context).pop(_CloudBackupAction(_CloudBackupActionKind.restore, backup)),
+                      child: Text(
+                        backup.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.foreground),
+                      ),
                     ),
                   ),
                 ),
                 ShadTooltip(
                   builder: (_) => const Text('重命名'),
-                  child: ShadButton.ghost(
-                    width: 32,
-                    height: 32,
-                    padding: EdgeInsets.zero,
-                    onPressed: () =>
+                  child: RemoteFocusableButton(
+                    onTap: () =>
                         Navigator.of(context).pop(_CloudBackupAction(_CloudBackupActionKind.rename, backup)),
-                    child: Icon(LucideIcons.pencil, size: 14, color: cs.mutedForeground),
+                    child: ShadButton.ghost(
+                      width: 32,
+                      height: 32,
+                      padding: EdgeInsets.zero,
+                      onPressed: () =>
+                          Navigator.of(context).pop(_CloudBackupAction(_CloudBackupActionKind.rename, backup)),
+                      child: Icon(LucideIcons.pencil, size: 14, color: cs.mutedForeground),
+                    ),
                   ),
                 ),
                 ShadTooltip(
                   builder: (_) => const Text('删除'),
-                  child: ShadButton.ghost(
-                    width: 32,
-                    height: 32,
-                    padding: EdgeInsets.zero,
-                    foregroundColor: cs.destructive,
-                    onPressed: () =>
+                  child: RemoteFocusableButton(
+                    onTap: () =>
                         Navigator.of(context).pop(_CloudBackupAction(_CloudBackupActionKind.delete, backup)),
-                    child: const Icon(LucideIcons.trash2, size: 14),
+                    child: ShadButton.ghost(
+                      width: 32,
+                      height: 32,
+                      padding: EdgeInsets.zero,
+                      foregroundColor: cs.destructive,
+                      onPressed: () =>
+                          Navigator.of(context).pop(_CloudBackupAction(_CloudBackupActionKind.delete, backup)),
+                      child: const Icon(LucideIcons.trash2, size: 14),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 4),
