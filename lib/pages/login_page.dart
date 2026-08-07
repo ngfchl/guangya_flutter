@@ -4,6 +4,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/app_loading_indicator.dart';
+import '../widgets/remote_focusable_button.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
@@ -318,30 +319,33 @@ class _TabButton extends StatelessWidget {
       label: label,
       child: Material(
         color: Colors.transparent,
-        child: InkWell(
+        child: RemoteFocusableButton(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(6),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              color: isActive
-                  ? theme.colorScheme.background
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
-              border: isActive
-                  ? Border.all(color: theme.colorScheme.border)
-                  : null,
-            ),
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(6),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
                 color: isActive
-                    ? theme.colorScheme.foreground
-                    : theme.colorScheme.mutedForeground,
+                    ? theme.colorScheme.background
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(6),
+                border: isActive
+                    ? Border.all(color: theme.colorScheme.border)
+                    : null,
+              ),
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                  color: isActive
+                      ? theme.colorScheme.foreground
+                      : theme.colorScheme.mutedForeground,
+                ),
               ),
             ),
           ),

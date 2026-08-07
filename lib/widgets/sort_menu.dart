@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import '../providers/file_provider.dart';
+import 'remote_focusable_button.dart';
 
 class SortMenu extends StatelessWidget {
   final FileSort currentSort;
@@ -73,17 +74,20 @@ class SortMenu extends StatelessWidget {
           ShadTooltip(
             builder: (_) =>
                 Text(currentDirection == SortDirection.ascending ? '升序' : '降序'),
-            child: InkWell(
+            child: RemoteFocusableButton(
               onTap: onDirectionToggle,
-              borderRadius: BorderRadius.circular(8),
-              child: SizedBox(
-                width: 34,
-                child: Icon(
-                  currentDirection == SortDirection.ascending
-                      ? Icons.arrow_upward_rounded
-                      : Icons.arrow_downward_rounded,
-                  size: 16,
-                  color: cs.mutedForeground,
+              child: InkWell(
+                onTap: onDirectionToggle,
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 34,
+                  child: Icon(
+                    currentDirection == SortDirection.ascending
+                        ? Icons.arrow_upward_rounded
+                        : Icons.arrow_downward_rounded,
+                    size: 16,
+                    color: cs.mutedForeground,
+                  ),
                 ),
               ),
             ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import '../models/cloud_file.dart';
+import 'remote_focusable_button.dart';
 
 class BreadcrumbBar extends StatelessWidget {
   final List<CloudFile> path;
@@ -84,23 +85,27 @@ class _BreadcrumbItem extends StatelessWidget {
       label: label,
       child: Material(
         color: Colors.transparent,
-        child: InkWell(
+        child: RemoteFocusableButton(
           onTap: enabled ? onTap : null,
-          borderRadius: BorderRadius.circular(6),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: selected ? cs.primary.withAlpha(15) : null,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                color: selected ? cs.primary : cs.mutedForeground,
+          enabled: enabled,
+          child: InkWell(
+            onTap: enabled ? onTap : null,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: selected ? cs.primary.withAlpha(15) : null,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                  color: selected ? cs.primary : cs.mutedForeground,
+                ),
               ),
             ),
           ),

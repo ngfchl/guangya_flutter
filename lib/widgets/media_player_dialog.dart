@@ -19,6 +19,7 @@ import 'app_dialog.dart';
 import 'app_loading_indicator.dart';
 import 'audio_player_dialog.dart';
 import 'confirm_dialog.dart';
+import 'remote_focusable_button.dart';
 
 bool get _isDesktop =>
     Platform.isMacOS || Platform.isWindows || Platform.isLinux;
@@ -144,7 +145,11 @@ Future<void> showMediaPlayerDialog(
   // 音频文件使用 just_audio 播放器
   if (file.isAudio) {
     AppLogger.info('AudioPlayer', '打开音频播放器：${file.name}');
-    await showAudioPlayerDialog(context, file, episodeCandidates: episodeCandidates);
+    await showAudioPlayerDialog(
+      context,
+      file,
+      episodeCandidates: episodeCandidates,
+    );
     return;
   }
 
@@ -359,12 +364,11 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
     if (!completed && position.inSeconds - _lastRecordedSeconds < 10) return;
     _lastRecordedSeconds = position.inSeconds;
     unawaited(
-      (_watchHistory ?? ref.read(watchHistoryProvider.notifier))!
-          .record(
-            fileID: _currentFile.id,
-            position: position,
-            duration: duration,
-          ),
+      (_watchHistory ?? ref.read(watchHistoryProvider.notifier))!.record(
+        fileID: _currentFile.id,
+        position: position,
+        duration: duration,
+      ),
     );
   }
 
@@ -861,23 +865,25 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
   Widget _rateMenu() {
     return ShadPopover(
       controller: _ratePopover,
-      popover: (_) => SizedBox(
-        width: 210,
-        child: Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (final value in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
-              ShadButton.outline(
-                size: ShadButtonSize.sm,
-                onPressed: () async {
-                  await widget.player.setRate(value);
-                  _ratePopover.hide();
-                  if (mounted) setState(() {});
-                },
-                child: Text('${value}x'),
-              ),
-          ],
+      popover: (_) => RemoteFocusMenu(
+        child: SizedBox(
+          width: 210,
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final value in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
+                ShadButton.outline(
+                  size: ShadButtonSize.sm,
+                  onPressed: () async {
+                    await widget.player.setRate(value);
+                    _ratePopover.hide();
+                    if (mounted) setState(() {});
+                  },
+                  child: Text('${value}x'),
+                ),
+            ],
+          ),
         ),
       ),
       child: _menuButton(
@@ -891,15 +897,17 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
     final tracks = widget.player.state.tracks.audio;
     return ShadPopover(
       controller: _audioPopover,
-      popover: (_) => _trackPopover<AudioTrack>(
-        title: '音轨',
-        tracks: tracks,
-        selectedID: widget.player.state.track.audio.id,
-        onSelect: (track) async {
-          await widget.player.setAudioTrack(track);
-          _audioPopover.hide();
-          if (mounted) setState(() {});
-        },
+      popover: (_) => RemoteFocusMenu(
+        child: _trackPopover<AudioTrack>(
+          title: '音轨',
+          tracks: tracks,
+          selectedID: widget.player.state.track.audio.id,
+          onSelect: (track) async {
+            await widget.player.setAudioTrack(track);
+            _audioPopover.hide();
+            if (mounted) setState(() {});
+          },
+        ),
       ),
       child: _menuButton('音轨', () async => _audioPopover.toggle()),
     );
@@ -910,7 +918,7 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
     return ShadPopover(
       controller: _subtitlePopover,
       padding: const EdgeInsets.all(8),
-      popover: (_) => _subtitlePopoverContent(tracks),
+      popover: (_) => RemoteFocusMenu(child: _subtitlePopoverContent(tracks)),
       child: _menuButton('字幕', () async => _subtitlePopover.toggle()),
     );
   }
@@ -1305,8 +1313,11 @@ class _MediaPlaybackControlsState extends State<_MediaPlaybackControls> {
                                         Focus(
                                           autofocus: true,
                                           onKeyEvent: (node, event) {
-                                            if (event.logicalKey == LogicalKeyboardKey.enter ||
-                                                event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                                            if (event.logicalKey ==
+                                                    LogicalKeyboardKey.enter ||
+                                                event.logicalKey ==
+                                                    LogicalKeyboardKey
+                                                        .numpadEnter) {
                                               widget.onRequestExit();
                                               return KeyEventResult.handled;
                                             }
