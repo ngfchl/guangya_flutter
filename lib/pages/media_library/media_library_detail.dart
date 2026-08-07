@@ -142,8 +142,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     // 如果条目已有 TMDB 基础信息（posterPath），识别已完成，
     // 详情页不应显示 loading，而是在后台静默加载额外富数据（演职员、海报等）
     final itemHasBasicData =
-        item.posterPath?.isNotEmpty == true ||
-        item.overview.isNotEmpty;
+        item.posterPath?.isNotEmpty == true || item.overview.isNotEmpty;
     if (!itemHasBasicData) {
       setState(() => _loadingTMDBDetails = true);
     }
@@ -517,9 +516,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                                     ),
                                   if (originCountries.isNotEmpty)
                                     ShadBadge.outline(
-                                      child: Text(
-                                        originCountries.join(' / '),
-                                      ),
+                                      child: Text(originCountries.join(' / ')),
                                     ),
                                   // ShadBadge.outline(
                                   //   child: Text(item.file.typeName),
@@ -1118,46 +1115,86 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final libraryRecords = _currentLibraryWorkRecords();
     return ShadPopover(
       controller: _removeMenuController,
-      popover: (_) => SizedBox(
-        width: 292,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: (MediaQuery.sizeOf(context).height - 96).clamp(
-              260.0,
-              520.0,
+      popover: (_) => RemoteFocusMenu(
+        child: SizedBox(
+          width: 292,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: (MediaQuery.sizeOf(context).height - 96).clamp(
+                260.0,
+                520.0,
+              ),
             ),
-          ),
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 7),
-                    child: Text(
-                      '资源操作',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: cs.mutedForeground,
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 7),
+                      child: Text(
+                        '资源操作',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: cs.mutedForeground,
+                        ),
                       ),
                     ),
-                  ),
-                  _removalMenuItem(
-                    icon: LucideIcons.folderInput,
-                    title: '移动到其他媒体库',
-                    description: '选择移动层级和目标媒体目录',
-                    destructive: false,
-                    onPressed: () => widget.onMoveMediaResource(_resource),
-                  ),
-                  if (widget.work.resources.any(
-                        (item) => item.tmdbID != null,
-                      ) ||
-                      widget.work.resources.any(
-                        (item) => item.doubanID?.trim().isNotEmpty == true,
-                      )) ...[
+                    _removalMenuItem(
+                      icon: LucideIcons.folderInput,
+                      title: '移动到其他媒体库',
+                      description: '选择移动层级和目标媒体目录',
+                      destructive: false,
+                      onPressed: () => widget.onMoveMediaResource(_resource),
+                    ),
+                    if (widget.work.resources.any(
+                          (item) => item.tmdbID != null,
+                        ) ||
+                        widget.work.resources.any(
+                          (item) => item.doubanID?.trim().isNotEmpty == true,
+                        )) ...[
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 5),
+                        child: ShadSeparator.horizontal(),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
+                        child: Text(
+                          '清理刮削信息',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: cs.mutedForeground,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (widget.work.resources.any(
+                      (item) => item.tmdbID != null,
+                    )) ...[
+                      const SizedBox(height: 3),
+                      _removalMenuItem(
+                        icon: LucideIcons.unlink,
+                        title: '清理 TMDB 信息',
+                        description: '保留豆瓣信息（如有）',
+                        onPressed: () =>
+                            widget.onClearMetadata(_MediaMetadataSource.tmdb),
+                      ),
+                    ],
+                    if (widget.work.resources.any(
+                      (item) => item.doubanID?.trim().isNotEmpty == true,
+                    )) ...[
+                      const SizedBox(height: 3),
+                      _removalMenuItem(
+                        icon: LucideIcons.unlink,
+                        title: '清理豆瓣信息',
+                        description: '保留 TMDB 信息（如有）',
+                        onPressed: () =>
+                            widget.onClearMetadata(_MediaMetadataSource.douban),
+                      ),
+                    ],
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 5),
                       child: ShadSeparator.horizontal(),
@@ -1165,93 +1202,62 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
                       child: Text(
-                        '清理刮削信息',
+                        '删除',
                         style: TextStyle(
                           fontSize: 11,
                           color: cs.mutedForeground,
                         ),
                       ),
                     ),
-                  ],
-                  if (widget.work.resources.any(
-                    (item) => item.tmdbID != null,
-                  )) ...[
+                    _removalMenuItem(
+                      icon: LucideIcons.fileX,
+                      title: '仅删除条目（默认）',
+                      description: '保留云盘文件，强制扫描后可重新加入',
+                      onPressed: () => _removeResource(_resource),
+                    ),
                     const SizedBox(height: 3),
                     _removalMenuItem(
-                      icon: LucideIcons.unlink,
-                      title: '清理 TMDB 信息',
-                      description: '保留豆瓣信息（如有）',
-                      onPressed: () =>
-                          widget.onClearMetadata(_MediaMetadataSource.tmdb),
+                      icon: LucideIcons.trash2,
+                      title: '删除文件',
+                      description: '同时清理媒体库条目',
+                      onPressed: () => _deleteResourceFile(_resource),
                     ),
-                  ],
-                  if (widget.work.resources.any(
-                    (item) => item.doubanID?.trim().isNotEmpty == true,
-                  )) ...[
-                    const SizedBox(height: 3),
+                    if (isSeries && parsed.episode != null) ...[
+                      const SizedBox(height: 3),
+                      _removalMenuItem(
+                        icon: LucideIcons.listX,
+                        title:
+                            '移除第 ${parsed.season ?? 1} 季第 ${parsed.episode} 集',
+                        description: episodeRecords.length > 1
+                            ? '包含 ${episodeRecords.length} 个资源版本'
+                            : '移除当前单集记录',
+                        onPressed: () => _removeEpisode(_resource),
+                      ),
+                    ],
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 5),
+                      child: ShadSeparator.horizontal(),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
+                      child: Text(
+                        '批量删除条目',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                        ),
+                      ),
+                    ),
                     _removalMenuItem(
-                      icon: LucideIcons.unlink,
-                      title: '清理豆瓣信息',
-                      description: '保留 TMDB 信息（如有）',
-                      onPressed: () =>
-                          widget.onClearMetadata(_MediaMetadataSource.douban),
+                      icon: LucideIcons.trash2,
+                      title: isSeries ? '移除当前媒体库内整部剧集' : '移除当前媒体库内整部电影',
+                      description: isSeries
+                          ? '${libraryRecords.length} 个资源记录'
+                          : '${libraryRecords.length} 个资源版本',
+                      onPressed: _removeCurrentLibraryWork,
                     ),
                   ],
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 5),
-                    child: ShadSeparator.horizontal(),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
-                    child: Text(
-                      '删除',
-                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-                    ),
-                  ),
-                  _removalMenuItem(
-                    icon: LucideIcons.fileX,
-                    title: '仅删除条目（默认）',
-                    description: '保留云盘文件，强制扫描后可重新加入',
-                    onPressed: () => _removeResource(_resource),
-                  ),
-                  const SizedBox(height: 3),
-                  _removalMenuItem(
-                    icon: LucideIcons.trash2,
-                    title: '删除文件',
-                    description: '同时清理媒体库条目',
-                    onPressed: () => _deleteResourceFile(_resource),
-                  ),
-                  if (isSeries && parsed.episode != null) ...[
-                    const SizedBox(height: 3),
-                    _removalMenuItem(
-                      icon: LucideIcons.listX,
-                      title: '移除第 ${parsed.season ?? 1} 季第 ${parsed.episode} 集',
-                      description: episodeRecords.length > 1
-                          ? '包含 ${episodeRecords.length} 个资源版本'
-                          : '移除当前单集记录',
-                      onPressed: () => _removeEpisode(_resource),
-                    ),
-                  ],
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 5),
-                    child: ShadSeparator.horizontal(),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
-                    child: Text(
-                      '批量删除条目',
-                      style: TextStyle(fontSize: 11, color: cs.mutedForeground),
-                    ),
-                  ),
-                  _removalMenuItem(
-                    icon: LucideIcons.trash2,
-                    title: isSeries ? '移除当前媒体库内整部剧集' : '移除当前媒体库内整部电影',
-                    description: isSeries
-                        ? '${libraryRecords.length} 个资源记录'
-                        : '${libraryRecords.length} 个资源版本',
-                    onPressed: _removeCurrentLibraryWork,
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -1894,7 +1900,8 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
                               color: cs.foreground,
                             ),
                           ),
-                          if (airDate?.isNotEmpty == true || runtime != null) ...[
+                          if (airDate?.isNotEmpty == true ||
+                              runtime != null) ...[
                             const SizedBox(height: 4),
                             Text(
                               [

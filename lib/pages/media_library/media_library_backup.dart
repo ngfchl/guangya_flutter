@@ -61,69 +61,107 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
         : '备份恢复';
     return ShadPopover(
       controller: _controller,
-      popover: (_) => SizedBox(
-        width: 220,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (progress?.error?.trim().isNotEmpty == true) ...[
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: ShadTheme.of(context).colorScheme.destructive.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: ShadTheme.of(context).colorScheme.destructive.withValues(alpha: 0.34)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '失败原因',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: ShadTheme.of(context).colorScheme.destructive,
-                      ),
+      popover: (_) => RemoteFocusMenu(
+        child: SizedBox(
+          width: 220,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (progress?.error?.trim().isNotEmpty == true) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: ShadTheme.of(
+                      context,
+                    ).colorScheme.destructive.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: ShadTheme.of(
+                        context,
+                      ).colorScheme.destructive.withValues(alpha: 0.34),
                     ),
-                    const SizedBox(height: 4),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 96),
-                      child: SingleChildScrollView(
-                        child: SelectableText(
-                          progress?.error ?? '',
-                          style: TextStyle(
-                            fontSize: 11,
-                            height: 1.35,
-                            color: ShadTheme.of(context).colorScheme.foreground,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '失败原因',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: ShadTheme.of(context).colorScheme.destructive,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 96),
+                        child: SingleChildScrollView(
+                          child: SelectableText(
+                            progress?.error ?? '',
+                            style: TextStyle(
+                              fontSize: 11,
+                              height: 1.35,
+                              color: ShadTheme.of(
+                                context,
+                              ).colorScheme.foreground,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
+                const SizedBox(height: 6),
+              ],
+              if (active && progress!.totalBytes > 0) ...[
+                _progressDetail(
+                  context,
+                  label: '进度',
+                  value:
+                      '${((progress.fraction) * 100).round()}%'
+                      '${progress.bytesPerSecond > 0 ? ' · ${_formatRate(progress.bytesPerSecond)}' : ''}',
+                ),
+                const SizedBox(height: 6),
+              ],
+              _item(
+                icon: Icons.ios_share_rounded,
+                label: '导出刮削数据',
+                onPressed: widget.onExportWorks,
               ),
-              const SizedBox(height: 6),
-            ],
-            if (active && progress!.totalBytes > 0) ...[
-              _progressDetail(
-                context,
-                label: '进度',
-                value:
-                    '${((progress.fraction) * 100).round()}%'
-                    '${progress.bytesPerSecond > 0 ? ' · ${_formatRate(progress.bytesPerSecond)}' : ''}',
+              _item(
+                icon: Icons.download_rounded,
+                label: '导入刮削数据',
+                onPressed: widget.onImportWorks,
               ),
-              const SizedBox(height: 6),
+              if (widget.onRefreshScrape != null)
+                _item(
+                  icon: Icons.sync_rounded,
+                  label: '刷新刮削数据',
+                  onPressed: widget.onRefreshScrape!,
+                ),
+              _item(
+                icon: Icons.save_alt_rounded,
+                label: '导出数据库',
+                onPressed: widget.onExport,
+              ),
+              _item(
+                icon: Icons.upload_file_rounded,
+                label: '导入数据库',
+                onPressed: widget.onImport,
+              ),
+              _item(
+                icon: Icons.cloud_upload_rounded,
+                label: '同步到云盘',
+                onPressed: widget.onSyncToCloud,
+              ),
+              _item(
+                icon: Icons.cloud_download_rounded,
+                label: '从云盘恢复',
+                onPressed: widget.onRestoreFromCloud,
+              ),
             ],
-            _item(icon: Icons.ios_share_rounded, label: '导出刮削数据', onPressed: widget.onExportWorks),
-            _item(icon: Icons.download_rounded, label: '导入刮削数据', onPressed: widget.onImportWorks),
-            if (widget.onRefreshScrape != null)
-              _item(icon: Icons.sync_rounded, label: '刷新刮削数据', onPressed: widget.onRefreshScrape!),
-            _item(icon: Icons.save_alt_rounded, label: '导出数据库', onPressed: widget.onExport),
-            _item(icon: Icons.upload_file_rounded, label: '导入数据库', onPressed: widget.onImport),
-            _item(icon: Icons.cloud_upload_rounded, label: '同步到云盘', onPressed: widget.onSyncToCloud),
-            _item(icon: Icons.cloud_download_rounded, label: '从云盘恢复', onPressed: widget.onRestoreFromCloud),
-          ],
+          ),
         ),
       ),
       child: ShadButton.outline(
@@ -138,37 +176,69 @@ class _BackupActionsMenuState extends State<_BackupActionsMenu> {
               )
             : const Icon(Icons.storage_rounded, size: 16),
         trailing: const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
-        child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(label)),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(label),
+        ),
       ),
     );
   }
 
-  String _formatRate(double bytesPerSecond) => '${FormatBytes.format(bytesPerSecond.round())}/s';
+  String _formatRate(double bytesPerSecond) =>
+      '${FormatBytes.format(bytesPerSecond.round())}/s';
 
-  Widget _item({required IconData icon, required String label, required VoidCallback onPressed}) => ShadButton.ghost(
-    width: double.infinity,
-    mainAxisAlignment: MainAxisAlignment.start,
-    leading: Icon(icon, size: 16),
-    onPressed: () {
-      _controller.hide();
-      onPressed();
-    },
-    child: Text(label),
+  Widget _item({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 1),
+    child: RemoteFocusableButton(
+      onTap: () {
+        _controller.hide();
+        onPressed();
+      },
+      child: ShadButton.ghost(
+        width: double.infinity,
+        mainAxisAlignment: MainAxisAlignment.start,
+        leading: Icon(icon, size: 16),
+        onPressed: () {
+          _controller.hide();
+          onPressed();
+        },
+        child: Text(label),
+      ),
+    ),
   );
 
-  Widget _progressDetail(BuildContext context, {required String label, required String value}) {
+  Widget _progressDetail(
+    BuildContext context, {
+    required String label,
+    required String value,
+  }) {
     final cs = ShadTheme.of(context).colorScheme;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(color: cs.primary.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(6)),
+      decoration: BoxDecoration(
+        color: cs.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontSize: 11, color: cs.mutedForeground)),
+          Text(
+            label,
+            style: TextStyle(fontSize: 11, color: cs.mutedForeground),
+          ),
           Text(
             value,
-            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cs.foreground),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: cs.foreground,
+            ),
           ),
         ],
       ),
