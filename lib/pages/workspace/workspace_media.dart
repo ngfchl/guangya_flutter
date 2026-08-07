@@ -237,36 +237,38 @@ class _MediaLibrarySectionPopoverState
     final cs = ShadTheme.of(context).colorScheme;
     return ShadPopover(
       controller: _controller,
-      popover: (_) => SizedBox(
-        width: (MediaQuery.sizeOf(context).width - 24)
-            .clamp(300.0, 520.0)
-            .toDouble(),
-        child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 3, 8, 7),
-                child: Text(
-                  '资源分类',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: cs.mutedForeground,
+      popover: (_) => RemoteFocusMenu(
+        child: SizedBox(
+          width: (MediaQuery.sizeOf(context).width - 24)
+              .clamp(300.0, 520.0)
+              .toDouble(),
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 3, 8, 7),
+                  child: Text(
+                    '资源分类',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: cs.mutedForeground,
+                    ),
                   ),
                 ),
-              ),
-              _MediaLibrarySectionSelector(
-                statistics: widget.statistics,
-                selected: widget.selected,
-                onSelected: (filter) {
-                  _controller.hide();
-                  widget.onSelected(filter);
-                },
-              ),
-            ],
+                _MediaLibrarySectionSelector(
+                  statistics: widget.statistics,
+                  selected: widget.selected,
+                  onSelected: (filter) {
+                    _controller.hide();
+                    widget.onSelected(filter);
+                  },
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -390,61 +392,63 @@ class _MediaSortTopActionState extends State<_MediaSortTopAction> {
     final cs = ShadTheme.of(context).colorScheme;
     return ShadPopover(
       controller: _controller,
-      popover: (_) => SizedBox(
-        width: 148,
-        child: Padding(
-          padding: const EdgeInsets.all(5),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final value in MediaLibrarySort.values)
-                SizedBox(
-                  width: double.infinity,
-                  child: ShadButton.ghost(
-                    onPressed: () {
-                      _controller.hide();
-                      widget.onSelected(value);
-                    },
-                    leading: Icon(
-                      value == widget.selected
-                          ? Icons.check_rounded
-                          : Icons.sort_rounded,
-                      size: 16,
-                      color: value == widget.selected
-                          ? cs.primary
-                          : cs.mutedForeground,
-                    ),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(value.title),
-                    ),
-                  ),
-                ),
-              const Divider(height: 12),
-              for (final direction in MediaSortDirection.values)
-                SizedBox(
-                  width: double.infinity,
-                  child: ShadButton.ghost(
-                    onPressed: () {
-                      _controller.hide();
-                      widget.onDirectionSelected(direction);
-                    },
-                    leading: Icon(
-                      direction == MediaSortDirection.ascending
-                          ? Icons.arrow_upward_rounded
-                          : Icons.arrow_downward_rounded,
-                      size: 16,
-                      color: direction == widget.direction
-                          ? cs.primary
-                          : cs.mutedForeground,
-                    ),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(direction.title),
+      popover: (_) => RemoteFocusMenu(
+        child: SizedBox(
+          width: 148,
+          child: Padding(
+            padding: const EdgeInsets.all(5),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final value in MediaLibrarySort.values)
+                  SizedBox(
+                    width: double.infinity,
+                    child: ShadButton.ghost(
+                      onPressed: () {
+                        _controller.hide();
+                        widget.onSelected(value);
+                      },
+                      leading: Icon(
+                        value == widget.selected
+                            ? Icons.check_rounded
+                            : Icons.sort_rounded,
+                        size: 16,
+                        color: value == widget.selected
+                            ? cs.primary
+                            : cs.mutedForeground,
+                      ),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(value.title),
+                      ),
                     ),
                   ),
-                ),
-            ],
+                const Divider(height: 12),
+                for (final direction in MediaSortDirection.values)
+                  SizedBox(
+                    width: double.infinity,
+                    child: ShadButton.ghost(
+                      onPressed: () {
+                        _controller.hide();
+                        widget.onDirectionSelected(direction);
+                      },
+                      leading: Icon(
+                        direction == MediaSortDirection.ascending
+                            ? Icons.arrow_upward_rounded
+                            : Icons.arrow_downward_rounded,
+                        size: 16,
+                        color: direction == widget.direction
+                            ? cs.primary
+                            : cs.mutedForeground,
+                      ),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(direction.title),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -551,6 +555,8 @@ class _MediaLibraryScanTopActionState
 class _MediaSidebar extends ConsumerWidget {
   final double width;
   final bool showBrand;
+  final bool collapsed;
+  final VoidCallback? onToggleCollapsed;
   final ValueChanged<WorkspaceMode> onModeChanged;
   final VoidCallback onSettings;
   final VoidCallback onScanTasks;
@@ -566,6 +572,8 @@ class _MediaSidebar extends ConsumerWidget {
   const _MediaSidebar({
     this.width = 250,
     this.showBrand = true,
+    this.collapsed = false,
+    this.onToggleCollapsed,
     required this.onModeChanged,
     required this.onSettings,
     required this.onScanTasks,
@@ -582,8 +590,9 @@ class _MediaSidebar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(mediaLibraryProvider);
+    final effectiveWidth = collapsed ? 64.0 : width;
     return SizedBox(
-      width: width,
+      width: effectiveWidth,
       child: Column(
         children: [
           if (showBrand && _isDesktopWindow)
@@ -605,9 +614,12 @@ class _MediaSidebar extends ConsumerWidget {
               opacity: showBrand ? 0.56 : 0,
               border: showBrand ? null : const Border(),
               applyBlur: showBrand,
-              padding: EdgeInsets.fromLTRB(12, showBrand ? 14 : 10, 12, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: collapsed
+                  ? const EdgeInsets.fromLTRB(6, 10, 6, 10)
+                  : EdgeInsets.fromLTRB(12, showBrand ? 14 : 10, 12, 12),
+              child: ListView(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
                 children: [
                   if (showBrand) ...[
                     _SidebarBrand(
@@ -616,15 +628,18 @@ class _MediaSidebar extends ConsumerWidget {
                       subtitle: 'Media Center',
                       onSwitchMode: () => onModeChanged(WorkspaceMode.cloud),
                       onSettings: onSettings,
+                      collapsed: collapsed,
+                      onToggleCollapsed: onToggleCollapsed,
                     ),
                     const SizedBox(height: 16),
                   ],
-                  const _SidebarSectionLabel('浏览'),
+                  if (!collapsed) const _SidebarSectionLabel('浏览'),
                   _SidebarTile(
                     icon: Icons.home_rounded,
                     label: '首页',
                     selected: homeSelected,
                     onTap: onHome,
+                    collapsed: collapsed,
                   ),
                   _SidebarTile(
                     icon: Icons.movie_creation_rounded,
@@ -632,6 +647,7 @@ class _MediaSidebar extends ConsumerWidget {
                     count: state.globalStatistics.movies,
                     selected: selectedFilter == MediaLibraryBrowseFilter.movies,
                     onTap: () => onFilter(MediaLibraryBrowseFilter.movies),
+                    collapsed: collapsed,
                   ),
                   _SidebarTile(
                     icon: Icons.live_tv_rounded,
@@ -639,6 +655,7 @@ class _MediaSidebar extends ConsumerWidget {
                     count: state.globalStatistics.series,
                     selected: selectedFilter == MediaLibraryBrowseFilter.series,
                     onTap: () => onFilter(MediaLibraryBrowseFilter.series),
+                    collapsed: collapsed,
                   ),
                   _SidebarTile(
                     icon: Icons.help_outline_rounded,
@@ -647,69 +664,68 @@ class _MediaSidebar extends ConsumerWidget {
                     selected:
                         selectedFilter == MediaLibraryBrowseFilter.unmatched,
                     onTap: () => onFilter(MediaLibraryBrowseFilter.unmatched),
+                    collapsed: collapsed,
                   ),
                   const SizedBox(height: 8),
                   if (_shouldShowLibrarySection(state)) ...[
-                    const _SidebarSectionLabel('媒体库'),
-                    Expanded(
-                      child: ListView(
-                        children: [
-                          for (final library in state.libraries)
-                            Builder(
-                              builder: (context) {
-                                final statistics =
-                                    state.libraryStatistics[library.id] ??
-                                    const MediaLibraryStatistics();
-                                return _SidebarTile(
-                                  icon: library.kind == MediaLibraryKind.series
-                                      ? Icons.live_tv_rounded
-                                      : Icons.smart_display_rounded,
-                                  label: library.name,
-                                  subtitle: _mediaLibraryStatisticsLabel(
-                                    statistics,
-                                  ),
-                                  selected:
-                                      !homeSelected &&
-                                      selectedFilter ==
-                                          MediaLibraryBrowseFilter.all &&
-                                      state.selectedLibrary?.id == library.id,
-                                  onTap: () => onSelectLibrary(library.id),
-                                );
-                              },
-                            ),
-                        ],
+                    if (!collapsed) const _SidebarSectionLabel('媒体库'),
+                    for (final library in state.libraries)
+                      Builder(
+                        builder: (context) {
+                          final statistics =
+                              state.libraryStatistics[library.id] ??
+                              const MediaLibraryStatistics();
+                          return _SidebarTile(
+                            icon: library.kind == MediaLibraryKind.series
+                                ? Icons.live_tv_rounded
+                                : Icons.smart_display_rounded,
+                            label: library.name,
+                            subtitle: _mediaLibraryStatisticsLabel(statistics),
+                            selected:
+                                !homeSelected &&
+                                selectedFilter ==
+                                    MediaLibraryBrowseFilter.all &&
+                                state.selectedLibrary?.id == library.id,
+                            onTap: () => onSelectLibrary(library.id),
+                            collapsed: collapsed,
+                          );
+                        },
                       ),
-                    ),
                   ],
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8, bottom: 10),
-                    child: ShadSeparator.horizontal(),
-                  ),
-                  const _SidebarSectionLabel('管理'),
+                  if (!collapsed)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8, bottom: 10),
+                      child: ShadSeparator.horizontal(),
+                    ),
+                  if (!collapsed) const _SidebarSectionLabel('管理'),
                   _SidebarTile(
                     icon: Icons.assignment_rounded,
                     label: '刮削管理',
                     count: state.activeScanCount,
                     selected: false,
                     onTap: onScanTasks,
+                    collapsed: collapsed,
                   ),
                   _SidebarTile(
                     icon: Icons.drive_file_move_rounded,
                     label: '文件整理',
                     selected: activeTool == WorkspaceTool.organize,
                     onTap: () => onTool(WorkspaceTool.organize),
+                    collapsed: collapsed,
                   ),
                   _SidebarTile(
                     icon: Icons.category_rounded,
                     label: '分类管理',
                     selected: activeTool == WorkspaceTool.categories,
                     onTap: () => onTool(WorkspaceTool.categories),
+                    collapsed: collapsed,
                   ),
                   _SidebarTile(
                     icon: Icons.video_library_rounded,
                     label: '媒体库管理',
                     selected: false,
                     onTap: onManage,
+                    collapsed: collapsed,
                   ),
                 ],
               ),

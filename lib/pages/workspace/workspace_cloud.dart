@@ -454,6 +454,8 @@ class _CloudSidebar extends StatelessWidget {
   final FileState state;
   final double width;
   final bool showBrand;
+  final bool collapsed;
+  final VoidCallback? onToggleCollapsed;
   final ValueChanged<WorkspaceMode> onModeChanged;
   final ValueChanged<WorkspaceSection> onSection;
   final VoidCallback onSettings;
@@ -465,6 +467,8 @@ class _CloudSidebar extends StatelessWidget {
     required this.state,
     this.width = 250,
     this.showBrand = true,
+    this.collapsed = false,
+    this.onToggleCollapsed,
     required this.onModeChanged,
     required this.onSection,
     required this.onSettings,
@@ -478,8 +482,9 @@ class _CloudSidebar extends StatelessWidget {
     final sections = WorkspaceSection.values
         .where((section) => section != WorkspaceSection.mediaLibrary)
         .toList();
+    final effectiveWidth = collapsed ? 64.0 : width;
     return SizedBox(
-      width: width,
+      width: effectiveWidth,
       child: Column(
         children: [
           if (showBrand && _isDesktopWindow)
@@ -501,9 +506,12 @@ class _CloudSidebar extends StatelessWidget {
               opacity: showBrand ? 0.56 : 0,
               border: showBrand ? null : const Border(),
               applyBlur: showBrand,
-              padding: EdgeInsets.fromLTRB(14, showBrand ? 14 : 12, 14, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: collapsed
+                  ? const EdgeInsets.fromLTRB(6, 10, 6, 10)
+                  : EdgeInsets.fromLTRB(14, showBrand ? 14 : 12, 14, 12),
+              child: ListView(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
                 children: [
                   if (showBrand) ...[
                     _SidebarBrand(
@@ -513,60 +521,63 @@ class _CloudSidebar extends StatelessWidget {
                       imageAsset: 'assets/branding/guangya_icon.png',
                       onSwitchMode: () => onModeChanged(WorkspaceMode.media),
                       onSettings: onSettings,
+                      collapsed: collapsed,
+                      onToggleCollapsed: onToggleCollapsed,
                     ),
                     const SizedBox(height: 14),
                   ],
-                  Expanded(
-                    child: ListView(
-                      children: [
-                        for (final section in sections)
-                          _SidebarTile(
-                            icon: _sectionIcon(section),
-                            label: section.label,
-                            selected: state.section == section,
-                            onTap: () => onSection(section),
-                          ),
-                        const Divider(height: 24),
-                        _SidebarTile(
-                          icon: Icons.folder_off_rounded,
-                          label: '空文件夹',
-                          selected: activeTool == WorkspaceTool.emptyFolderScan,
-                          onTap: () => onTool(WorkspaceTool.emptyFolderScan),
-                        ),
-                        _SidebarTile(
-                          icon: Icons.content_copy_rounded,
-                          label: '重复文件',
-                          selected:
-                              activeTool == WorkspaceTool.duplicateFileScan,
-                          onTap: () => onTool(WorkspaceTool.duplicateFileScan),
-                        ),
-                        _SidebarTile(
-                          icon: Icons.folder_special_rounded,
-                          label: '目录整理',
-                          selected:
-                              activeTool == WorkspaceTool.similarFolderScan,
-                          onTap: () => onTool(WorkspaceTool.similarFolderScan),
-                        ),
-                        _SidebarTile(
-                          icon: Icons.text_fields_rounded,
-                          label: '批量命名',
-                          selected: activeTool == WorkspaceTool.rename,
-                          onTap: () => onTool(WorkspaceTool.rename),
-                        ),
-                        _SidebarTile(
-                          icon: Icons.bolt_rounded,
-                          label: '秒传工具',
-                          selected: activeTool == WorkspaceTool.fastTransfer,
-                          onTap: () => onTool(WorkspaceTool.fastTransfer),
-                        ),
-                      ],
+                  for (final section in sections)
+                    _SidebarTile(
+                      icon: _sectionIcon(section),
+                      label: section.label,
+                      selected: state.section == section,
+                      onTap: () => onSection(section),
+                      collapsed: collapsed,
                     ),
+                  const Divider(height: 24),
+                  _SidebarTile(
+                    icon: Icons.folder_off_rounded,
+                    label: '空文件夹',
+                    selected: activeTool == WorkspaceTool.emptyFolderScan,
+                    onTap: () => onTool(WorkspaceTool.emptyFolderScan),
+                    collapsed: collapsed,
+                  ),
+                  _SidebarTile(
+                    icon: Icons.content_copy_rounded,
+                    label: '重复文件',
+                    selected:
+                        activeTool == WorkspaceTool.duplicateFileScan,
+                    onTap: () => onTool(WorkspaceTool.duplicateFileScan),
+                    collapsed: collapsed,
+                  ),
+                  _SidebarTile(
+                    icon: Icons.folder_special_rounded,
+                    label: '目录整理',
+                    selected:
+                        activeTool == WorkspaceTool.similarFolderScan,
+                    onTap: () => onTool(WorkspaceTool.similarFolderScan),
+                    collapsed: collapsed,
+                  ),
+                  _SidebarTile(
+                    icon: Icons.text_fields_rounded,
+                    label: '批量命名',
+                    selected: activeTool == WorkspaceTool.rename,
+                    onTap: () => onTool(WorkspaceTool.rename),
+                    collapsed: collapsed,
+                  ),
+                  _SidebarTile(
+                    icon: Icons.bolt_rounded,
+                    label: '秒传工具',
+                    selected: activeTool == WorkspaceTool.fastTransfer,
+                    onTap: () => onTool(WorkspaceTool.fastTransfer),
+                    collapsed: collapsed,
                   ),
                   _SidebarTile(
                     icon: Icons.logout_rounded,
                     label: '退出登录',
                     selected: false,
                     onTap: onSignOut,
+                    collapsed: collapsed,
                   ),
                 ],
               ),

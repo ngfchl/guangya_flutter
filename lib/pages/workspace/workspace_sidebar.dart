@@ -29,6 +29,8 @@ class _SidebarBrand extends ConsumerWidget {
   final String? imageAsset;
   final VoidCallback? onSwitchMode;
   final VoidCallback? onSettings;
+  final bool collapsed;
+  final VoidCallback? onToggleCollapsed;
 
   const _SidebarBrand({
     required this.icon,
@@ -37,6 +39,8 @@ class _SidebarBrand extends ConsumerWidget {
     this.imageAsset,
     this.onSwitchMode,
     this.onSettings,
+    this.collapsed = false,
+    this.onToggleCollapsed,
   });
 
   @override
@@ -44,37 +48,68 @@ class _SidebarBrand extends ConsumerWidget {
     final cs = ShadTheme.of(context).colorScheme;
     final hasAppUpgrade =
         ref.watch(appUpgradeStatusProvider).value?.hasNewVersion == true;
+    final logo = Container(
+      width: 46,
+      height: 46,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: cs.primary.withValues(alpha: 0.24),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: imageAsset == null
+          ? DecoratedBox(
+              decoration: BoxDecoration(
+                color: cs.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: Colors.white, size: 26),
+            )
+          : ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.asset(
+                imageAsset!,
+                filterQuality: FilterQuality.high,
+              ),
+            ),
+    );
+    if (collapsed) {
+      return Column(
+        children: [
+          Semantics(
+            button: onSwitchMode != null,
+            label: onSwitchMode == null ? title : '$title，点击切换工作区',
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: onSwitchMode,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: logo,
+                ),
+              ),
+            ),
+          ),
+          if (onToggleCollapsed != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: _TopBarIconButton(
+                tooltip: '展开侧边栏',
+                icon: Icons.chevron_right_rounded,
+                onTap: onToggleCollapsed,
+              ),
+            ),
+        ],
+      );
+    }
     final brand = Row(
       children: [
-        Container(
-          width: 46,
-          height: 46,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: cs.primary.withValues(alpha: 0.24),
-                blurRadius: 16,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: imageAsset == null
-              ? DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: cs.primary,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(icon, color: Colors.white, size: 26),
-                )
-              : ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.asset(
-                    imageAsset!,
-                    filterQuality: FilterQuality.high,
-                  ),
-                ),
-        ),
+        logo,
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -121,6 +156,15 @@ class _SidebarBrand extends ConsumerWidget {
             ),
           ),
         ),
+        if (onToggleCollapsed != null)
+          Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: _TopBarIconButton(
+              tooltip: '收起侧边栏',
+              icon: Icons.chevron_left_rounded,
+              onTap: onToggleCollapsed,
+            ),
+          ),
         if (onSettings != null) ...[
           if (hasAppUpgrade)
             _TopBarIconButton(
@@ -146,6 +190,7 @@ class _SidebarTile extends StatelessWidget {
   final String? subtitle;
   final int? count;
   final bool selected;
+  final bool collapsed;
   final VoidCallback onTap;
 
   const _SidebarTile({
@@ -154,6 +199,7 @@ class _SidebarTile extends StatelessWidget {
     this.subtitle,
     this.count,
     required this.selected,
+    this.collapsed = false,
     required this.onTap,
   });
 
@@ -166,6 +212,45 @@ class _SidebarTile extends StatelessWidget {
       ?subtitle,
       if (visibleCount) '$count',
     ].join('，');
+    if (collapsed) {
+      return Semantics(
+        button: true,
+        selected: selected,
+        label: semanticsLabel,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Material(
+            color: Colors.transparent,
+            child: RemoteFocusableButton(
+              onTap: onTap,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(7),
+                overlayColor: WidgetStatePropertyAll(
+                  cs.foreground.withValues(alpha: 0.05),
+                ),
+                onTap: onTap,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  height: 44,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? cs.primary.withValues(alpha: 0.12)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 20,
+                    color: selected ? cs.primary : cs.mutedForeground,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Semantics(
       button: true,
       selected: selected,
@@ -174,95 +259,98 @@ class _SidebarTile extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 4),
         child: Material(
           color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(7),
-            overlayColor: WidgetStatePropertyAll(
-              cs.foreground.withValues(alpha: 0.05),
-            ),
+          child: RemoteFocusableButton(
             onTap: onTap,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              height: subtitle == null ? 40 : 52,
-              padding: const EdgeInsets.symmetric(horizontal: 9),
-              decoration: BoxDecoration(
-                color: selected
-                    ? cs.primary.withValues(alpha: 0.12)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(7),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(7),
+              overlayColor: WidgetStatePropertyAll(
+                cs.foreground.withValues(alpha: 0.05),
               ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 26,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      color: selected
-                          ? cs.primary.withValues(alpha: 0.16)
-                          : cs.muted.withValues(alpha: 0.72),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Icon(
-                      icon,
-                      size: 16,
-                      color: selected ? cs.primary : cs.mutedForeground,
-                    ),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: selected
-                                ? FontWeight.w700
-                                : FontWeight.w600,
-                            color: cs.foreground,
-                          ),
-                        ),
-                        if (subtitle != null) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            subtitle!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              color: cs.mutedForeground,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  if (visibleCount)
+              onTap: onTap,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                height: subtitle == null ? 40 : 52,
+                padding: const EdgeInsets.symmetric(horizontal: 9),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? cs.primary.withValues(alpha: 0.12)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Row(
+                  children: [
                     Container(
-                      constraints: const BoxConstraints(minWidth: 20),
-                      height: 20,
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      alignment: Alignment.center,
+                      width: 26,
+                      height: 26,
                       decoration: BoxDecoration(
                         color: selected
                             ? cs.primary.withValues(alpha: 0.16)
-                            : cs.muted,
-                        borderRadius: BorderRadius.circular(10),
+                            : cs.muted.withValues(alpha: 0.72),
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                      child: Text(
-                        '$count',
-                        style: TextStyle(
-                          fontSize: 10,
-                          height: 1,
-                          fontWeight: FontWeight.w700,
-                          color: selected ? cs.primary : cs.mutedForeground,
-                        ),
+                      child: Icon(
+                        icon,
+                        size: 16,
+                        color: selected ? cs.primary : cs.mutedForeground,
                       ),
                     ),
-                ],
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: selected
+                                  ? FontWeight.w700
+                                  : FontWeight.w600,
+                              color: cs.foreground,
+                            ),
+                          ),
+                          if (subtitle != null) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              subtitle!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: cs.mutedForeground,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (visibleCount)
+                      Container(
+                        constraints: const BoxConstraints(minWidth: 20),
+                        height: 20,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? cs.primary.withValues(alpha: 0.16)
+                              : cs.muted,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '$count',
+                          style: TextStyle(
+                            fontSize: 10,
+                            height: 1,
+                            fontWeight: FontWeight.w700,
+                            color: selected ? cs.primary : cs.mutedForeground,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),

@@ -28,6 +28,8 @@ import '../widgets/breadcrumb_bar.dart';
 import '../widgets/app_loading_indicator.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/file_list_tile.dart';
+import '../widgets/remote_focusable_button.dart';
+import '../widgets/remote_control_handler.dart';
 import '../widgets/file_detail_dialog.dart';
 import '../widgets/media_player_dialog.dart';
 import '../widgets/file_icon.dart';
@@ -56,7 +58,6 @@ part 'workspace/workspace_drag_drop.dart';
 part 'workspace/workspace_scan.dart';
 part 'workspace/workspace_shared.dart';
 
-
 enum WorkspaceMode { cloud, media }
 
 class WorkspacePage extends ConsumerStatefulWidget {
@@ -74,6 +75,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
   bool _shareDialogOpen = false;
   WorkspaceMode _mode = WorkspaceMode.cloud;
   bool _isSidePanelOpen = false;
+  bool _sidebarCollapsed = false;
   bool _searchOpen = false;
   String? _fileSearchQuery;
   String? _fileSearchReturnQuery;
@@ -276,13 +278,15 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                           null,
                   onToggleFilter: showMediaListFilters
                       ? () => setState(() {
-                            _mediaFilterPanelExpanded = !_mediaFilterPanelExpanded;
-                            if (!_mediaFilterPanelExpanded) {
-                              _mediaLibraryFilter = const MediaLibraryFilter();
-                            }
-                          })
+                          _mediaFilterPanelExpanded =
+                              !_mediaFilterPanelExpanded;
+                          if (!_mediaFilterPanelExpanded) {
+                            _mediaLibraryFilter = const MediaLibraryFilter();
+                          }
+                        })
                       : null,
-                  filterActive: _mediaLibraryFilter.isActive || _mediaFilterPanelExpanded,
+                  filterActive:
+                      _mediaLibraryFilter.isActive || _mediaFilterPanelExpanded,
                 );
                 final rawContent = IndexedStack(
                   index: _mode == WorkspaceMode.cloud ? 0 : 1,
@@ -297,7 +301,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                           children: [
                             if (_mediaActiveTool == null) ...[
                               topBar,
-                              if (showMediaListFilters && _mediaFilterPanelExpanded)
+                              if (showMediaListFilters &&
+                                  _mediaFilterPanelExpanded)
                                 _buildMediaFilterPanel(context, ref),
                               const ShadSeparator.horizontal(),
                             ],
@@ -310,9 +315,15 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                   return _MobileDrawerSwipeArea(
                     onOpen: () => _showMobileMenu(context),
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                      // 与桌面端 Padding 保持一致，避免主体栏被四周间距压低、
+                      // 相对可用高度不足而"比菜单栏矮一截"。
+                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
                       child: Column(
                         children: [
+                          // 与桌面端主体栏一致：顶部预留与侧边栏窗口控制条等高的占位，
+                          // 使主体栏顶部与侧边栏顶部对齐（compact 下侧边栏是抽屉式，
+                          // 此占位让主体栏在抽屉未打开时顶部对齐预期高度）。
+                          SizedBox(height: _desktopSidebarTopGap),
                           Expanded(child: content),
                         ],
                       ),
@@ -323,41 +334,55 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
                   padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
                   child: Row(
                     children: [
-                      _mode == WorkspaceMode.cloud
-                          ? _CloudSidebar(
-                              state: fp,
-                              onSection: (section) => ref
-                                  .read(fileProvider.notifier)
-                                  .setSection(section),
-                              onSettings: () => _showSettings(context),
-                              onModeChanged: _changeMode,
-                              onSignOut: () =>
-                                  ref.read(authProvider.notifier).signOut(),
-                              onTool: _openTool,
-                              activeTool: _cloudActiveTool,
-                            )
-                          : _MediaSidebar(
-                              onModeChanged: _changeMode,
-                              onSettings: () => _showSettings(context),
-                              onScanTasks: () =>
-                                  _showScanTaskManagement(context),
-                              onManage: () =>
-                                  _showMediaLibraryManagement(context),
-                              onTool: _openTool,
-                              activeTool: _mediaActiveTool,
-                              selectedFilter: _mediaBrowseFilter,
-                              onFilter: _changeMediaBrowseFilter,
-                              homeSelected: _mediaHomeSelected,
-                              onHome: _showMediaHome,
-                              onSelectLibrary: _selectMediaLibrary,
-                            ),
+                      // 侧边栏区：独立的 FocusScope，遥控器上下左右只在本区内跳焦。
+                      RemoteFocusRegion(
+                        id: 'workspace-sidebar',
+                        rightRegionId: 'workspace-content',
+                        autofocus: true,
+                        child: _mode == WorkspaceMode.cloud
+                            ? _CloudSidebar(
+                                state: fp,
+                                collapsed: _sidebarCollapsed,
+                                onToggleCollapsed: () => setState(
+                                  () => _sidebarCollapsed = !_sidebarCollapsed,
+                                ),
+                                onSection: (section) => ref
+                                    .read(fileProvider.notifier)
+                                    .setSection(section),
+                                onSettings: () => _showSettings(context),
+                                onModeChanged: _changeMode,
+                                onSignOut: () =>
+                                    ref.read(authProvider.notifier).signOut(),
+                                onTool: _openTool,
+                                activeTool: _cloudActiveTool,
+                              )
+                            : _MediaSidebar(
+                                collapsed: _sidebarCollapsed,
+                                onToggleCollapsed: () => setState(
+                                  () => _sidebarCollapsed = !_sidebarCollapsed,
+                                ),
+                                onModeChanged: _changeMode,
+                                onSettings: () => _showSettings(context),
+                                onScanTasks: () =>
+                                    _showScanTaskManagement(context),
+                                onManage: () =>
+                                    _showMediaLibraryManagement(context),
+                                onTool: _openTool,
+                                activeTool: _mediaActiveTool,
+                                selectedFilter: _mediaBrowseFilter,
+                                onFilter: _changeMediaBrowseFilter,
+                                homeSelected: _mediaHomeSelected,
+                                onHome: _showMediaHome,
+                                onSelectLibrary: _selectMediaLibrary,
+                              ),
+                      ),
                       const SizedBox(width: 16),
+                      // 主体区：独立的 FocusScope，与侧边栏互不串焦。
                       Expanded(
-                        child: Column(
-                          children: [
-                            SizedBox(height: _desktopSidebarTopGap),
-                            Expanded(child: content),
-                          ],
+                        child: RemoteFocusRegion(
+                          id: 'workspace-content',
+                          leftRegionId: 'workspace-sidebar',
+                          child: content,
                         ),
                       ),
                     ],
@@ -520,13 +545,11 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       _searchController.clear();
       return;
     }
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) {
-        if (!mounted) return;
-        (_mode == WorkspaceMode.media ? _mediaSearchFocusNode : _searchFocusNode)
-            .requestFocus();
-      },
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      (_mode == WorkspaceMode.media ? _mediaSearchFocusNode : _searchFocusNode)
+          .requestFocus();
+    });
   }
 
   void _showMobileMenu(BuildContext context) {
@@ -753,7 +776,9 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       filter: _mediaLibraryFilter,
       availableGenres: media.filterOptions.genres,
       availableCountries: media.filterOptions.countries,
-      availableWatchedKeys: hasWatchHistory ? const {'watched', 'unwatched'} : const {},
+      availableWatchedKeys: hasWatchHistory
+          ? const {'watched', 'unwatched'}
+          : const {},
       onFilter: (next) => setState(() => _mediaLibraryFilter = next),
       onCollapse: () => setState(() => _mediaFilterPanelExpanded = false),
     );
@@ -788,7 +813,8 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
       librarySection: _mediaLibrarySection,
       onOpenLibrary: _selectMediaLibrary,
       libraryFilter: _mediaLibraryFilter,
-      onLibraryFilterChanged: (next) => setState(() => _mediaLibraryFilter = next),
+      onLibraryFilterChanged: (next) =>
+          setState(() => _mediaLibraryFilter = next),
     );
   }
 }
