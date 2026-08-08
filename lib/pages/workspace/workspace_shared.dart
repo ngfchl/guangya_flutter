@@ -1559,6 +1559,7 @@ class _ColumnFileBrowserState extends ConsumerState<_ColumnFileBrowser> {
     final newName = await showShadDialog<String>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('重命名'),
         description: Text(file.name),
         actions: [

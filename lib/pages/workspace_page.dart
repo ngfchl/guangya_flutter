@@ -435,6 +435,7 @@ class _WorkspacePageState extends ConsumerState<WorkspacePage> {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (_) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('退出应用'),
         description: const Text('确定要退出小黄鸭吗？'),
         actions: [

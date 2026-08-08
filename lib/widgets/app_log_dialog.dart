@@ -12,6 +12,7 @@ class AppLogDialog extends StatelessWidget {
     final screen = MediaQuery.sizeOf(context);
     final compact = screen.width < 720;
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('运行日志'),
       description: const Text('显示级别、模块、调用位置与操作上下文；Release 同时写入本地日志文件。'),
       actions: [

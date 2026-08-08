@@ -557,6 +557,7 @@ class _MediaPlayerDialogState extends ConsumerState<MediaPlayerDialog> {
         .toDouble();
     final contentWidth = videoWidth + sideWidth;
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       constraints: BoxConstraints(
         maxWidth: math.min(maxDialogWidth, contentWidth + dialogPadding * 2),
         maxHeight: math.max(260, screen.height - 16),
@@ -1514,6 +1515,7 @@ class _ExternalPlayerDialogState extends ConsumerState<ExternalPlayerDialog> {
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('选择外部播放器'),
       description: Text(
         widget.file.name,

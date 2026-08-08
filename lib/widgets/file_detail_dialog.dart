@@ -74,6 +74,7 @@ class _FileDetailDialogState extends State<_FileDetailDialog> {
     final cs = ShadTheme.of(context).colorScheme;
     final file = _detailFile ?? widget.file;
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: Row(
         children: [
           Icon(

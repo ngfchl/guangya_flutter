@@ -281,6 +281,7 @@ class ShareListTile extends StatelessWidget {
       context: context,
       builder: (ctx) {
         return ShadDialog(
+          closeIcon: const SizedBox.shrink(),
           title: const Text('分享二维码'),
           description: Text(link.isNotEmpty ? '扫描二维码打开分享链接' : '该分享暂无链接'),
           actions: [

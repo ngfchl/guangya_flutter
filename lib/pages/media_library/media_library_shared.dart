@@ -22,6 +22,7 @@ Future<bool> _confirmCloudBackupRestore(
   final confirmed = await showShadDialog<bool>(
     context: context,
     builder: (dialogContext) => ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('确认下载备份？'),
       description: Text(backup.name),
       actions: [
@@ -205,6 +206,7 @@ class _MediaMoveDialogState extends ConsumerState<_MediaMoveDialog> {
     final size = MediaQuery.sizeOf(context);
     final destination = _destination;
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('移动到'),
       description: Text('移动 ${widget.sources.length} 个文件或文件夹'),
       actions: [
@@ -493,6 +495,7 @@ class _CloudMoveDestinationPickerState
     final cs = ShadTheme.of(context).colorScheme;
     final size = MediaQuery.sizeOf(context);
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('移动文件到'),
       description: Text(
         '目标文件夹：${_selected?.name ?? (_path.lastOrNull?.name ?? '云盘根目录')}',
@@ -1168,6 +1171,7 @@ class _CreateMediaLibraryDialogState
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: Text(_isBrowsing ? '选择云盘文件夹' : (_isEditing ? '管理媒体库' : '创建媒体库')),
       description: Text(
         _isBrowsing ? '进入目标目录后，选择该目录作为媒体库来源。' : '媒体库会从指定目录扫描视频文件。',
@@ -2678,11 +2682,11 @@ class _ManualTMDBMatchDialogState
     final viewport = MediaQuery.sizeOf(context);
     final detail = _detailCandidate;
     final content = ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       // This dialog is embedded in an OverlayEntry rather than pushed as a
       // route.  ShadDialog's default X calls Navigator.pop, which would pop
       // the workspace route and leave the page blank.  Closing is handled by
       // the explicit 取消/返回 actions and the popover's outside-tap logic.
-      closeIcon: const SizedBox.shrink(),
       title: Text(detail == null ? '手动匹配' : '匹配详情'),
       description: Text(
         detail == null ? '查看或选中匹配结果后，会应用到该作品的全部资源版本。' : '确认信息无误后使用此匹配项。',

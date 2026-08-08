@@ -104,6 +104,7 @@ class _DuplicateGroupState extends ConsumerState<_DuplicateGroup> {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: Text('删除 ${targets.length} 个重复文件？'),
         actions: [
           ShadButton.outline(

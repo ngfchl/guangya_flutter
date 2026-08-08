@@ -95,6 +95,7 @@ class SidePanel extends ConsumerWidget {
                   showShadDialog(
                     context: context,
                     builder: (context) => ShadDialog(
+                      closeIcon: const SizedBox.shrink(),
                       title: const Text('清空回收站'),
                       description: const Padding(
                         padding: EdgeInsets.only(bottom: 8),

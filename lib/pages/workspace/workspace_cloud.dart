@@ -258,6 +258,7 @@ class _CloudFolderDestinationPickerState
     return PopScope(
       canPop: !_executing,
       child: ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         constraints: BoxConstraints(maxWidth: contentWidth + 48),
         title: Text(widget.move ? '移动到' : '复制到'),
         description: Text('目标文件夹：$destinationName'),
@@ -1065,6 +1066,7 @@ class _CloudToolbar extends ConsumerWidget {
     showShadDialog(
       context: context,
       builder: (ctx) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('新建文件夹'),
         actions: [
           ShadButton.outline(

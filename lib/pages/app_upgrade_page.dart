@@ -714,6 +714,7 @@ class _AppUpgradePageState extends ConsumerState<AppUpgradePage> {
       640.0,
     );
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: Row(
         children: [
           Icon(

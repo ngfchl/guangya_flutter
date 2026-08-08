@@ -28,6 +28,7 @@ class _ShareResultDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('分享二维码已生成'),
       description: const Text('有效期与访问权限以云盘分享设置为准。'),
       actions: [

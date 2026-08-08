@@ -45,6 +45,7 @@ class _ShareQRScannerDialogState extends State<ShareQRScannerDialog> {
     final size = MediaQuery.sizeOf(context);
     final scannerSize = (size.width - 64).clamp(250.0, 440.0);
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('扫一扫'),
       description: const Text('将光鸭分享二维码放入取景框'),
       actions: [

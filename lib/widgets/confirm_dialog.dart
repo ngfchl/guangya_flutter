@@ -14,6 +14,7 @@ Future<bool> showConfirmDialog(
   final result = await showShadDialog<bool>(
     context: context,
     builder: (context) => ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: Text(title),
       description: Padding(
         padding: const EdgeInsets.only(bottom: 8),
@@ -47,6 +48,7 @@ Future<bool> showDeleteFilesConfirmDialog(
   final result = await showShadDialog<bool>(
     context: context,
     builder: (dialogContext) => ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: Text(title ?? '删除 ${files.length} 项？'),
       description: Text(
         description ??

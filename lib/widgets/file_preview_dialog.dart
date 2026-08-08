@@ -82,6 +82,7 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
     final maxHeight = math.max(320.0, screen.height - 32);
 
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
       padding: EdgeInsets.all(compact ? 12 : 16),
       scrollable: false,

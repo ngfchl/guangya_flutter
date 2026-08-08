@@ -138,6 +138,7 @@ class _SimilarFolderGroupState extends ConsumerState<_SimilarFolderGroup> {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: Text('删除 ${targets.length} 个相似文件夹？'),
         actions: [
           ShadButton.outline(
@@ -506,6 +507,7 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
     await showShadDialog<void>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('文件夹详情'),
         description: Text(folder.name),
         actions: [
@@ -606,6 +608,7 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: Text('删除 ${targets.length} 个空文件夹？'),
         actions: [
           ShadButton.outline(
@@ -762,6 +765,7 @@ class _CleanupListState extends ConsumerState<_CleanupList> {
     await showShadDialog<void>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('处理完成'),
         actions: [
           ShadButton(
@@ -1194,6 +1198,7 @@ class _BatchRenameToolState extends ConsumerState<_BatchRenameTool> {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: Text('应用 ${changes.length} 项重命名？'),
         actions: [
           ShadButton.outline(
@@ -1722,6 +1727,7 @@ class _BatchRenameFolderPickerState
       child: Builder(
         builder: (ctx) {
           return ShadDialog(
+            closeIcon: const SizedBox.shrink(),
             title: Text(widget.title),
             description: Text('当前：$_label'),
             actions: [
@@ -4327,6 +4333,7 @@ class _MediaOrganizerToolState extends ConsumerState<_MediaOrganizerTool> {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('确认整理文件'),
         description: Text('将移动 ${selected.length} 个媒体文件，原文件路径会发生变化。'),
         actions: [
@@ -5014,6 +5021,7 @@ class _CategoryRuleDialogState extends State<_CategoryRuleDialog> {
     return Material(
       type: MaterialType.transparency,
       child: ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: Text(widget.initialRule == null ? '新增分类' : '编辑分类'),
         actions: [
           ShadButton.outline(
@@ -5130,6 +5138,7 @@ class _CloudFolderPickerState extends ConsumerState<_CloudFolderPicker> {
       child: Builder(
         builder: (ctx) {
           return ShadDialog(
+            closeIcon: const SizedBox.shrink(),
             title: Text(widget.title),
             description: Text('当前：$_label'),
             actions: [
@@ -5809,6 +5818,7 @@ class _ScopedWorkspaceScanToolState
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => ShadDialog(
+          closeIcon: const SizedBox.shrink(),
           title: Text('批量删除 ${selected.length} 个重复文件？'),
           actions: [
             ShadButton.outline(

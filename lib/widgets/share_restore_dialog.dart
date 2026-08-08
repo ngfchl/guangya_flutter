@@ -194,6 +194,7 @@ class _ShareRestoreDialogState extends ConsumerState<ShareRestoreDialog> {
     final width = (size.width - 48).clamp(260.0, 620.0);
     final height = (size.height - 180).clamp(320.0, 620.0);
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: Text(_title.isEmpty ? widget.link.title ?? '读取分享文件' : _title),
       description: Text(
         _owner.isEmpty ? '光鸭云盘分享' : '分享者：$_owner',
@@ -424,6 +425,7 @@ class _ShareTargetDirectoryPickerState
     final cs = ShadTheme.of(context).colorScheme;
     final size = MediaQuery.sizeOf(context);
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('选择转存目录'),
       description: Text('目标：$_label'),
       actions: [

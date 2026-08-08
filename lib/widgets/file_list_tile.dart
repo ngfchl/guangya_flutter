@@ -126,6 +126,7 @@ class _FileListTileState extends State<FileListTile> {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('确认重命名？'),
         description: Text('“${widget.file.name}” 将重命名为 “$newName”'),
         actions: [

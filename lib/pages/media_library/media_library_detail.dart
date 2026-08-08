@@ -832,6 +832,7 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: Text(title),
         description: Text(description),
         actions: [
