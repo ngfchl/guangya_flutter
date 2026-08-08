@@ -195,11 +195,28 @@ class _RemoteControlHandlerState extends State<RemoteControlHandler> {
 
     // All four directions first move spatially inside the current region.
     // Left/right cross regions only when the focused child is at an edge.
+    //
+    // 文本编辑中：上下键同样放行，让 EditableText 自己做多行光标移动；
+    // 仅左右键放行不够，进入多行输入框后下键会被导航吃掉。
+    //
+    // 选中态覆盖层（_RemoteInputCover）：方向键放行，让覆盖层自己的 onKeyEvent
+    // 处理上下键切换到其他组件、Enter 进入编辑态。否则外层先拦方向键走
+    // _moveDirection，覆盖层收不到事件，上键跳不走且可能误触发编辑态。
+    final onInputCover = _isOnRemoteInputCover();
+    // ShadSelect 下拉（ShadPopover）打开时放行上下键，让 ShadOption 自己
+    // 聚焦选项——否则外层先拦方向键走 _moveDirection，下拉选项收不到事件。
+    final popoverOpen = _hasOpenPopover();
     if (key == LogicalKeyboardKey.arrowUp) {
+      if (editingText || onInputCover || popoverOpen) {
+        return KeyEventResult.ignored;
+      }
       _moveDirection(TraversalDirection.up);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowDown) {
+      if (editingText || onInputCover || popoverOpen) {
+        return KeyEventResult.ignored;
+      }
       _moveDirection(TraversalDirection.down);
       return KeyEventResult.handled;
     }
@@ -356,13 +373,40 @@ class _RemoteControlHandlerState extends State<RemoteControlHandler> {
   /// next/previous one for vertical directions, or the first one for lateral
   /// directions.
   bool _moveWithinPopoverScope(FocusNode primary, TraversalDirection direction) {
-    final scope = primary.nearestScope;
-    final scopeCtx = scope?.context;
+    // 设置弹窗走 showShadDialog（route），其 FocusScope 会隔离 nearestScope 的
+    // 收集范围——ShadInput 的 EditableText focusNode 在 dialog 的 FocusScope 内，
+    // 但 primary（当前焦点）可能在另一个 scope，导致 indexOf 找不到直接 return。
+    // 改用 primary.nearestScope 往外逐层找最近的有效 scope context，确保 dialog
+    // 范围内的所有输入框都被纳入 nodes 列表。
+    var scope = primary.nearestScope;
+    BuildContext? scopeCtx = scope?.context;
+    while (scope != null && scopeCtx != null) {
+      final trial = <FocusNode>[];
+      _collectFocusableNodes(scopeCtx, trial);
+      if (trial.any((n) => n == primary)) {
+        break;
+      }
+      final next = scope.enclosingScope;
+      if (next == null || next == scope) break;
+      scope = next;
+      scopeCtx = scope?.context;
+    }
     if (scopeCtx == null) return false;
     final nodes = <FocusNode>[];
     _collectFocusableNodes(scopeCtx, nodes);
     if (nodes.length < 2) return false;
-    final currentIndex = nodes.indexOf(primary);
+    var currentIndex = nodes.indexOf(primary);
+    if (currentIndex < 0) {
+      // primary 不在列表中（常见于 ShadInput：当前焦点是 EditableText 的内部
+      // focusNode，但收集到的是外层 Focus 的节点）。向上找最近的可聚焦祖先
+      // 作为当前位参考。
+      for (var i = 0; i < nodes.length; i++) {
+        if (nodes[i].enclosingScope == primary.enclosingScope) {
+          currentIndex = i;
+          break;
+        }
+      }
+    }
     if (currentIndex < 0) return false;
     // Vertical lists (the common popover layout): next/previous by index.
     // Horizontal is rare for popovers but handle it symmetrically.
@@ -425,6 +469,13 @@ class _RemoteControlHandlerState extends State<RemoteControlHandler> {
       out.add(widget.focusNode!);
       return;
     }
+    // EditableText（ShadInput/TextField 内部）不套 Focus widget，而是把
+    // focusNode 作为构造参数传入。遥控器方向键跳转走 _moveWithinPopoverScope
+    // 时需要能收集到它的 focusNode，否则输入框无法被选中。
+    if (widget is EditableText && widget.focusNode != null) {
+      out.add(widget.focusNode!);
+      return;
+    }
     ctx.visitChildElements((child) {
       _collectFocusableNodes(child, out);
     });
@@ -478,6 +529,15 @@ class _RemoteControlHandlerState extends State<RemoteControlHandler> {
     if (context == null) return false;
     if (context.widget is EditableText) return true;
     return context.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  /// 当前焦点是否在设置页 `_RemoteInput` 的选中态覆盖层上。
+  /// 覆盖层的 FocusNode debugLabel 为 'RemoteInputCover'。
+  /// 检测到时方向键放行，让覆盖层自己的 onKeyEvent 处理上下键切换。
+  bool _isOnRemoteInputCover() {
+    final primary = FocusManager.instance.primaryFocus;
+    if (primary == null) return false;
+    return primary.debugLabel == 'RemoteInputCover';
   }
 
   void _handleBack() {
