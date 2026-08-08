@@ -551,6 +551,12 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   bool _nextContentPageInFlight = false;
   Timer? _cloudIndexTimer;
   Completer<bool>? _cloudIndexRefreshCompleter;
+  /// load() 的完成信号。app.dart 登录后预调 load()（不 await），用户进入
+  /// 媒体库页面时 _loaded 已 true，但 load() 可能尚未真正完成——
+  /// state.libraries 仍为空。loadContent 入口必须 await _loadCompleter
+  /// 才能拿到就绪的 libraries 填首页预览数据，否则首次 loadContent(home:true)
+  /// 走 if(home) 分支时 pages 为空，造成首页电影/剧集延后一帧才显示。
+  Future<void>? _loadFuture;
 
   MediaLibraryNotifier({
     Future<void> Function(Set<String>)? removeWatchHistory,
@@ -562,8 +568,15 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
   set api(GuangyaAPI value) => _api = value;
 
   Future<void> load() async {
-    if (_loaded) return;
+    if (_loaded) {
+      // app.dart 预调 load() 时 _loaded 已 true 但本次 load() 可能还在跑，
+      // await _loadFuture 等它真正完成拿到就绪的 libraries。
+      await _loadFuture;
+      return;
+    }
     _loaded = true;
+    final completer = Completer<void>();
+    _loadFuture = completer.future;
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       await _store.initialize();
@@ -609,6 +622,7 @@ class MediaLibraryNotifier extends StateNotifier<MediaLibraryState> {
       state = state.copyWith(errorMessage: e.toString());
     } finally {
       state = state.copyWith(isLoading: false);
+      completer.complete();
     }
   }
 

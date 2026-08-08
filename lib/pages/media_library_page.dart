@@ -401,6 +401,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     final newName = await showShadDialog<String>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('重命名文件'),
         description: Text(item.file.cloudPath),
         actions: [
@@ -709,6 +710,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: Text('清理 ${source.title} 信息？'),
         description: Text(work.primary.title),
         actions: [
@@ -787,13 +789,6 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(mediaLibraryProvider);
-    if (widget.showHomePanel && !state.isLoading && state.allItems.isEmpty && state.globalStatistics.total > 0) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          unawaited(_mediaNotifier.loadContent(home: true, filter: MediaLibraryBrowseFilter.all));
-        }
-      });
-    }
     ref.listen<MediaDetailHeader?>(activeMediaDetailHeaderProvider, (previous, next) {
       if (next == null && _detailWork != null) _closeDetail();
     });
@@ -2235,6 +2230,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       final action = await showShadDialog<_CloudBackupAction>(
         context: context,
         builder: (dialogContext) => ShadDialog(
+          closeIcon: const SizedBox.shrink(),
           title: Text('从云盘恢复（${backups.length} 个备份）'),
           description: const Text('选择备份恢复，也可重命名或删除。'),
           scrollable: false,
@@ -2424,6 +2420,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     final value = await showShadDialog<String>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('重命名备份'),
         description: Text(backup.formattedSize),
         actions: [
@@ -2452,6 +2449,7 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
     final confirmed = await showShadDialog<bool>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('删除云盘备份？'),
         description: Text(backup.name),
         actions: [
@@ -2902,6 +2900,7 @@ class _MediaLibraryScanTaskDialogState extends ConsumerState<_MediaLibraryScanTa
     final height = (size.height - 64).clamp(360.0, size.height).toDouble();
     final tasks = state.scanTasks;
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('刮削任务管理'),
       description: const Text('查看所有媒体库的扫描、识别、入库任务，并管理任务状态。'),
       actions: [ShadButton.outline(onPressed: () => Navigator.of(context).pop(), child: const Text('关闭'))],
@@ -3385,6 +3384,7 @@ class _MediaLibraryManagementDialogState extends ConsumerState<_MediaLibraryMana
     final width = (size.width - 32).clamp(320.0, 1000.0).toDouble();
     final height = (size.height - 160).clamp(360.0, 620.0).toDouble();
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('媒体库管理'),
       description: const Text('集中管理媒体库、目录来源和刮削数据备份。'),
       actions: [ShadButton.outline(onPressed: () => Navigator.of(context).pop(), child: const Text('关闭'))],
@@ -3508,6 +3508,7 @@ class _MediaLibraryManagementDialogState extends ConsumerState<_MediaLibraryMana
         showShadDialog(
           context: context,
           builder: (_) => ShadDialog(
+            closeIcon: const SizedBox.shrink(),
             title: const Text('删除失败'),
             description: Text('删除媒体库「${library.name}」时出错：$error'),
             actions: [ShadButton(onPressed: () => Navigator.of(context).pop(), child: const Text('确定'))],
@@ -3635,6 +3636,7 @@ class _MediaLibraryManagementDialogState extends ConsumerState<_MediaLibraryMana
     final selected = await showShadDialog<CloudFile>(
       context: context,
       builder: (dialogContext) => ShadDialog(
+        closeIcon: const SizedBox.shrink(),
         title: const Text('从云盘恢复刮削数据'),
         description: const Text('选择一个 SQLite 备份，恢复会覆盖当前本地媒体库。'),
         scrollable: false,
