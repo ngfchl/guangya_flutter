@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shadcn_ui/shadcn_ui.dart' hide showShadDialog, showShadSheet;
@@ -113,6 +114,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     final compact = MediaQuery.sizeOf(context).width < 760;
 
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: Row(
         children: [
           Icon(Icons.settings_outlined, size: 19, color: cs.primary),
@@ -458,22 +460,51 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   Widget _textInput(
     TextEditingController controller, {
     required String placeholder,
-  }) => SizedBox(
-    width: double.infinity,
-    child: ShadInput(controller: controller, placeholder: Text(placeholder)),
+  }) => _remoteInput(
+    controller: controller,
+    placeholder: Text(placeholder),
+    keyboardType: TextInputType.text,
   );
 
   Widget _numberInput(
     TextEditingController controller, {
     String? placeholder,
-  }) => SizedBox(
-    width: double.infinity,
-    child: ShadInput(
-      controller: controller,
-      placeholder: placeholder == null ? null : Text(placeholder),
-      keyboardType: TextInputType.number,
-    ),
+  }) => _remoteInput(
+    controller: controller,
+    placeholder: placeholder == null ? null : Text(placeholder),
+    keyboardType: TextInputType.number,
   );
+
+  /// 媒体库首页预览数量这类数字输入框需要实时保存，走 [_remoteInput] 但
+  /// 在 onChanged 里同步存储。
+  Widget _remoteNumberInputWithSave(
+    TextEditingController controller, {
+    required String placeholder,
+    required ValueChanged<String> onChanged,
+  }) => _remoteInput(
+    controller: controller,
+    placeholder: Text(placeholder),
+    keyboardType: TextInputType.number,
+    onChanged: onChanged,
+  );
+
+  /// 遥控器适配的文本输入框。外层 [Focus] 提供选中态（聚焦时高亮），
+  /// OK/Enter 切换编辑态：进入编辑时把焦点转给内部 EditableText 让光标
+  /// 进入可输入，再按 Enter/返回退出编辑回到选中态。这避免了遥控器方向键
+  /// 直接跳过输入框——外层 Focus 能被 _collectFocusableNodes 可靠收集。
+  Widget _remoteInput({
+    required TextEditingController controller,
+    required Widget? placeholder,
+    required TextInputType keyboardType,
+    ValueChanged<String>? onChanged,
+  }) {
+    return _RemoteInput(
+      controller: controller,
+      placeholder: placeholder,
+      keyboardType: keyboardType,
+      onChanged: onChanged,
+    );
+  }
 
   Future<void> _saveSettings() async {
     final defaultFilePageSize = normalizeFilePageSize(
@@ -600,6 +631,7 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           return ShadDialog(
+            closeIcon: const SizedBox.shrink(),
             title: const Text('刮削排除关键词'),
             description: const Text('文件名或路径包含这些关键词的文件将被跳过，每行一个'),
             actions: [
@@ -642,11 +674,11 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
   String _themeModeToString(ThemeMode mode) {
     switch (mode) {
       case ThemeMode.light:
-        return 'light';
+        return '浅色';
       case ThemeMode.dark:
-        return 'dark';
+        return '深色';
       case ThemeMode.system:
-        return 'system';
+        return '跟随系统';
     }
   }
 
@@ -887,6 +919,7 @@ class _ExcludedFoldersTreeDialogState
   Widget build(BuildContext context) {
     final cs = ShadTheme.of(context).colorScheme;
     return ShadDialog(
+      closeIcon: const SizedBox.shrink(),
       title: const Text('刮削排除文件夹'),
       description: const Text('勾选需要在全局刮削时跳过的文件夹'),
       actions: [
@@ -1030,4 +1063,208 @@ class _FolderNode {
   })  : children = children ?? [],
         expanded = expanded ?? false,
         loading = loading ?? false;
+}
+
+/// 遥控器适配的文本输入框。
+///
+/// 交互模型（用 Stack 透明覆盖层隔离焦点）：
+/// - 选中态：透明 [Focus] 层覆盖在 [TextField] 上拦截焦点，显示主题色高亮。
+///   方向键跳进来、上下键切换到其他组件，不进入编辑态。
+/// - OK/Enter：移除透明层，焦点转给 [TextField] 进入编辑态，光标进入可输入。
+/// - 编辑态：再按 OK/Enter/返回键 → 退出编辑，透明层重新覆盖，回到选中态。
+class _RemoteInput extends StatefulWidget {
+  final TextEditingController controller;
+  final Widget? placeholder;
+  final TextInputType keyboardType;
+  final ValueChanged<String>? onChanged;
+
+  const _RemoteInput({
+    required this.controller,
+    required this.placeholder,
+    required this.keyboardType,
+    this.onChanged,
+  });
+
+  @override
+  State<_RemoteInput> createState() => _RemoteInputState();
+}
+
+class _RemoteInputState extends State<_RemoteInput> {
+  final _coverNode = FocusNode(debugLabel: 'RemoteInputCover');
+  final _editingNode = FocusNode(debugLabel: 'RemoteInputEditing');
+  bool _editing = false;
+
+  @override
+  void dispose() {
+    _coverNode.dispose();
+    _editingNode.dispose();
+    super.dispose();
+  }
+
+  void _enterEditing() {
+    setState(() => _editing = true);
+    _editingNode.requestFocus();
+  }
+
+  void _exitEditing() {
+    _editingNode.unfocus();
+    setState(() => _editing = false);
+    // 覆盖层 if(!_editing) 刚重建还没挂载时 _coverNode 没附载，
+    // requestFocus 无效——延到下一帧覆盖层挂载后再聚，上键才能可靠跳走。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _coverNode.requestFocus();
+    });
+  }
+
+  /// 选中态上下方向键自己处理跳到同 scope 前后可聚焦节点。
+  void _moveToSibling({required TraversalDirection direction}) {
+    final scope = _coverNode.nearestScope;
+    final scopeCtx = scope?.context;
+    if (scopeCtx == null) return;
+    final nodes = <FocusNode>[];
+    _collectFocusableNodes(scopeCtx, nodes);
+    if (nodes.length < 2) return;
+    final currentIndex = nodes.indexOf(_coverNode);
+    if (currentIndex < 0) return;
+    final targetIndex = direction == TraversalDirection.down
+        ? currentIndex + 1
+        : currentIndex - 1;
+    if (targetIndex < 0 || targetIndex >= nodes.length) return;
+    nodes[targetIndex].requestFocus();
+  }
+
+  void _collectFocusableNodes(BuildContext ctx, List<FocusNode> out) {
+    final widget = ctx.widget;
+    if (widget is FocusScope || widget is FocusTraversalGroup) {
+      ctx.visitChildElements((child) {
+        _collectFocusableNodes(child, out);
+      });
+      return;
+    }
+    if (widget is Focus && widget.focusNode != null) {
+      out.add(widget.focusNode!);
+      return;
+    }
+    ctx.visitChildElements((child) {
+      _collectFocusableNodes(child, out);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = ShadTheme.of(context).colorScheme;
+    return SizedBox(
+      width: double.infinity,
+      height: 36,
+      child: Material(
+        color: Colors.transparent,
+        child: Stack(
+          children: [
+            // 底层：TextField，编辑态时聚焦接收输入；选中态时不可聚焦。
+            // 用 ListenableBuilder 监听 _coverNode 和 _editingNode 的焦点变化，
+            // 确保只有当前聚焦的框才显示选中态高亮，不会所有框都高亮。
+            ListenableBuilder(
+              listenable: Listenable.merge([_coverNode, _editingNode]),
+              builder: (context, _) {
+                // 只要焦点还在本框（选中态聚在 _coverNode，编辑态聚在 _editingNode），
+                // 选中态边框就一直保持主题色高亮，不依赖 _editing 标志。
+                final active = _coverNode.hasFocus || _editingNode.hasFocus;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: active
+                        ? Border.all(color: cs.primary, width: 2)
+                        : Border.all(color: cs.input, width: 1),
+                    color: active ? cs.primary.withValues(alpha: 0.12) : null,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                  alignment: Alignment.centerLeft,
+                  child: TextField(
+                    controller: widget.controller,
+                    focusNode: _editingNode,
+                    keyboardType: widget.keyboardType,
+                    style: TextStyle(fontSize: 13, color: cs.foreground),
+                    textAlignVertical: TextAlignVertical.center,
+                    decoration: InputDecoration(
+                      isCollapsed: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      hintText: widget.placeholder is Text
+                          ? (widget.placeholder as Text).data
+                          : null,
+                      hintStyle:
+                          TextStyle(color: cs.mutedForeground, fontSize: 13),
+                    ),
+                    onChanged: widget.onChanged,
+                    onSubmitted: (_) => _exitEditing(),
+                  ),
+                );
+              },
+            ),
+            // 顶层透明覆盖层：选中态时拦截焦点，编辑态时移除（ Positioned.fill 消失）
+            if (!_editing)
+              Positioned.fill(
+                child: _RemoteInputCover(
+                  child: Focus(
+                    focusNode: _coverNode,
+                    canRequestFocus: true,
+                    descendantsAreFocusable: false,
+                    descendantsAreTraversable: true,
+                    onKeyEvent: (node, event) {
+                      if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                        return KeyEventResult.ignored;
+                      }
+                      final key = event.logicalKey;
+                      // OK/Enter 进入编辑
+                      if (key == LogicalKeyboardKey.enter ||
+                          key == LogicalKeyboardKey.select ||
+                          key == LogicalKeyboardKey.gameButtonA) {
+                        _enterEditing();
+                        return KeyEventResult.handled;
+                      }
+                      // 上下方向键切换到其他组件
+                      if (key == LogicalKeyboardKey.arrowUp ||
+                          key == LogicalKeyboardKey.arrowDown) {
+                        _moveToSibling(
+                          direction: key == LogicalKeyboardKey.arrowUp
+                              ? TraversalDirection.up
+                              : TraversalDirection.down,
+                        );
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        // 鼠标/触摸点击只聚焦显示选中态，不自动进入编辑态。
+                        // 编辑态仅由 Enter 键触发（见上 onKeyEvent）。
+                        if (!_coverNode.hasFocus) _coverNode.requestFocus();
+                      },
+                      child: const SizedBox(width: double.infinity, height: 36),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 选中态覆盖层的标识 widget。`RemoteControlHandler` 检测到当前焦点在它
+/// 范围内时放行方向键，让覆盖层自己的 `onKeyEvent` 处理上下键切换——
+/// 否则外层 `RemoteControlHandler` 先拦方向键走 `_moveDirection`，覆盖层
+/// 收不到事件，上键跳不走且可能误触发编辑态。
+class _RemoteInputCover extends StatelessWidget {
+  final Widget child;
+
+  const _RemoteInputCover({required this.child});
+
+  @override
+  Widget build(BuildContext context) => child;
 }
