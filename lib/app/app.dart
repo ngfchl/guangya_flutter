@@ -5,6 +5,7 @@ import '../providers/theme_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
 import '../providers/media_library_provider.dart';
+import '../providers/scale_provider.dart';
 import '../pages/login_page.dart';
 import '../pages/workspace_page.dart';
 import '../widgets/app_loading_indicator.dart';
@@ -25,6 +26,7 @@ class _GuangyaAppState extends ConsumerState<GuangyaApp> {
   Widget build(BuildContext context) {
     final themeState = ref.watch(themeProvider);
     final auth = ref.watch(authProvider);
+    final scale = ref.watch(scaleProvider);
 
     if (!auth.isSignedIn) {
       _sessionInitialized = false;
@@ -51,19 +53,23 @@ class _GuangyaAppState extends ConsumerState<GuangyaApp> {
       darkTheme: darkTheme,
       themeMode: themeState.themeMode,
       // MediaQuery 必须套在 ShadApp 的 home **内部**，而不是外层：ShadApp 内部
-      // 的 WidgetsApp 风格构建链会用自己的 MediaQuery（基于 PlatformDispatcher
+      // 的 WidgetsApp 岑格构建链会用自己的 MediaQuery（基于 PlatformDispatcher
       // 系统值）覆盖外层注入的 textScaler，导致套在外层的缩放无效。套在 home
       // 内部才能覆盖 ShadApp 自己注入的那个，缩放生效。
       //
       // **整体结构缩放**：textScaler 只缩字号，菜单栏宽度/标题栏高度/间距等固定
-      // px 值不受影响。为了让低 PPI 大屏整体结构（不光字号）也缩小、显示更多内容，
-      // 用 Transform.scale 把整个 View 按 _lowPpiScale 缩放，再用 OverflowBox
-      // 放大布局空间让缩放后的内容撑满全屏（不留空白）。
+      // px 值不受影响。为了让整体结构（不光字号）也缩放，用 Transform.scale 把
+      // 整个 View 按 scale 缩放，再用 OverflowBox 放大布局空间让缩放后的内容
+      // 撑满全屏（不留空白）。
+      //
+      // scale 完全由用户在设置页「界面缩放」手动调节（0.5–1.5），同时作用于
+      // 字号缩放与整体结构缩放，拖动即实时生效。
       home: MediaQuery(
         data: MediaQuery.of(context).copyWith(
-          textScaler: _lowPpiTextScaler(context),
+          textScaler: TextScaler.linear(scale),
         ),
-        child: _LowPpiScale(
+        child: _ScaleView(
+          scale: scale,
           child: ShadToaster(
             child: RemoteControlHandler(
               child: auth.isLoading
@@ -85,65 +91,35 @@ class _GuangyaAppState extends ConsumerState<GuangyaApp> {
       ),
     );
   }
-
-  /// 低 PPI 大屏（TV/投影仪）的字号缩放系数。
-  ///
-  /// **触发条件**：`devicePixelRatio <= 2.0`（低 PPI 设备特征——TV/投影仪通常
-  /// 1.0-2.0，手机/桌面 retina 通常 ≥ 2.5）。这一条件比固定宽度阈值更可靠：
-  /// 1080p TV 物理宽 1080 < 1400 会被旧阈值漏掉，但它的 DPR 同样低，应触发缩放。
-  ///
-  /// **缩放系数**：按物理宽度线性缩小，1080→0.82、1920→0.78、2560→0.66、
-  /// 3840→0.54。高 PPI 设备（DPR > 2.0）返回 1.0 不缩。
-  TextScaler _lowPpiTextScaler(BuildContext context) {
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    if (dpr > 2.0) return TextScaler.linear(1.0);
-    final width = MediaQuery.sizeOf(context).width;
-    // 1080→0.82, 1920→0.78, 2560→0.66, 3840→0.54
-    final factor = (1.0 - (width - 1080) / 6000).clamp(0.54, 0.82);
-    return TextScaler.linear(factor);
-  }
-
-  /// 整体结构缩放系数（与 [_lowPpiTextScaler] 同口径），用于 Transform.scale
-  /// 缩整个 View。高 PPI 设备返回 1.0 不缩。
-  ///
-  /// 上一版上限 0.82 偏大，本版上限降到 0.72、下限降到 0.42、斜率加大，让 TV 端
-  /// 整体结构明显缩小、单屏显示更多内容。
-  double _lowPpiScale(BuildContext context) {
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    if (dpr > 2.0) return 1.0;
-    final width = MediaQuery.sizeOf(context).width;
-    // 1080→0.72, 1920→0.66, 2560→0.54, 3840→0.42
-    return (1.0 - (width - 1080) / 2300).clamp(0.42, 0.72);
-  }
 }
 
-/// 用 Transform.scale 把子树整体缩放 [scale] 倍，同时用 OverflowBox 放大布局
-/// 空间让缩放后的内容撑满父容器——避免缩放后右侧/底部留空白。
+/// 用 FittedBox 把子树整体缩放 [scale] 倍。
 ///
-/// scale < 1 时，OverflowBox 给子树一个 `1/scale` 倍大的布局空间（例如 scale=0.78
-/// 时给 1/0.78≈1.28 倍空间），子树按这个放大空间布局，再被 Transform.scale 缩回
-/// 原尺寸，等效整体结构缩小、单屏显示更多内容。
-class _LowPpiScale extends StatelessWidget {
+/// FittedBox(fit: BoxFit.scaleDown) 让子树按原始尺寸布局，再整体缩放
+/// 到可用空间内——缩放后内容居中、不溢出、不错位，比 OverflowBox+
+/// Transform.scale 的"放大布局空间再缩回"方式更稳，不会出现侧边栏
+/// 标题错位等问题。
+///
+/// [scale] 完全由用户手动调节（设置页「界面缩放」，范围 0.5–1.5），拖动 Slider
+/// 时 ref.watch(scaleProvider) 触发 rebuild，实时生效。
+class _ScaleView extends StatelessWidget {
   final Widget child;
+  final double scale;
 
-  const _LowPpiScale({required this.child});
+  const _ScaleView({required this.child, required this.scale});
 
   @override
   Widget build(BuildContext context) {
-    final appState = context.findAncestorStateOfType<_GuangyaAppState>();
-    final scale = appState?._lowPpiScale(context) ?? 1.0;
     if (scale >= 1.0) return child;
-    final size = MediaQuery.sizeOf(context);
-    return OverflowBox(
-      minWidth: size.width / scale,
-      maxWidth: size.width / scale,
-      minHeight: size.height / scale,
-      maxHeight: size.height / scale,
-      alignment: Alignment.topLeft,
-      child: Transform.scale(
-        scale: scale,
+    return ClipRect(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
         alignment: Alignment.topLeft,
-        child: child,
+        child: SizedBox(
+          width: MediaQuery.sizeOf(context).width / scale,
+          height: MediaQuery.sizeOf(context).height / scale,
+          child: child,
+        ),
       ),
     );
   }
