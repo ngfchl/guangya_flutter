@@ -1312,11 +1312,24 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
       // The paged wall contains one representative row per work. The detail
       // work was expanded from SQLite and owns the authoritative episode list.
       final selectedWork = _detailWork!;
-      return Stack(
-        children: [
-          _MediaDetailPanel(
-            key: ValueKey('media-detail:${selectedWork.key}'),
-            work: selectedWork,
+      return Focus(
+        // 详情页是 Stack 直接嵌入非 route，ESC/返回键走 RemoteControlHandler._handleBack
+        // 不会关它——这里 autofocus 拦 ESC/返回键调 _closeDetail 关掉详情页。
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          if (event.logicalKey == LogicalKeyboardKey.escape ||
+              event.logicalKey == LogicalKeyboardKey.goBack) {
+            _closeDetail();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Stack(
+          children: [
+            _MediaDetailPanel(
+              key: ValueKey('media-detail:${selectedWork.key}'),
+              work: selectedWork,
             onDownload: (item) => ref.read(fileProvider.notifier).downloadFile(item.file),
             onPlay: (item) => unawaited(
               showMediaPlayerDialog(
@@ -1348,7 +1361,8 @@ class _MediaLibraryPageState extends ConsumerState<MediaLibraryPage> {
                 _workHasManualMatchOperation(selectedWork),
             recognizing: _syncingWorkKeys.contains(selectedWork.key),
           ),
-        ],
+          ],
+        ),
       );
     }
     final showingCollectionOverview = activeFilter == MediaLibraryBrowseFilter.collections && activeCollection == null;
