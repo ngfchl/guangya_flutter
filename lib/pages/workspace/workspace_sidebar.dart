@@ -112,27 +112,35 @@ class _SidebarBrand extends ConsumerWidget {
         logo,
         const SizedBox(width: 12),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                  color: cs.foreground,
+          // FittedBox(scaleDown) 让标题在缩放后自适应填满，不溢出不错位——
+          // 全局 Transform.scale 缩小时标题会按放大布局空间布局再缩回，
+          // 文字与 logo 错位；FittedBox 让标题区整体缩放保持对齐。
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: cs.foreground,
+                  ),
                 ),
-              ),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                  color: cs.mutedForeground,
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                    color: cs.mutedForeground,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ],
