@@ -1859,101 +1859,98 @@ class _MediaDetailPanelState extends ConsumerState<_MediaDetailPanel> {
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: cs.border),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (stillPath?.isNotEmpty == true)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: CachedNetworkImage(
-                imageUrl: _tmdbImageURL(stillPath!, size: 'w300'),
-                width: 128,
-                height: 72,
-                fit: BoxFit.cover,
-                errorWidget: (_, _, _) => _tmdbDirectFallback(
-                  path: stillPath,
-                  size: 'w300',
-                  width: 128,
-                  height: 72,
-                  fallback: Container(color: cs.card),
+          // 第一行：封面图（压缩到 40 高）+ 标题/日期时长 + 播放按钮
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (stillPath?.isNotEmpty == true)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: CachedNetworkImage(
+                    imageUrl: _tmdbImageURL(stillPath!, size: 'w300'),
+                    width: 71,
+                    height: 40,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, _, _) => _tmdbDirectFallback(
+                      path: stillPath,
+                      size: 'w300',
+                      width: 71,
+                      height: 40,
+                      fallback: Container(color: cs.card),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          if (stillPath?.isNotEmpty == true) const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+              if (stillPath?.isNotEmpty == true) const SizedBox(width: 12),
+              Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SelectableText(
-                            title?.isNotEmpty == true
-                                ? title!
-                                : '第 ${parsed.episode?.toString() ?? '-'} 集',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: cs.foreground,
-                            ),
-                          ),
-                          if (airDate?.isNotEmpty == true ||
-                              runtime != null) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              [
-                                if (airDate?.isNotEmpty == true) airDate!,
-                                if (runtime != null) '$runtime 分钟',
-                              ].join(' · '),
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: cs.mutedForeground,
-                              ),
-                            ),
-                          ],
-                        ],
+                    SelectableText(
+                      title?.isNotEmpty == true
+                          ? title!
+                          : '第 ${parsed.episode?.toString() ?? '-'} 集',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: cs.foreground,
                       ),
                     ),
-                    if (!_resource.file.isIso) ...[
-                      const SizedBox(width: 12),
-                      ShadButton.ghost(
-                        size: ShadButtonSize.sm,
-                        onPressed: () => widget.onPlay(_resource),
-                        leading: const Icon(Icons.play_arrow_rounded, size: 16),
-                        child: const Text('播放'),
+                    if (airDate?.isNotEmpty == true ||
+                        runtime != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        [
+                          if (airDate?.isNotEmpty == true) airDate!,
+                          if (runtime != null) '$runtime 分钟',
+                        ].join(' · '),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.mutedForeground,
+                        ),
                       ),
                     ],
                   ],
                 ),
-                if (overview?.isNotEmpty == true) ...[
-                  const SizedBox(height: 6),
-                  SelectableText(
-                    overview!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.45,
-                      color: cs.foreground,
-                    ),
-                  ),
-                ] else ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    '暂无本集简介',
-                    style: TextStyle(fontSize: 12, color: cs.mutedForeground),
-                  ),
-                ],
-                if (widget.work.resources.length > 1 &&
-                    widget.work.primary.mediaKind == TMDBMediaKind.tv) ...[
-                  const SizedBox(height: 10),
-                  _episodeVersionSwitcher(cs),
-                ],
+              ),
+              if (!_resource.file.isIso) ...[
+                const SizedBox(width: 12),
+                ShadButton.ghost(
+                  size: ShadButtonSize.sm,
+                  onPressed: () => widget.onPlay(_resource),
+                  leading: const Icon(Icons.play_arrow_rounded, size: 16),
+                  child: const Text('播放'),
+                ),
               ],
-            ),
+            ],
           ),
+          // 第二行：剧情简介
+          if (overview?.isNotEmpty == true) ...[
+            const SizedBox(height: 6),
+            SelectableText(
+              overview!,
+              style: TextStyle(
+                fontSize: 10,
+                height: 1.4,
+                color: cs.foreground,
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 6),
+            Text(
+              '暂无本集简介',
+              style: TextStyle(fontSize: 10, color: cs.mutedForeground),
+            ),
+          ],
+          if (widget.work.resources.length > 1 &&
+              widget.work.primary.mediaKind == TMDBMediaKind.tv) ...[
+            const SizedBox(height: 10),
+            _episodeVersionSwitcher(cs),
+          ],
         ],
       ),
     );
