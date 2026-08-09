@@ -9,6 +9,7 @@ import '../providers/theme_provider.dart';
 import '../providers/media_library_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/file_provider.dart';
+import '../providers/scale_provider.dart';
 import '../widgets/app_log_dialog.dart';
 import '../core/http/dio_client.dart';
 import '../core/storage/storage_manager.dart';
@@ -189,6 +190,11 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
                       icon: Icons.home_outlined,
                       label: '首页每库预览数量',
                       child: _numberInput(_mediaHomePreviewCountController),
+                    ),
+                    _SettingsRow(
+                      icon: Icons.zoom_in_rounded,
+                      label: '界面缩放',
+                      child: _buildScaleSlider(ref),
                     ),
                   ],
                 ),
@@ -474,6 +480,50 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
     placeholder: placeholder == null ? null : Text(placeholder),
     keyboardType: TextInputType.number,
   );
+
+  Widget _buildScaleSlider(WidgetRef ref) {
+    final manualScale = ref.watch(scaleProvider);
+    return Material(
+      color: Colors.transparent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Slider(
+                  min: 0.5,
+                  max: 1.5,
+                  value: manualScale,
+                  label: '${(manualScale * 100).round()}%',
+                  onChanged: (v) =>
+                      ref.read(scaleProvider.notifier).setScale(v),
+                ),
+              ),
+              SizedBox(
+                width: 56,
+                child: Text(
+                  '${(manualScale * 100).round()}%',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: ShadTheme.of(context).colorScheme.foreground,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Text(
+            '调整整体界面缩放（50%–150%），拖动滑块实时调整。',
+            style: TextStyle(
+              fontSize: 11,
+              color: ShadTheme.of(context).colorScheme.mutedForeground,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   /// 媒体库首页预览数量这类数字输入框需要实时保存，走 [_remoteInput] 但
   /// 在 onChanged 里同步存储。
